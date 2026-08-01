@@ -1,22 +1,23 @@
-﻿using ZibasheERP.Domain.Enums;
-
-namespace ZibasheERP.Domain.Entities;
+﻿namespace ZibasheERP.Domain.Entities;
 
 public class Invoice : BaseEntity
 {
-    public string InvoiceNumber { get; set; } = string.Empty;
-
     public Guid OrderId { get; set; }
 
-    public decimal Amount { get; set; }
+    public Order? Order { get; set; }
 
-    public DateTime IssuedAt { get; set; }
+    public string InvoiceNumber { get; set; } = string.Empty;
 
-    public InvoiceStatus Status { get; set; } = InvoiceStatus.Draft;
+    public decimal PerfumeTotal { get; set; }
 
-    public string? Notes { get; set; }
+    public decimal BottleTotal { get; set; }
 
-    // Navigation Property
-    public Order Order { get; set; } = null!;
+    // هزینه ارسال در فاکتور لحاظ نمی‌شود
+    public decimal TotalAmount { get; set; }
 
+    public DateTime IssuedAt { get; set; } = DateTime.UtcNow;
+
+    public bool IsSentToCustomer { get; set; }
+
+    public DateTime? SentToCustomerAt { get; set; }
 }

@@ -10,4 +10,11 @@
     <ProjectReference Include="..\ZibasheERP.Domain\ZibasheERP.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Common\" />
+    <Folder Include="Features\Orders\CreateOrder\" />
+    <Folder Include="Behaviors\" />
+    <Folder Include="Services\" />
+  </ItemGroup>
+
 </Project>

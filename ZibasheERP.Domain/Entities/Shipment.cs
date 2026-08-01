@@ -1,22 +1,25 @@
-﻿using ZibasheERP.Domain.Enums;
-
-namespace ZibasheERP.Domain.Entities;
+﻿namespace ZibasheERP.Domain.Entities;
 
 public class Shipment : BaseEntity
 {
     public Guid OrderId { get; set; }
 
-    public string Carrier { get; set; } = string.Empty;
+    public Order? Order { get; set; }
 
-    public string TrackingCode { get; set; } = string.Empty;
+    public string ShippingCompany { get; set; } = string.Empty;
 
-    public DateTime? ShippedAt { get; set; }
+    // هزینه ارسال فقط هنگام درخواست ارسال تعیین می‌شود
+    public decimal ShippingCost { get; set; }
+
+    public string? TrackingCode { get; set; }
+
+    public DateTime? RequestedAt { get; set; }
+
+    public DateTime? SentAt { get; set; }
 
     public DateTime? DeliveredAt { get; set; }
 
-    public ShipmentStatus Status { get; set; } = ShipmentStatus.Preparing;
+    public bool IsDelivered { get; set; }
 
     public string? Notes { get; set; }
-
-    public Order Order { get; set; } = null!;
 }

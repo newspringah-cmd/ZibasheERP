@@ -1,38 +1,65 @@
-﻿using ZibasheERP.Domain.Enums;
+﻿namespace ZibasheERP.Domain.Entities;
 
-namespace ZibasheERP.Domain.Entities;
+public enum OrderStatus
+{
+    Registered = 1,        // ثبت سفارش
+    ListCompleted = 2,     // لیست تکمیل شده
+    PerfumePurchased = 3,  // عطر خریداری شده
+    Invoiced = 4,          // فاکتور صادر شده
+    Paid = 5,              // پرداخت شده
+    Decanted = 6,          // دکانت انجام شده
+    ReadyToShip = 7,       // آماده ارسال
+    Shipped = 8,           // ارسال شده
+    Cancelled = 9          // لغو توسط ادمین
+}
 
 public class Order : BaseEntity
 {
-    public string OrderNumber { get; set; } = string.Empty;
-
     public Guid CustomerId { get; set; }
 
-    public Guid SalesListId { get; set; }
+    public Customer? Customer { get; set; }
 
-    public decimal VolumeMl { get; set; }
+    public string OrderNumber { get; set; } = string.Empty;
 
-    public decimal PricePerMl { get; set; }
+    // وضعیت فعلی سفارش
+    public OrderStatus Status { get; set; } = OrderStatus.Registered;
 
-    public decimal TotalPrice { get; set; }
+    // تاریخ ثبت سفارش
+    public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
 
-    public OrderStatus Status { get; set; } = OrderStatus.Pending;
+    // جمع مبلغ عطرها
+    public decimal PerfumeTotal { get; set; }
 
-    public string? Notes { get; set; }
+    // جمع مبلغ شیشه‌ها
+    public decimal BottleTotal { get; set; }
+
+    // مبلغ نهایی (بدون هزینه ارسال)
+    public decimal FinalAmount { get; set; }
+
+    // زمان صدور فاکتور
+    public DateTime? InvoiceIssuedAt { get; set; }
+
+    // زمان پرداخت
+    public DateTime? PaidAt { get; set; }
+
+    // زمان ارسال
+    public DateTime? ShippedAt { get; set; }
+
+    // فقط ادمین می‌تواند سفارش را لغو کند
+    public Guid? CancelledByUserId { get; set; }
 
     public DateTime? CancelledAt { get; set; }
 
     public string? CancelReason { get; set; }
 
-    public Guid? CancelledByUserId { get; set; }
+    public string? Notes { get; set; }
 
-    // Navigation Properties
-    public Customer Customer { get; set; } = null!;
+    public ICollection<OrderItem> Items { get; set; }
+        = new List<OrderItem>();
 
-    public SalesList SalesList { get; set; } = null!;
-    public Invoice? Invoice { get; set; }
+    public ICollection<Payment> Payments { get; set; }
+        = new List<Payment>();
 
-    public ICollection<Payment> Payments { get; set; } = new List<Payment>();
-
-    public Shipment? Shipment { get; set; }
+    public ICollection<Shipment> Shipments { get; set; }
+        = new List<Shipment>();
 }
