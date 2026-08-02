@@ -407,6 +407,7 @@ X-Api-Key: {{AdminApiKey}}
 }
 ### Liveness health check
 GET {{ZibasheERP.API_HostAddress}}/health/live
+X-Correlation-ID: local-health-check
 
 ### Readiness health check (includes database)
 GET {{ZibasheERP.API_HostAddress}}/health/ready

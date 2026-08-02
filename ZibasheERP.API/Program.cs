@@ -9,6 +9,7 @@ using ZibasheERP.API.Authentication;
 using ZibasheERP.API.Data;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.API.Health;
+using ZibasheERP.API.Diagnostics;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -19,6 +20,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Controllers
 builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -114,7 +117,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+else
+{
+    app.UseHsts();
+}
 
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseExceptionHandler();
 app.UseHttpsRedirection();
 
 app.UseAuthentication();
