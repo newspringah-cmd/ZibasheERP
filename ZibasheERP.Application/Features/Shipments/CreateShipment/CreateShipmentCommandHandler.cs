@@ -42,6 +42,9 @@ public sealed class CreateShipmentCommandHandler
         if (address.CustomerId != order.CustomerId)
             throw new InvalidOperationException("آدرس انتخاب‌شده متعلق به مشتری سفارش نیست.");
 
+        if (order.DeliveryAddressId.HasValue && order.DeliveryAddressId != address.Id)
+            throw new InvalidOperationException("آدرس مرسوله با آدرس انتخاب‌شده مشتری یکسان نیست.");
+
         var trackingCode = request.TrackingCode.Trim();
         if (await _shipmentRepository.TrackingCodeExistsAsync(trackingCode, cancellationToken))
             throw new InvalidOperationException("این کد رهگیری قبلاً ثبت شده است.");

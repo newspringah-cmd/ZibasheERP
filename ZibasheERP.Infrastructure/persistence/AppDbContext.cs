@@ -154,6 +154,12 @@ public class AppDbContext : DbContext
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Order>()
+            .HasOne(x => x.DeliveryAddress)
+            .WithMany()
+            .HasForeignKey(x => x.DeliveryAddressId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Order>()
             .HasIndex(x => x.OrderNumber)
             .IsUnique();
 

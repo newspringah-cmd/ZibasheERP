@@ -30,6 +30,7 @@ public sealed class GetOrderQueryHandler
             order.PerfumeTotal,
             order.BottleTotal,
             order.FinalAmount,
+            order.DeliveryAddressId,
             order.Notes,
             new OrderCustomerResponse(
                 order.Customer.Id,

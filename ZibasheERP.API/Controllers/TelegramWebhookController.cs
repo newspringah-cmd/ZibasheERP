@@ -12,6 +12,7 @@ using ZibasheERP.Application.Features.Invoices.GetOrderInvoice;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Features.Orders.GetOrder;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
+using ZibasheERP.Application.Features.Orders.SetDeliveryAddress;
 using ZibasheERP.Application.Features.Payments.GetPaymentBalance;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
 using ZibasheERP.Application.Interfaces;
@@ -245,6 +246,23 @@ public sealed class TelegramWebhookController : ControllerBase
         if (selection.Type == TelegramCallbackType.StartPayment)
         {
             await SendPaymentInstructionsAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.ChooseDeliveryAddress)
+        {
+            await SendDeliveryAddressesAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.SetDeliveryAddress &&
+            selection.BottleId is { } addressId)
+        {
+            await SetDeliveryAddressAsync(
+                callback,
+                selection.SalesListId,
+                addressId,
+                cancellationToken);
             return;
         }
 
@@ -563,20 +581,32 @@ public sealed class TelegramWebhookController : ControllerBase
             : $"فاکتور: {invoice.InvoiceNumber} — {invoice.Status}";
         var details = $"سفارش {order.OrderNumber}\nوضعیت: {TranslateStatus(order.Status)}\n" +
             $"{string.Join("\n", items)}\n\n{invoiceLine}\nمبلغ نهایی: {order.FinalAmount:N0} تومان";
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
         if (invoice is not null && order.Status != "Paid" && order.Status != "Cancelled")
+        {
+            rows.Add(new[]
+            {
+                new TelegramInlineButton(
+                    "ثبت پرداخت",
+                    $"pay:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+            });
+        }
+        if (order.Status is not ("Shipped" or "Delivered" or "Cancelled"))
+        {
+            rows.Add(new[]
+            {
+                new TelegramInlineButton(
+                    order.DeliveryAddressId.HasValue ? "تغییر آدرس تحویل" : "انتخاب آدرس تحویل",
+                    $"shipaddr:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+            });
+        }
+
+        if (rows.Count > 0)
         {
             await _sender.SendInlineKeyboardAsync(
                 callback.Message!.Chat.Id.ToString(),
                 details,
-                new IReadOnlyCollection<TelegramInlineButton>[]
-                {
-                    new[]
-                    {
-                        new TelegramInlineButton(
-                            "ثبت پرداخت",
-                            $"pay:{TelegramCallbackParser.EncodeGuid(order.Id)}")
-                    }
-                },
+                rows,
                 cancellationToken);
         }
         else
@@ -584,6 +614,84 @@ public sealed class TelegramWebhookController : ControllerBase
             await ReplyAsync(callback.Message!.Chat.Id, details, cancellationToken);
         }
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SendDeliveryAddressesAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var order = await _mediator.Send(new GetOrderQuery(orderId), cancellationToken);
+        if (order is null ||
+            order.Customer.TelegramId != callback.From.Id.ToString() ||
+            order.Status is "Shipped" or "Delivered" or "Cancelled")
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "امکان انتخاب آدرس برای این سفارش وجود ندارد.",
+                cancellationToken);
+            return;
+        }
+
+        var addresses = await _mediator.Send(
+            new GetCustomerAddressesQuery(null, callback.From.Id.ToString()),
+            cancellationToken);
+        if (addresses.Count == 0)
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "ابتدا باید یک آدرس برای حساب شما ثبت شود.",
+                cancellationToken);
+            return;
+        }
+
+        var orderToken = TelegramCallbackParser.EncodeGuid(order.Id);
+        var rows = addresses.Select(address =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"{(address.IsDefault ? "⭐ " : string.Empty)}{address.Description ?? address.City}",
+                    $"setaddr:{orderToken}:{TelegramCallbackParser.EncodeGuid(address.Id)}")
+            }).ToArray();
+        await _sender.SendInlineKeyboardAsync(
+            callback.Message!.Chat.Id.ToString(),
+            "آدرس تحویل را انتخاب کنید:",
+            rows,
+            cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SetDeliveryAddressAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        Guid addressId,
+        CancellationToken cancellationToken)
+    {
+        var order = await _mediator.Send(new GetOrderQuery(orderId), cancellationToken);
+        if (order is null || order.Customer.TelegramId != callback.From.Id.ToString())
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "سفارش متعلق به این حساب نیست.",
+                cancellationToken);
+            return;
+        }
+
+        try
+        {
+            var result = await _mediator.Send(
+                new SetOrderDeliveryAddressCommand(orderId, addressId),
+                cancellationToken);
+            await ReplyAsync(
+                callback.Message!.Chat.Id,
+                $"آدرس تحویل سفارش ثبت شد:\n{result.City}، {result.FullAddress}",
+                cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, "آدرس ثبت شد.", cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken);
+        }
     }
 
     private async Task SendPaymentInstructionsAsync(

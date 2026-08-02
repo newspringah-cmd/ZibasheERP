@@ -393,6 +393,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("DeliveryAddressId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<decimal>("FinalAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -439,6 +442,8 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CustomerId");
+
+                    b.HasIndex("DeliveryAddressId");
 
                     b.HasIndex("OrderNumber")
                         .IsUnique();
@@ -864,6 +869,11 @@ namespace ZibasheERP.Infrastructure.Migrations
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Order", b =>
                 {
+                    b.HasOne("ZibasheERP.Domain.Entities.Address", "DeliveryAddress")
+                        .WithMany()
+                        .HasForeignKey("DeliveryAddressId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("ZibasheERP.Domain.Entities.Customer", "Customer")
                         .WithMany("Orders")
                         .HasForeignKey("CustomerId")
@@ -877,6 +887,8 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Customer");
+
+                    b.Navigation("DeliveryAddress");
 
                     b.Navigation("SalesList");
                 });

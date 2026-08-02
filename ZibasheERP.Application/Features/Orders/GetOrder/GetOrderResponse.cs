@@ -8,6 +8,7 @@ public sealed record GetOrderResponse(
     decimal PerfumeTotal,
     decimal BottleTotal,
     decimal FinalAmount,
+    Guid? DeliveryAddressId,
     string? Notes,
     OrderCustomerResponse Customer,
     IReadOnlyCollection<GetOrderItemResponse> Items);

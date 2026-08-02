@@ -65,4 +65,17 @@ public sealed class TelegramCallbackParserTests
         Assert.Equal(TelegramCallbackType.StartPayment, result.Type);
         Assert.Equal(orderId, result.SalesListId);
     }
+
+    [Fact]
+    public void Parse_SetDeliveryAddress_RoundTripsBothIds()
+    {
+        var orderId = Guid.NewGuid();
+        var addressId = Guid.NewGuid();
+        var result = TelegramCallbackParser.Parse(
+            $"setaddr:{TelegramCallbackParser.EncodeGuid(orderId)}:{TelegramCallbackParser.EncodeGuid(addressId)}");
+
+        Assert.Equal(TelegramCallbackType.SetDeliveryAddress, result.Type);
+        Assert.Equal(orderId, result.SalesListId);
+        Assert.Equal(addressId, result.BottleId);
+    }
 }

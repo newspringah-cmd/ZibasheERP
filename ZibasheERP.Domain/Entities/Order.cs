@@ -20,6 +20,10 @@ public class Order : BaseEntity
 
     public Customer? Customer { get; set; }
 
+    public Guid? DeliveryAddressId { get; set; }
+
+    public Address? DeliveryAddress { get; set; }
+
     public string OrderNumber { get; set; } = string.Empty;
 
     public string? ExternalReference { get; set; }
