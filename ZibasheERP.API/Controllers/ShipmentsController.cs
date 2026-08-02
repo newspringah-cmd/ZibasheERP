@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Features.Shipments.CreateShipment;
+using ZibasheERP.Application.Features.Shipments.MarkDelivered;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -41,6 +42,27 @@ public sealed class ShipmentsController : ControllerBase
         catch (DbUpdateConcurrencyException)
         {
             return Conflict(new { Message = "وضعیت سفارش هم‌زمان تغییر کرده است؛ دوباره تلاش کنید." });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { Message = exception.Message });
+        }
+    }
+
+    [HttpPost("{shipmentId:guid}/delivered")]
+    public async Task<IActionResult> MarkDelivered(
+        Guid shipmentId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _mediator.Send(
+                new MarkShipmentDeliveredCommand(shipmentId),
+                cancellationToken));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new { Message = "وضعیت مرسوله هم‌زمان تغییر کرده است؛ دوباره تلاش کنید." });
         }
         catch (InvalidOperationException exception)
         {

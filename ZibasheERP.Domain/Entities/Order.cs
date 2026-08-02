@@ -10,7 +10,8 @@ public enum OrderStatus
     Decanted = 6,          // دکانت انجام شده
     ReadyToShip = 7,       // آماده ارسال
     Shipped = 8,           // ارسال شده
-    Cancelled = 9          // لغو توسط ادمین
+    Cancelled = 9,         // لغو توسط ادمین
+    Delivered = 10         // تحویل به مشتری
 }
 
 public class Order : BaseEntity

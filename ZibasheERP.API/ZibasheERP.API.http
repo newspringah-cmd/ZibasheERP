@@ -83,4 +83,8 @@ X-Api-Key: {{AdminApiKey}}
   "notes": "ارسال از انبار مرکزی"
 }
 
+### Mark shipment delivered
+POST {{ZibasheERP.API_HostAddress}}/api/shipments/00000000-0000-0000-0000-000000000000/delivered
+X-Api-Key: {{AdminApiKey}}
+
 ###

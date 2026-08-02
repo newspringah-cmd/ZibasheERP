@@ -31,6 +31,17 @@ public sealed class ShipmentRepository : IShipmentRepository
             cancellationToken);
     }
 
+    public Task<Shipment?> GetByIdAsync(
+        Guid shipmentId,
+        CancellationToken cancellationToken = default)
+    {
+        return _dbContext.Shipments
+            .Include(shipment => shipment.Order)
+            .FirstOrDefaultAsync(
+                shipment => shipment.Id == shipmentId && !shipment.IsDeleted,
+                cancellationToken);
+    }
+
     public Task<bool> TrackingCodeExistsAsync(string trackingCode, CancellationToken cancellationToken = default)
     {
         return _dbContext.Shipments.AnyAsync(

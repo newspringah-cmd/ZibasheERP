@@ -1,5 +1,6 @@
 using ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
 using ZibasheERP.Application.Features.Shipments.CreateShipment;
+using ZibasheERP.Application.Features.Shipments.MarkDelivered;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using Xunit;
@@ -65,6 +66,30 @@ public sealed class FulfillmentAndShipmentTests
         Assert.True(repository.SaveChangesCalled);
     }
 
+    [Fact]
+    public async Task MarkDelivered_UpdatesShipmentAndOrder()
+    {
+        var order = new Order { Id = Guid.NewGuid(), Status = OrderStatus.Shipped };
+        var shipment = new Shipment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            SentAt = DateTime.UtcNow.AddDays(-1)
+        };
+        var repository = new ShipmentRepositoryStub(order, new Address(), shipment);
+        var handler = new MarkShipmentDeliveredCommandHandler(repository);
+
+        var result = await handler.Handle(
+            new MarkShipmentDeliveredCommand(shipment.Id),
+            CancellationToken.None);
+
+        Assert.True(shipment.IsDelivered);
+        Assert.Equal(OrderStatus.Delivered, order.Status);
+        Assert.Equal("Delivered", result.OrderStatus);
+        Assert.True(repository.SaveChangesCalled);
+    }
+
     private sealed class OrderRepositoryStub(Order order) : IOrderRepository
     {
         public bool SaveChangesCalled { get; private set; }
@@ -78,11 +103,16 @@ public sealed class FulfillmentAndShipmentTests
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) { SaveChangesCalled = true; return Task.CompletedTask; }
     }
 
-    private sealed class ShipmentRepositoryStub(Order order, Address address) : IShipmentRepository
+    private sealed class ShipmentRepositoryStub(
+        Order order,
+        Address address,
+        Shipment? existingShipment = null) : IShipmentRepository
     {
         public Shipment? AddedShipment { get; private set; }
         public bool SaveChangesCalled { get; private set; }
         public Task<Order?> GetOrderForShippingAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(order.Id == id ? order : null);
+        public Task<Shipment?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(existingShipment?.Id == id ? existingShipment : null);
         public Task<Address?> GetAddressAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Address?>(address.Id == id ? address : null);
         public Task<bool> TrackingCodeExistsAsync(string trackingCode, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task AddAsync(Shipment shipment, CancellationToken cancellationToken = default) { AddedShipment = shipment; return Task.CompletedTask; }
