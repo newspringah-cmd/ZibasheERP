@@ -20,3 +20,4 @@ TestResults/
 *.session
 *.session-journal
 tools/telegram-groups/output/
+deploy/.env.production
