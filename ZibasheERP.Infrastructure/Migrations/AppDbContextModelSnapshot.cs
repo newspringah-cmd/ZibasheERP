@@ -528,6 +528,21 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.ToTable("OrderItems");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.TelegramProcessedUpdate", b =>
+                {
+                    b.Property<long>("UpdateId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("UpdateId");
+
+                    b.HasIndex("ReceivedAt");
+
+                    b.ToTable("TelegramProcessedUpdates");
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.TelegramOrderDraft", b =>
                 {
                     b.Property<Guid>("Id")

@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
+    public DbSet<TelegramProcessedUpdate> TelegramProcessedUpdates => Set<TelegramProcessedUpdate>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     public DbSet<Payment> Payments => Set<Payment>();
@@ -40,6 +41,7 @@ public class AppDbContext : DbContext
         ConfigureSalesList(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureTelegramOrderDraft(modelBuilder);
+        ConfigureTelegramProcessedUpdate(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
         ConfigureShipment(modelBuilder);
@@ -180,6 +182,17 @@ public class AppDbContext : DbContext
             .HasMaxLength(50);
         modelBuilder.Entity<TelegramOrderDraft>()
             .HasIndex(draft => new { draft.TelegramId, draft.Status, draft.ExpiresAt });
+    }
+
+    private static void ConfigureTelegramProcessedUpdate(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TelegramProcessedUpdate>()
+            .HasKey(update => update.UpdateId);
+        modelBuilder.Entity<TelegramProcessedUpdate>()
+            .Property(update => update.UpdateId)
+            .ValueGeneratedNever();
+        modelBuilder.Entity<TelegramProcessedUpdate>()
+            .HasIndex(update => update.ReceivedAt);
     }
 
     private static void ConfigureOrderItem(ModelBuilder modelBuilder)

@@ -34,7 +34,7 @@ public sealed class TelegramUpdateDeduplicationFilter : IAsyncActionFilter
             return;
         }
 
-        if (!_deduplicator.TryAcquire(update.UpdateId))
+        if (!await _deduplicator.TryAcquireAsync(update.UpdateId, context.HttpContext.RequestAborted))
         {
             context.Result = new OkResult();
             return;
@@ -42,7 +42,7 @@ public sealed class TelegramUpdateDeduplicationFilter : IAsyncActionFilter
 
         var executed = await next();
         if (executed.Exception is not null || executed.Result is StatusCodeResult { StatusCode: >= 500 })
-            _deduplicator.Release(update.UpdateId);
+            await _deduplicator.ReleaseAsync(update.UpdateId, context.HttpContext.RequestAborted);
     }
 
     private static bool SecretsMatch(string supplied, string configured)
