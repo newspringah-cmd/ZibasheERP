@@ -4,6 +4,7 @@
 @OrderId = 00000000-0000-0000-0000-000000000000
 @TelegramApiKey = SET_FROM_A_SECURE_SOURCE
 @AdminApiKey = SET_FROM_A_SECURE_SOURCE
+@TelegramWebhookSecret = SET_FROM_A_SECURE_SOURCE
 
 ### Create order from Telegram
 POST {{ZibasheERP.API_HostAddress}}/api/orders
@@ -91,6 +92,25 @@ X-Api-Key: {{AdminApiKey}}
 GET {{ZibasheERP.API_HostAddress}}/api/notifications/pending?limit=20
 Accept: application/json
 X-Api-Key: {{TelegramApiKey}}
+
+### Simulate Telegram /orders webhook
+POST {{ZibasheERP.API_HostAddress}}/api/telegram/webhook
+Content-Type: application/json
+X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
+
+{
+  "update_id": 10001,
+  "message": {
+    "text": "/orders",
+    "chat": {
+      "id": 123456789,
+      "type": "private"
+    },
+    "from": {
+      "id": 123456789
+    }
+  }
+}
 
 ### Acknowledge a Telegram notification
 POST {{ZibasheERP.API_HostAddress}}/api/notifications/00000000-0000-0000-0000-000000000000/processed
