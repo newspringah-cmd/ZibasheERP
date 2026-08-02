@@ -9,6 +9,7 @@ using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
 using ZibasheERP.Application.Features.Orders.GetOrder;
 using ZibasheERP.Application.Features.Orders.GetAdminOrders;
 using ZibasheERP.Application.Features.Orders.CancelOrder;
+using ZibasheERP.Application.Features.Shipments.GetShipmentTracking;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -112,6 +113,31 @@ public class OrdersController : ControllerBase
             cancellationToken);
 
         return Ok(orders);
+    }
+
+    [HttpGet("tracking/{orderNumber}/by-telegram/{telegramId}")]
+    public async Task<IActionResult> GetTrackingByTelegram(
+        string orderNumber,
+        string telegramId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetShipmentTrackingQuery(orderNumber, null, telegramId),
+            cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpGet("tracking/{orderNumber}/by-customer/{customerId:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetTrackingByCustomer(
+        string orderNumber,
+        Guid customerId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(
+            new GetShipmentTrackingQuery(orderNumber, customerId, null),
+            cancellationToken);
+        return result is null ? NotFound() : Ok(result);
     }
 
     [HttpPost("{id:guid}/decant")]

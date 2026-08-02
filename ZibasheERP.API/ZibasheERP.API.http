@@ -421,3 +421,6 @@ X-Api-Key: {{AdminApiKey}}
 ### Retry failed Telegram notification
 POST {{ZibasheERP.API_HostAddress}}/api/notifications/00000000-0000-0000-0000-000000000000/retry
 X-Api-Key: {{AdminApiKey}}
+### Get shipment tracking for Telegram customer
+GET {{ZibasheERP.API_HostAddress}}/api/orders/tracking/ZS-ORDER-NUMBER/by-telegram/123456789
+X-Api-Key: {{TelegramApiKey}}

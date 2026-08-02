@@ -18,6 +18,7 @@ using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
 using ZibasheERP.Application.Features.Orders.SetDeliveryAddress;
 using ZibasheERP.Application.Features.Payments.GetPaymentBalance;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
+using ZibasheERP.Application.Features.Shipments.GetShipmentTracking;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
 using ZibasheERP.Domain.Entities;
@@ -154,7 +155,7 @@ public sealed class TelegramWebhookController : ControllerBase
             return Ok();
         }
 
-        if (command is TelegramCommand.Start or TelegramCommand.Orders or TelegramCommand.Addresses or TelegramCommand.Balance)
+        if (command is TelegramCommand.Start or TelegramCommand.Orders or TelegramCommand.Addresses or TelegramCommand.Balance or TelegramCommand.Track)
         {
             var usernameLink = await _mediator.Send(
                 new LinkTelegramByUsernameCommand(
@@ -203,6 +204,16 @@ public sealed class TelegramWebhookController : ControllerBase
                 await SendAccountBalanceAsync(
                     message.Chat.Id,
                     message.From.Id.ToString(),
+                    cancellationToken);
+                return Ok();
+            }
+
+            if (command == TelegramCommand.Track)
+            {
+                await SendShipmentTrackingAsync(
+                    message.Chat.Id,
+                    message.From.Id.ToString(),
+                    CommandArgument(message.Text),
                     cancellationToken);
                 return Ok();
             }
@@ -670,6 +681,37 @@ public sealed class TelegramWebhookController : ControllerBase
         }
     }
 
+    private async Task SendShipmentTrackingAsync(
+        long chatId,
+        string telegramId,
+        string? orderNumber,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(orderNumber))
+        {
+            await ReplyAsync(chatId, "شماره سفارش را وارد کنید؛ مثال:\n/track ZS-20260803-1001", cancellationToken);
+            return;
+        }
+
+        var tracking = await _mediator.Send(
+            new GetShipmentTrackingQuery(orderNumber, null, telegramId),
+            cancellationToken);
+        if (tracking is null)
+        {
+            await ReplyAsync(chatId, "سفارش پیدا نشد یا متعلق به حساب شما نیست.", cancellationToken);
+            return;
+        }
+
+        var shipment = string.IsNullOrWhiteSpace(tracking.TrackingCode)
+            ? "مرسوله هنوز ثبت یا ارسال نشده است."
+            : $"شرکت حمل: {tracking.ShippingCompany}\nکد رهگیری: {tracking.TrackingCode}\n" +
+              $"زمان ارسال: {tracking.SentAt:yyyy/MM/dd HH:mm}";
+        await ReplyAsync(
+            chatId,
+            $"پیگیری سفارش {tracking.OrderNumber}\nوضعیت سفارش: {TranslateStatus(tracking.OrderStatus)}\n{shipment}",
+            cancellationToken);
+    }
+
     private async Task SendAccountBalanceAsync(
         long chatId,
         string telegramId,
@@ -721,11 +763,20 @@ public sealed class TelegramWebhookController : ControllerBase
         "/lists — مشاهده لیست‌های فروش فعال\n" +
         "/orders — سفارش‌های من\n" +
         "/balance — وضعیت بدهی و اعتبار من\n" +
+        "/track شماره‌سفارش — پیگیری مرسوله\n" +
         "/addresses — آدرس‌های من\n" +
         "/addaddress — ثبت آدرس جدید\n" +
         "/pay — راهنمای ثبت پرداخت\n" +
         "/cancel — لغو فرآیند سفارش نیمه‌کاره\n" +
         "/help — نمایش این راهنما";
+
+    private static string? CommandArgument(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        var parts = text.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2 ? parts[1].Trim() : null;
+    }
 
     private static string AddressCommandHelp() =>
         "برای ثبت آدرس از قالب زیر استفاده کنید:\n" +

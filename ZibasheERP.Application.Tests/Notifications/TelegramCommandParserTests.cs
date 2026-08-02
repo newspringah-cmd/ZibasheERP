@@ -47,4 +47,10 @@ public sealed class TelegramCommandParserTests
     {
         Assert.Equal(TelegramCommand.Balance, TelegramCommandParser.Parse("/balance"));
     }
+
+    [Fact]
+    public void Parse_TrackWithOrderNumber_ReturnsTrack()
+    {
+        Assert.Equal(TelegramCommand.Track, TelegramCommandParser.Parse("/track ZS-1001"));
+    }
 }
