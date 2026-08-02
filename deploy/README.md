@@ -11,6 +11,7 @@ cd deploy
 cp .env.production.example .env.production
 chmod 600 .env.production
 chmod 700 preflight.sh
+chmod 700 smoke-test.sh
 ```
 
 همه مقادیر `REPLACE_...` و `CHANGE_ME` را با Secretهای تصادفی جایگزین کنید. فایل واقعی `.env.production` نباید وارد Git، پیام‌رسان یا backup بدون رمز شود.
@@ -23,6 +24,22 @@ docker compose -f docker-compose.production.yml build --pull
 docker compose -f docker-compose.production.yml up -d
 docker compose -f docker-compose.production.yml ps
 ```
+
+## تست قابل مشاهده پس از استقرار
+
+ابتدا تست امن را اجرا کنید؛ این تست سلامت API و دیتابیس، ردشدن API key نامعتبر و پذیرش کلید ادمین را بررسی می‌کند و چیزی به تلگرام نمی‌فرستد:
+
+```bash
+./smoke-test.sh https://API_DOMAIN
+```
+
+خروجی هر مرحله باید `PASS` باشد و گزارش آمادگی گروه‌ها نیز نمایش داده می‌شود. برای ارسال یک پیام واقعی و غیرمحرمانه به گروه آزمایشی، شناسه UUID همان گروه در ERP را از `GET /api/telegram-groups` بردارید و اجرا کنید:
+
+```bash
+./smoke-test.sh https://API_DOMAIN TELEGRAM_GROUP_UUID
+```
+
+پاسخ `PASS` با وضعیت `HTTP 202` یعنی پیام در Outbox قرار گرفته است؛ سپس باید پیام تأیید اتصال را داخل همان گروه تلگرام مشاهده کنید. این آزمون را فقط روی گروهی اجرا کنید که ربات قبلاً عضویت و اجازه ارسال آن را تأیید کرده است.
 
 در CI نیز پس از موفقیت Build و تست‌های .NET، Dockerfile با Buildx ساخته می‌شود ولی تا زمان تعریف Registry و سیاست انتشار VPS هیچ imageای push یا deploy نمی‌شود.
 

@@ -30,6 +30,9 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Validate deployment scripts
+        run: bash -n deploy/preflight.sh deploy/smoke-test.sh
+
       - name: Restore
         run: dotnet restore ZibasheERP.slnx
 
