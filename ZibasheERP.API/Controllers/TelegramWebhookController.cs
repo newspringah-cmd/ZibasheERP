@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
+using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Customers.GetCustomerAccount;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
@@ -401,6 +402,12 @@ public sealed class TelegramWebhookController : ControllerBase
             return;
         }
 
+        if (selection.Type == TelegramCallbackType.SetDefaultAddress)
+        {
+            await SetDefaultAddressAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
         if (selection.Type == TelegramCallbackType.ChooseDeliveryAddress)
         {
             await SendDeliveryAddressesAsync(callback, selection.SalesListId, cancellationToken);
@@ -716,10 +723,46 @@ public sealed class TelegramWebhookController : ControllerBase
             $"{index + 1}. {(address.IsDefault ? "⭐ " : string.Empty)}{address.Description ?? "آدرس"}\n" +
             $"{address.Province}، {address.City}، {address.FullAddress}\n" +
             $"گیرنده: {address.ReceiverName} — {address.Mobile}\nکدپستی: {address.PostalCode}");
-        await ReplyAsync(
-            chatId,
-            "آدرس‌های ثبت‌شده شما:\n\n" + string.Join("\n\n", lines),
-            cancellationToken);
+        var rows = addresses
+            .Where(address => !address.IsDefault)
+            .Select(address => (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"پیش‌فرض: {address.Description ?? address.City}",
+                    $"defaultaddr:{TelegramCallbackParser.EncodeGuid(address.Id)}")
+            })
+            .ToArray();
+        var message = "آدرس‌های ثبت‌شده شما:\n\n" + string.Join("\n\n", lines);
+        if (rows.Length == 0)
+            await ReplyAsync(chatId, message, cancellationToken);
+        else
+            await _sender.SendInlineKeyboardAsync(
+                chatId.ToString(),
+                message + "\n\nبرای تغییر آدرس پیش‌فرض، دکمه آدرس موردنظر را بزنید.",
+                rows,
+                cancellationToken);
+    }
+
+    private async Task SetDefaultAddressAsync(
+        TelegramCallbackQuery callback,
+        Guid addressId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _mediator.Send(
+                new SetDefaultAddressCommand(addressId, null, callback.From.Id.ToString()),
+                cancellationToken);
+            await ReplyAsync(
+                callback.Message!.Chat.Id,
+                "آدرس پیش‌فرض با موفقیت تغییر کرد.",
+                cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, "آدرس پیش‌فرض شد.", cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken);
+        }
     }
 
     private async Task AddTelegramAddressAsync(

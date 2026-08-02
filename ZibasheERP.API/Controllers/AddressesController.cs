@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
+using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
@@ -96,6 +97,18 @@ public sealed class AddressesController : ControllerBase
                 value.FullAddress,
                 value.Description,
                 value.IsDefault));
+    }
+
+    [HttpPut("customer/{customerId:guid}/{addressId:guid}/default")]
+    public async Task<IActionResult> SetDefault(
+        Guid customerId,
+        Guid addressId,
+        CancellationToken cancellationToken)
+    {
+        await _mediator.Send(
+            new SetDefaultAddressCommand(addressId, customerId, null),
+            cancellationToken);
+        return NoContent();
     }
 
     private static string? NormalizeOptional(string? value) =>

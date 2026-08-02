@@ -17,7 +17,8 @@ public enum TelegramCallbackType
     MenuBalance = 12,
     MenuAddresses = 13,
     TrackOrder = 14,
-    ViewInvoice = 15
+    ViewInvoice = 15,
+    SetDefaultAddress = 16
 }
 
 public sealed record TelegramCallback(
@@ -79,6 +80,9 @@ public static class TelegramCallbackParser
 
         if (parts[0] == "invoice" && parts.Length == 2)
             return new(TelegramCallbackType.ViewInvoice, salesListId);
+
+        if (parts[0] == "defaultaddr" && parts.Length == 2)
+            return new(TelegramCallbackType.SetDefaultAddress, salesListId);
 
         if (parts[0] == "shipaddr" && parts.Length == 2)
             return new(TelegramCallbackType.ChooseDeliveryAddress, salesListId);

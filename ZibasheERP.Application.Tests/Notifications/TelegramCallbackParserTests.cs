@@ -117,6 +117,17 @@ public sealed class TelegramCallbackParserTests
     }
 
     [Fact]
+    public void Parse_SetDefaultAddress_RoundTripsCompactGuid()
+    {
+        var addressId = Guid.NewGuid();
+        var result = TelegramCallbackParser.Parse(
+            $"defaultaddr:{TelegramCallbackParser.EncodeGuid(addressId)}");
+
+        Assert.Equal(TelegramCallbackType.SetDefaultAddress, result.Type);
+        Assert.Equal(addressId, result.SalesListId);
+    }
+
+    [Fact]
     public void Parse_SetDeliveryAddress_RoundTripsBothIds()
     {
         var orderId = Guid.NewGuid();
