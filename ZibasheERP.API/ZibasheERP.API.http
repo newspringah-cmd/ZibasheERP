@@ -274,3 +274,20 @@ X-Api-Key: {{TelegramApiKey}}
 ### Get admin inventory overview
 GET {{ZibasheERP.API_HostAddress}}/api/inventory?limit=100
 X-Api-Key: {{AdminApiKey}}
+### Get admin perfume catalog
+GET {{ZibasheERP.API_HostAddress}}/api/perfumes?includeInactive=true&limit=100
+X-Api-Key: {{AdminApiKey}}
+
+### Create perfume
+POST {{ZibasheERP.API_HostAddress}}/api/perfumes
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "name": "نام فارسی عطر",
+  "englishName": "Perfume Name",
+  "brand": "Brand",
+  "pricePerMl": 250000,
+  "originalBottleVolumeMl": 100,
+  "notes": null
+}
