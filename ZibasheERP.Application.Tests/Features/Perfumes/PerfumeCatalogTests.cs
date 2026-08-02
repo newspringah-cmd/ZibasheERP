@@ -1,5 +1,6 @@
 using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
 using ZibasheERP.Application.Features.Perfumes.GetPerfumes;
+using ZibasheERP.Application.Features.Perfumes.ManagePerfume;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using Xunit;
@@ -78,6 +79,49 @@ public sealed class PerfumeCatalogTests
         Assert.Equal("Test Brand", result.Single().Brand);
     }
 
+    [Fact]
+    public async Task SetPerfumeStatus_DeactivatesPerfume()
+    {
+        var perfume = CreateExistingPerfume();
+        var repository = new PerfumeRepositoryStub(perfume);
+        var handler = new SetPerfumeStatusCommandHandler(repository);
+
+        var result = await handler.Handle(
+            new SetPerfumeStatusCommand(perfume.Id, false),
+            CancellationToken.None);
+
+        Assert.False(perfume.IsActive);
+        Assert.False(result.IsActive);
+        Assert.True(repository.SaveChangesCalled);
+    }
+
+    [Fact]
+    public async Task UpdatePerfumePrice_ChangesOnlyCurrentCatalogPrice()
+    {
+        var perfume = CreateExistingPerfume();
+        var repository = new PerfumeRepositoryStub(perfume);
+        var handler = new UpdatePerfumePriceCommandHandler(repository);
+
+        var result = await handler.Handle(
+            new UpdatePerfumePriceCommand(perfume.Id, 275_000),
+            CancellationToken.None);
+
+        Assert.Equal(275_000m, perfume.PricePerMl);
+        Assert.Equal(275_000m, result.PricePerMl);
+        Assert.True(repository.SaveChangesCalled);
+    }
+
+    private static Perfume CreateExistingPerfume() => new()
+    {
+        Id = Guid.NewGuid(),
+        Name = "Test Perfume",
+        EnglishName = "Test Perfume",
+        Brand = "Test Brand",
+        PricePerMl = 250_000,
+        OriginalBottleVolumeMl = 100,
+        IsActive = true
+    };
+
     private sealed class PerfumeRepositoryStub(params Perfume[] perfumes) : IPerfumeRepository
     {
         public Perfume? AddedPerfume { get; private set; }
@@ -105,6 +149,8 @@ public sealed class PerfumeCatalogTests
             AddedPerfume = perfume;
             return Task.CompletedTask;
         }
+
+        public Task UpdateAsync(Perfume perfume, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task SaveChangesAsync(CancellationToken cancellationToken = default)
         {

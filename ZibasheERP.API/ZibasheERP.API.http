@@ -354,3 +354,20 @@ X-Api-Key: {{AdminApiKey}}
 {
   "isActive": false
 }
+### Deactivate perfume
+POST {{ZibasheERP.API_HostAddress}}/api/perfumes/00000000-0000-0000-0000-000000000000/status
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "isActive": false
+}
+
+### Update perfume price per ml
+POST {{ZibasheERP.API_HostAddress}}/api/perfumes/00000000-0000-0000-0000-000000000000/price
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "pricePerMl": 275000
+}

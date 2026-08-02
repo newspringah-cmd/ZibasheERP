@@ -48,6 +48,12 @@ public sealed class PerfumeRepository : IPerfumeRepository
     public Task AddAsync(Perfume perfume, CancellationToken cancellationToken = default) =>
         _dbContext.Perfumes.AddAsync(perfume, cancellationToken).AsTask();
 
+    public Task UpdateAsync(Perfume perfume, CancellationToken cancellationToken = default)
+    {
+        _dbContext.Perfumes.Update(perfume);
+        return Task.CompletedTask;
+    }
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         await _dbContext.SaveChangesAsync(cancellationToken);

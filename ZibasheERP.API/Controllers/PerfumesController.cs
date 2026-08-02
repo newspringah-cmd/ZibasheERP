@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
 using ZibasheERP.Application.Features.Perfumes.GetPerfumes;
+using ZibasheERP.Application.Features.Perfumes.ManagePerfume;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -52,4 +53,41 @@ public sealed class PerfumesController : ControllerBase
             return Conflict(new { Message = exception.Message });
         }
     }
+
+    [HttpPost("{id:guid}/status")]
+    public async Task<IActionResult> SetStatus(
+        Guid id,
+        SetPerfumeStatusRequest request,
+        CancellationToken cancellationToken) =>
+        await Execute(() => _mediator.Send(
+            new SetPerfumeStatusCommand(id, request.IsActive), cancellationToken));
+
+    [HttpPost("{id:guid}/price")]
+    public async Task<IActionResult> UpdatePrice(
+        Guid id,
+        UpdatePerfumePriceRequest request,
+        CancellationToken cancellationToken) =>
+        await Execute(() => _mediator.Send(
+            new UpdatePerfumePriceCommand(id, request.PricePerMl), cancellationToken));
+
+    private async Task<IActionResult> Execute<T>(Func<Task<T>> action)
+    {
+        try
+        {
+            return Ok(await action());
+        }
+        catch (ValidationException exception)
+        {
+            var errors = exception.Errors.GroupBy(error => error.PropertyName)
+                .ToDictionary(group => group.Key, group => group.Select(error => error.ErrorMessage).ToArray());
+            return ValidationProblem(new ValidationProblemDetails(errors));
+        }
+        catch (InvalidOperationException exception)
+        {
+            return NotFound(new { Message = exception.Message });
+        }
+    }
+
+    public sealed record SetPerfumeStatusRequest(bool IsActive);
+    public sealed record UpdatePerfumePriceRequest(decimal PricePerMl);
 }

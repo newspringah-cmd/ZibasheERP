@@ -115,6 +115,7 @@ public sealed class BatchManagementTests
             Task.FromResult<IReadOnlyCollection<Perfume>>(new[] { perfume });
         public Task<bool> ExistsAsync(string brand, string englishName, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task AddAsync(Perfume value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UpdateAsync(Perfume value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

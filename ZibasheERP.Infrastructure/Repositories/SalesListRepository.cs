@@ -38,6 +38,7 @@ public class SalesListRepository : ISalesListRepository
             .Where(salesList =>
                 salesList.Status == SalesListStatus.Open &&
                 salesList.ReservedVolume < salesList.TotalVolume &&
+                salesList.Batch.Perfume.IsActive &&
                 !salesList.IsDeleted)
             .OrderByDescending(salesList => salesList.OpenDate)
             .Take(Math.Clamp(limit, 1, 50))

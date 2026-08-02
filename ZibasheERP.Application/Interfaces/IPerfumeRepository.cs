@@ -17,5 +17,6 @@ public interface IPerfumeRepository
         string englishName,
         CancellationToken cancellationToken = default);
     Task AddAsync(Perfume perfume, CancellationToken cancellationToken = default);
+    Task UpdateAsync(Perfume perfume, CancellationToken cancellationToken = default);
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }
