@@ -7,6 +7,7 @@ using ZibasheERP.Application.Features.Payments.ConfirmPayment;
 using ZibasheERP.Application.Features.Payments.GetPendingPayments;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
 using ZibasheERP.Application.Features.Payments.RejectPayment;
+using ZibasheERP.Application.Features.Payments.RefundPayment;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -100,6 +101,29 @@ public sealed class PaymentsController : ControllerBase
         }
     }
 
+    [HttpPost("{paymentId:guid}/refund")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Refund(
+        Guid paymentId,
+        RefundPaymentRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _mediator.Send(
+                new RefundPaymentCommand(paymentId, request.Reason),
+                cancellationToken));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new { Message = "پرداخت، سفارش یا بدهی مشتری هم‌زمان تغییر کرده است." });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { Message = exception.Message });
+        }
+    }
+
     private static ValidationProblemDetails ToErrors(ValidationException exception)
     {
         var errors = exception.Errors
@@ -111,4 +135,5 @@ public sealed class PaymentsController : ControllerBase
     }
 
     public sealed record RejectPaymentRequest(string Reason);
+    public sealed record RefundPaymentRequest(string Reason);
 }

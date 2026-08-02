@@ -20,6 +20,7 @@ public static class TelegramNotificationMessageFormatter
             "OrderShipped" => FormatShipped(root, orderNumber),
             "OrderDelivered" => $"سفارش {orderNumber} تحویل داده شد. از خرید شما سپاسگزاریم.",
             "PaymentRejected" => $"پرداخت سفارش {orderNumber} تأیید نشد. علت: {ReadString(root, "Reason") ?? "نیازمند بررسی"}",
+            "PaymentRefunded" => $"مبلغ {ReadDecimal(root, "Amount"):N0} تومان برای سفارش {orderNumber} بازپرداخت شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
             _ => $"وضعیت سفارش {orderNumber} به‌روزرسانی شد."
         };
     }

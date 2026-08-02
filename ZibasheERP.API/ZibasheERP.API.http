@@ -110,6 +110,15 @@ X-Api-Key: {{AdminApiKey}}
   "reason": "شناسه تراکنش در بانک پیدا نشد."
 }
 
+### Refund confirmed payment by admin
+POST {{ZibasheERP.API_HostAddress}}/api/payments/00000000-0000-0000-0000-000000000000/refund
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "reason": "لغو سفارش با درخواست مشتری"
+}
+
 ### Issue invoice by admin
 POST {{ZibasheERP.API_HostAddress}}/api/invoices/order/{{OrderId}}
 X-Api-Key: {{AdminApiKey}}

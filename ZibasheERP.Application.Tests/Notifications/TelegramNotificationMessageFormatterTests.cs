@@ -81,4 +81,16 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.Contains("ZS-1007", message);
         Assert.Contains("Customer request", message);
     }
+
+    [Fact]
+    public void Format_PaymentRefunded_IncludesOrderAmountAndReason()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "PaymentRefunded",
+            "{\"OrderNumber\":\"ZS-1008\",\"Amount\":750000,\"Reason\":\"Customer request\"}");
+
+        Assert.Contains("ZS-1008", message);
+        Assert.Contains("750,000", message);
+        Assert.Contains("Customer request", message);
+    }
 }

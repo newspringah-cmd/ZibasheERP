@@ -1,6 +1,7 @@
 using ZibasheERP.Application.Features.Payments.ConfirmPayment;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
 using ZibasheERP.Application.Features.Payments.RejectPayment;
+using ZibasheERP.Application.Features.Payments.RefundPayment;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Domain.Enums;
@@ -116,6 +117,66 @@ public sealed class PaymentWorkflowTests
         Assert.Equal("Rejected", result.Status);
         Assert.Equal("PaymentRejected", outbox.AddedNotification?.EventType);
         Assert.True(payments.SaveChangesCalled);
+    }
+
+    [Fact]
+    public async Task RefundPayment_RestoresDebtAndMovesOrderBackToInvoiced()
+    {
+        var order = CreateOrder(1_000_000);
+        order.Status = ZibasheERP.Domain.Entities.OrderStatus.Paid;
+        order.InvoiceIssuedAt = DateTime.UtcNow.AddMinutes(-10);
+        order.PaidAt = DateTime.UtcNow.AddMinutes(-5);
+        order.Customer!.CurrentDebt = 0;
+        var payment = new Payment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            Amount = 1_000_000,
+            Status = PaymentStatus.Confirmed,
+            IsSuccessful = true,
+            PaidAt = order.PaidAt
+        };
+        order.Payments.Add(payment);
+        var payments = new PaymentRepositoryStub(payment);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new RefundPaymentCommandHandler(payments, outbox);
+
+        var result = await handler.Handle(
+            new RefundPaymentCommand(payment.Id, "Customer request"),
+            CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Refunded, payment.Status);
+        Assert.False(payment.IsSuccessful);
+        Assert.Equal(1_000_000m, order.Customer.CurrentDebt);
+        Assert.Equal(ZibasheERP.Domain.Entities.OrderStatus.Invoiced, order.Status);
+        Assert.Null(order.PaidAt);
+        Assert.Equal("Refunded", result.PaymentStatus);
+        Assert.Equal("PaymentRefunded", outbox.AddedNotification?.EventType);
+        Assert.True(payments.SaveChangesCalled);
+    }
+
+    [Fact]
+    public async Task RefundPayment_RejectsPaymentThatIsNotConfirmed()
+    {
+        var order = CreateOrder(1_000_000);
+        var payment = new Payment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            Amount = 1_000_000,
+            Status = PaymentStatus.Pending
+        };
+        order.Payments.Add(payment);
+        var handler = new RefundPaymentCommandHandler(
+            new PaymentRepositoryStub(payment),
+            new NotificationOutboxRepositoryStub());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.Handle(
+                new RefundPaymentCommand(payment.Id, "Customer request"),
+                CancellationToken.None));
     }
 
     private static Order CreateOrder(decimal finalAmount)
