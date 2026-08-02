@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Authentication;
 using ZibasheERP.API.Data;
+using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -44,6 +45,11 @@ builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IShipmentRepository, ShipmentRepository>();
 builder.Services.AddScoped<INotificationOutboxRepository, NotificationOutboxRepository>();
+
+builder.Services.Configure<TelegramOptions>(
+    builder.Configuration.GetSection(TelegramOptions.SectionName));
+builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
+builder.Services.AddHostedService<TelegramOutboxWorker>();
 
 builder.Services
     .AddAuthentication(ApiKeyAuthenticationDefaults.Scheme)

@@ -1,0 +1,40 @@
+using ZibasheERP.Application.Notifications;
+using Xunit;
+
+namespace ZibasheERP.Application.Tests.Notifications;
+
+public sealed class TelegramNotificationMessageFormatterTests
+{
+    [Fact]
+    public void Format_OrderPaid_IncludesOrderNumber()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "OrderPaid",
+            "{\"OrderNumber\":\"ZS-1001\"}");
+
+        Assert.Contains("ZS-1001", message);
+        Assert.Contains("تأیید", message);
+    }
+
+    [Fact]
+    public void Format_OrderShipped_IncludesCarrierAndTrackingCode()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "OrderShipped",
+            "{\"OrderNumber\":\"ZS-1002\",\"ShippingCompany\":\"Post\",\"TrackingCode\":\"TRACK-42\"}");
+
+        Assert.Contains("Post", message);
+        Assert.Contains("TRACK-42", message);
+    }
+
+    [Fact]
+    public void Format_OrderDelivered_IncludesOrderNumber()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "OrderDelivered",
+            "{\"OrderNumber\":\"ZS-1003\"}");
+
+        Assert.Contains("ZS-1003", message);
+        Assert.Contains("تحویل", message);
+    }
+}
