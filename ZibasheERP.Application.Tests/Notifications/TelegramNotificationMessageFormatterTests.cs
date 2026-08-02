@@ -16,6 +16,19 @@ public sealed class TelegramNotificationMessageFormatterTests
     }
 
     [Fact]
+    public void Format_GroupDeliveryFailed_IncludesOperationalIdentifiers()
+    {
+        var result = TelegramNotificationMessageFormatter.Format(
+            "TelegramGroupDeliveryFailed",
+            "{\"CustomerId\":\"customer-1\",\"GroupChatId\":\"-100123\",\"NotificationId\":\"notification-1\",\"Error\":\"bot was kicked\"}");
+
+        Assert.Contains("customer-1", result);
+        Assert.Contains("-100123", result);
+        Assert.Contains("notification-1", result);
+        Assert.Contains("bot was kicked", result);
+    }
+
+    [Fact]
     public void Format_OrderPaid_IncludesOrderNumber()
     {
         var message = TelegramNotificationMessageFormatter.Format(

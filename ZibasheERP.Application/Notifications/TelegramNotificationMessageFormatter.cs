@@ -18,6 +18,14 @@ public static class TelegramNotificationMessageFormatter
             return ReadString(root, "Message") ??
                 "✅ اتصال گروه به سامانه زیباشه با موفقیت آزمایش شد.";
         }
+        if (eventType == "TelegramGroupDeliveryFailed")
+        {
+            return $"⚠️ هشدار ارسال گروه زیباشه\n" +
+                   $"شناسه مشتری: {ReadString(root, "CustomerId") ?? "نامشخص"}\n" +
+                   $"شناسه گروه: {ReadString(root, "GroupChatId") ?? "نامشخص"}\n" +
+                   $"شناسه اعلان: {ReadString(root, "NotificationId") ?? "نامشخص"}\n" +
+                   $"خطا: {ReadString(root, "Error") ?? "ثبت نشده"}";
+        }
         var orderNumber = ReadString(root, "OrderNumber") ?? "نامشخص";
 
         return eventType switch

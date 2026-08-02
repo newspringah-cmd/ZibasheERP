@@ -53,6 +53,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<INotificationOutboxRepository>();
+        var groupTracker = scope.ServiceProvider.GetRequiredService<ITelegramGroupMembershipTracker>();
         var pending = await repository.GetPendingAsync(
             "Telegram",
             Math.Clamp(_options.BatchSize, 1, 100),
@@ -85,6 +86,11 @@ public sealed class TelegramOutboxWorker : BackgroundService
             notification.UpdatedAt = now;
             notification.LockedUntil = null;
             notification.NextAttemptAt = null;
+            var permanentGroupFailure = !result.IsSuccessful &&
+                notification.EventType != "TelegramGroupDeliveryFailed" &&
+                TelegramDeliveryFailurePolicy.IsPermanentGroupAccessFailure(
+                    notification.Recipient,
+                    result.Error);
             if (result.IsSuccessful)
             {
                 notification.Status = NotificationOutboxStatus.Processed;
@@ -93,12 +99,24 @@ public sealed class TelegramOutboxWorker : BackgroundService
             }
             else
             {
-                notification.Status = notification.Attempts >= Math.Max(1, _options.MaxAttempts)
+                notification.Status = permanentGroupFailure ||
+                    notification.Attempts >= Math.Max(1, _options.MaxAttempts)
                     ? NotificationOutboxStatus.Failed
                     : NotificationOutboxStatus.Pending;
                 notification.LastError = Truncate(result.Error ?? "Telegram delivery failed.", 1000);
                 if (notification.Status == NotificationOutboxStatus.Pending)
                     notification.NextAttemptAt = now + NotificationRetryPolicy.DelayAfter(notification.Attempts);
+                if (permanentGroupFailure)
+                {
+                    await groupTracker.MarkUnavailableAsync(
+                        notification.Recipient,
+                        cancellationToken);
+                    await QueueAdminFailureAlertAsync(
+                        repository,
+                        notification,
+                        now,
+                        cancellationToken);
+                }
             }
 
             await repository.SaveChangesAsync(cancellationToken);
@@ -107,5 +125,38 @@ public sealed class TelegramOutboxWorker : BackgroundService
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
+
+    private async Task QueueAdminFailureAlertAsync(
+        INotificationOutboxRepository repository,
+        NotificationOutbox failedNotification,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var adminChatId = _options.AdminChatId.Trim();
+        if (string.IsNullOrWhiteSpace(adminChatId))
+        {
+            _logger.LogWarning(
+                "Telegram group delivery failed but Telegram AdminChatId is not configured. Notification {NotificationId}.",
+                failedNotification.Id);
+            return;
+        }
+
+        await repository.AddAsync(new NotificationOutbox
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = now,
+            CustomerId = failedNotification.CustomerId,
+            Channel = "Telegram",
+            EventType = "TelegramGroupDeliveryFailed",
+            Recipient = adminChatId,
+            Payload = JsonSerializer.Serialize(new
+            {
+                failedNotification.CustomerId,
+                GroupChatId = failedNotification.Recipient,
+                NotificationId = failedNotification.Id,
+                Error = failedNotification.LastError
+            })
+        }, cancellationToken);
+    }
 
 }

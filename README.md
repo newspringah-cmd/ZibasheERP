@@ -69,6 +69,7 @@ dotnet user-secrets set "ApiKeys:TelegramBot" "ANOTHER_RANDOM_SECRET_WITH_AT_LEA
 dotnet user-secrets set "Telegram:Enabled" "true" --project ZibasheERP.API\ZibasheERP.API.csproj
 dotnet user-secrets set "Telegram:BotToken" "BOT_TOKEN_FROM_BOTFATHER" --project ZibasheERP.API\ZibasheERP.API.csproj
 dotnet user-secrets set "Telegram:WebhookSecret" "A_LONG_RANDOM_WEBHOOK_SECRET" --project ZibasheERP.API\ZibasheERP.API.csproj
+dotnet user-secrets set "Telegram:AdminChatId" "ADMIN_PRIVATE_OR_GROUP_CHAT_ID" --project ZibasheERP.API\ZibasheERP.API.csproj
 ```
 
 برای فعال‌کردن خروجی امن n8n:
@@ -194,6 +195,10 @@ Content-Type: multipart/form-data
 گزارش `GET /api/telegram-groups/readiness` تعداد مشتریان نگاشت‌شده، گروه‌های فعال و غیرفعال، گروه‌هایی که هنوز توسط ربات دیده نشده‌اند و درصد آمادگی ارسال را نشان می‌دهد. پیش از فعال‌کردن workflowهای ارسال خودکار n8n روی سرور تولید، این گزارش باید بررسی شود.
 
 برای یک گروه فعال، `POST /api/telegram-groups/{id}/test-delivery` یک پیام آزمایشی بدون اطلاعات مشتری را در Outbox قرار می‌دهد. نتیجه ارسال از همان مسیر retry و گزارش اعلان‌های ناموفق عبور می‌کند؛ بنابراین برای تست واقعی دسترسی ربات، ارسال مستقیم و خارج از Outbox انجام نمی‌شود.
+
+خطاهای موقت شبکه با backoff مجدداً تلاش می‌شوند. خطاهای قطعی دسترسی گروه، مانند حذف ربات، پیدا نشدن chat یا نداشتن اجازه ارسال، اعلان را فوراً Failed و نگاشت گروه را غیرفعال می‌کنند تا مقصد نامعتبر به n8n ارائه نشود.
+
+اگر `Telegram:AdminChatId` تنظیم شده باشد، همان خطای قطعی یک هشدار عملیاتی شامل شناسه مشتری، گروه، اعلان و علت خطا را از طریق Outbox برای ادمین می‌فرستد. نبود این تنظیم در log هشدار ثبت می‌شود و هیچ اطلاعات محرمانه‌ای در تنظیمات مخزن قرار نمی‌گیرد.
 
 ## تست
 

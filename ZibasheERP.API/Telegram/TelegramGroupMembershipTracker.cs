@@ -7,6 +7,7 @@ namespace ZibasheERP.API.Telegram;
 public interface ITelegramGroupMembershipTracker
 {
     Task TrackAsync(TelegramChatMemberUpdated update, CancellationToken cancellationToken);
+    Task MarkUnavailableAsync(string chatId, CancellationToken cancellationToken);
 }
 
 public sealed class TelegramGroupMembershipTracker(
@@ -43,6 +44,24 @@ public sealed class TelegramGroupMembershipTracker(
         group.LastSeenAt = now;
         group.UpdatedAt = now;
         await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MarkUnavailableAsync(
+        string chatId,
+        CancellationToken cancellationToken)
+    {
+        var group = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
+            value => value.ChatId == chatId && !value.IsDeleted,
+            cancellationToken);
+        if (group is null || !group.IsActive)
+            return;
+
+        group.IsActive = false;
+        group.UpdatedAt = DateTime.UtcNow;
+        await context.SaveChangesAsync(cancellationToken);
+        logger.LogWarning(
+            "Telegram group {TelegramGroupChatId} was disabled after a permanent delivery failure.",
+            chatId);
     }
 
     private static bool IsGroup(string chatType) =>
