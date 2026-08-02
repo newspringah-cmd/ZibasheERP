@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.RateLimiting;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
@@ -26,6 +27,8 @@ namespace ZibasheERP.API.Controllers;
 [ApiController]
 [Route("api/telegram/webhook")]
 [AllowAnonymous]
+[EnableRateLimiting("telegram-webhook")]
+[ServiceFilter<TelegramUpdateDeduplicationFilter>]
 public sealed class TelegramWebhookController : ControllerBase
 {
     private const string SecretHeader = "X-Telegram-Bot-Api-Secret-Token";

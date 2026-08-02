@@ -3,6 +3,8 @@ using MediatR;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using ZibasheERP.API.Authentication;
 using ZibasheERP.API.Data;
 using ZibasheERP.API.Telegram;
@@ -69,9 +71,25 @@ builder.Services.AddOptions<ApiKeyOptions>()
         "Production API keys must be distinct and at least 32 characters long.")
     .ValidateOnStart();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
+builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
+builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddHostedService<TelegramOutboxWorker>();
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database", tags: new[] { "ready" });
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("telegram-webhook", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
 
 builder.Services
     .AddAuthentication(ApiKeyAuthenticationDefaults.Scheme)
@@ -101,6 +119,7 @@ app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapControllers();
 app.MapHealthChecks("/health/live", new HealthCheckOptions
