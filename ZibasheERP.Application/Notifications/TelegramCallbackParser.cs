@@ -34,6 +34,9 @@ public static class TelegramCallbackParser
         if (parts.Length < 2 || !TryDecodeGuid(parts[1], out var salesListId))
             return new(TelegramCallbackType.Unknown, Guid.Empty);
 
+        if (parts[0] == "cancel" && parts.Length == 2)
+            return new(TelegramCallbackType.Cancel, salesListId);
+
         if (parts[0] == "list" && parts.Length == 2)
             return new(TelegramCallbackType.SelectSalesList, salesListId);
 

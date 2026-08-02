@@ -45,6 +45,17 @@ public sealed class TelegramCallbackParserTests
     }
 
     [Fact]
+    public void Parse_CancelDraft_RoundTripsCompactGuid()
+    {
+        var draftId = Guid.NewGuid();
+        var result = TelegramCallbackParser.Parse(
+            $"cancel:{TelegramCallbackParser.EncodeGuid(draftId)}");
+
+        Assert.Equal(TelegramCallbackType.Cancel, result.Type);
+        Assert.Equal(draftId, result.SalesListId);
+    }
+
+    [Fact]
     public void Parse_OrderDetails_RoundTripsCompactGuid()
     {
         var orderId = Guid.NewGuid();

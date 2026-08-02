@@ -26,6 +26,16 @@ public sealed class TelegramOrderDraftRepository : ITelegramOrderDraftRepository
         CancellationToken cancellationToken = default) =>
         await _dbContext.TelegramOrderDrafts.AddAsync(draft, cancellationToken);
 
+    public Task<TelegramOrderDraft?> GetLatestPendingAsync(
+        string telegramId,
+        CancellationToken cancellationToken = default) =>
+        _dbContext.TelegramOrderDrafts
+            .Where(draft => !draft.IsDeleted &&
+                            draft.TelegramId == telegramId &&
+                            draft.Status == TelegramOrderDraftStatus.Pending)
+            .OrderByDescending(draft => draft.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default) =>
         await _dbContext.SaveChangesAsync(cancellationToken);
 }

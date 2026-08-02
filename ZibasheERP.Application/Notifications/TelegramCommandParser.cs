@@ -6,7 +6,9 @@ public enum TelegramCommand
     Start = 1,
     Orders = 2,
     Lists = 3,
-    Addresses = 4
+    Addresses = 4,
+    Help = 5,
+    Cancel = 6
 }
 
 public static class TelegramCommandParser
@@ -25,6 +27,8 @@ public static class TelegramCommandParser
             "/orders" => TelegramCommand.Orders,
             "/lists" => TelegramCommand.Lists,
             "/addresses" => TelegramCommand.Addresses,
+            "/help" => TelegramCommand.Help,
+            "/cancel" => TelegramCommand.Cancel,
             _ => TelegramCommand.Unknown
         };
     }

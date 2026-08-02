@@ -132,6 +132,21 @@ public sealed class TelegramWebhookController : ControllerBase
         }
 
         var command = TelegramCommandParser.Parse(message.Text);
+        if (command == TelegramCommand.Help)
+        {
+            await ReplyAsync(message.Chat.Id, CommandHelp(), cancellationToken);
+            return Ok();
+        }
+
+        if (command == TelegramCommand.Cancel)
+        {
+            await CancelLatestDraftAsync(
+                message.Chat.Id,
+                message.From.Id.ToString(),
+                cancellationToken);
+            return Ok();
+        }
+
         if (command == TelegramCommand.Lists)
         {
             await SendOpenListsAsync(message.Chat.Id, cancellationToken);
@@ -247,6 +262,18 @@ public sealed class TelegramWebhookController : ControllerBase
         var selection = TelegramCallbackParser.Parse(callback.Data);
         if (selection.Type == TelegramCallbackType.Cancel)
         {
+            var telegramId = callback.From.Id.ToString();
+            var draft = selection.SalesListId == Guid.Empty
+                ? await _draftRepository.GetLatestPendingAsync(telegramId, cancellationToken)
+                : await _draftRepository.GetByIdAsync(selection.SalesListId, cancellationToken);
+            if (draft is not null &&
+                draft.TelegramId == telegramId &&
+                draft.Status == TelegramOrderDraftStatus.Pending)
+            {
+                draft.Status = TelegramOrderDraftStatus.Cancelled;
+                draft.UpdatedAt = DateTime.UtcNow;
+                await _draftRepository.SaveChangesAsync(cancellationToken);
+            }
             await ReplyAsync(callback.Message.Chat.Id, "ثبت سفارش لغو شد.", cancellationToken);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
             return;
@@ -402,7 +429,12 @@ public sealed class TelegramWebhookController : ControllerBase
                         "تأیید و ثبت سفارش",
                         $"confirm:{TelegramCallbackParser.EncodeGuid(draft.Id)}")
                 },
-                new[] { new TelegramInlineButton("انصراف", "cancel") }
+                new[]
+                {
+                    new TelegramInlineButton(
+                        "انصراف",
+                        $"cancel:{TelegramCallbackParser.EncodeGuid(draft.Id)}")
+                }
             };
             await _sender.SendInlineKeyboardAsync(
                 callback.Message.Chat.Id.ToString(),
@@ -439,6 +471,15 @@ public sealed class TelegramWebhookController : ControllerBase
                 draft.OrderId.Value,
                 cancellationToken);
             await _sender.AnswerCallbackAsync(callback.Id, "این سفارش قبلاً ثبت شده است.", cancellationToken);
+            return;
+        }
+
+        if (draft.Status != TelegramOrderDraftStatus.Pending)
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "این فرآیند سفارش لغو شده یا دیگر معتبر نیست.",
+                cancellationToken);
             return;
         }
 
@@ -618,6 +659,34 @@ public sealed class TelegramWebhookController : ControllerBase
             await ReplyAsync(chatId, exception.Message + "\n\n" + AddressCommandHelp(), cancellationToken);
         }
     }
+
+    private async Task CancelLatestDraftAsync(
+        long chatId,
+        string telegramId,
+        CancellationToken cancellationToken)
+    {
+        var draft = await _draftRepository.GetLatestPendingAsync(telegramId, cancellationToken);
+        if (draft is null)
+        {
+            await ReplyAsync(chatId, "فرآیند سفارش نیمه‌کاره‌ای برای لغو وجود ندارد.", cancellationToken);
+            return;
+        }
+
+        draft.Status = TelegramOrderDraftStatus.Cancelled;
+        draft.UpdatedAt = DateTime.UtcNow;
+        await _draftRepository.SaveChangesAsync(cancellationToken);
+        await ReplyAsync(chatId, "فرآیند سفارش نیمه‌کاره لغو شد.", cancellationToken);
+    }
+
+    private static string CommandHelp() =>
+        "راهنمای ربات زیباشه:\n" +
+        "/lists — مشاهده لیست‌های فروش فعال\n" +
+        "/orders — سفارش‌های من\n" +
+        "/addresses — آدرس‌های من\n" +
+        "/addaddress — ثبت آدرس جدید\n" +
+        "/pay — راهنمای ثبت پرداخت\n" +
+        "/cancel — لغو فرآیند سفارش نیمه‌کاره\n" +
+        "/help — نمایش این راهنما";
 
     private static string AddressCommandHelp() =>
         "برای ثبت آدرس از قالب زیر استفاده کنید:\n" +

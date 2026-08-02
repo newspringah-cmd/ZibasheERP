@@ -4,7 +4,8 @@ public enum TelegramOrderDraftStatus
 {
     Pending = 1,
     Completed = 2,
-    Expired = 3
+    Expired = 3,
+    Cancelled = 4
 }
 
 public sealed class TelegramOrderDraft : BaseEntity
