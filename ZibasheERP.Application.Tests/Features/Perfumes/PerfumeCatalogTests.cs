@@ -91,6 +91,9 @@ public sealed class PerfumeCatalogTests
             Task.FromResult<IReadOnlyCollection<Perfume>>(
                 perfumes.Where(perfume => includeInactive || perfume.IsActive).Take(limit).ToArray());
 
+        public Task<Perfume?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(perfumes.FirstOrDefault(perfume => perfume.Id == id));
+
         public Task<bool> ExistsAsync(
             string brand,
             string englishName,

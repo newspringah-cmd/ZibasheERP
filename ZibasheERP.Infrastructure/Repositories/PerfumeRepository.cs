@@ -28,6 +28,13 @@ public sealed class PerfumeRepository : IPerfumeRepository
             .ToArrayAsync(cancellationToken);
     }
 
+    public Task<Perfume?> GetByIdAsync(
+        Guid id,
+        CancellationToken cancellationToken = default) =>
+        _dbContext.Perfumes.FirstOrDefaultAsync(
+            perfume => perfume.Id == id && !perfume.IsDeleted,
+            cancellationToken);
+
     public Task<bool> ExistsAsync(
         string brand,
         string englishName,

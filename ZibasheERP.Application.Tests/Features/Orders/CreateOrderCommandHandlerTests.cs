@@ -251,6 +251,10 @@ public sealed class CreateOrderCommandHandlerTests
         public Task<Batch?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<Batch?>(batch.Id == id ? batch : null);
 
+        public Task<bool> BatchNumberExistsAsync(string batchNumber, CancellationToken cancellationToken = default) =>
+            Task.FromResult(batch.BatchNumber == batchNumber);
+        public Task AddAsync(Batch value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
         public Task UpdateAsync(Batch value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

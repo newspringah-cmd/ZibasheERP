@@ -67,6 +67,9 @@ public sealed class GetInventoryQueryHandlerTests
             Task.FromResult<IReadOnlyCollection<Batch>>(batches.Take(limit).ToArray());
         public Task<Batch?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult(batches.FirstOrDefault(batch => batch.Id == id));
+        public Task<bool> BatchNumberExistsAsync(string batchNumber, CancellationToken cancellationToken = default) =>
+            Task.FromResult(batches.Any(batch => batch.BatchNumber == batchNumber));
+        public Task AddAsync(Batch batch, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task UpdateAsync(Batch batch, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

@@ -12,6 +12,14 @@ public interface IBatchRepository
         Guid id,
         CancellationToken cancellationToken = default);
 
+    Task<bool> BatchNumberExistsAsync(
+        string batchNumber,
+        CancellationToken cancellationToken = default);
+
+    Task AddAsync(
+        Batch batch,
+        CancellationToken cancellationToken = default);
+
     Task UpdateAsync(
         Batch batch,
         CancellationToken cancellationToken = default);

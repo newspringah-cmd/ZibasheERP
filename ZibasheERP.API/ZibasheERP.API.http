@@ -291,3 +291,20 @@ X-Api-Key: {{AdminApiKey}}
   "originalBottleVolumeMl": 100,
   "notes": null
 }
+### Get purchase batches
+GET {{ZibasheERP.API_HostAddress}}/api/batches?limit=100
+X-Api-Key: {{AdminApiKey}}
+
+### Create purchase batch
+POST {{ZibasheERP.API_HostAddress}}/api/batches
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "perfumeId": "11111111-1111-1111-1111-111111111111",
+  "batchNumber": "BATCH-002",
+  "purchasePrice": 20000000,
+  "totalVolumeMl": 100,
+  "purchaseDate": "2026-08-02T00:00:00Z",
+  "status": "Open"
+}

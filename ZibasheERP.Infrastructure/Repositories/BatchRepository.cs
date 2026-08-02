@@ -47,6 +47,18 @@ public class BatchRepository : IBatchRepository
         return Task.CompletedTask;
     }
 
+    public Task<bool> BatchNumberExistsAsync(
+        string batchNumber,
+        CancellationToken cancellationToken = default) =>
+        _dbContext.Batches.AnyAsync(
+            batch => !batch.IsDeleted && batch.BatchNumber == batchNumber,
+            cancellationToken);
+
+    public Task AddAsync(
+        Batch batch,
+        CancellationToken cancellationToken = default) =>
+        _dbContext.Batches.AddAsync(batch, cancellationToken).AsTask();
+
     public async Task SaveChangesAsync(
         CancellationToken cancellationToken = default)
     {
