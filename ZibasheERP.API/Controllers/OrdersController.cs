@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using FluentValidation;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
+using ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
 using ZibasheERP.Application.Features.Orders.GetOrder;
 
@@ -99,5 +100,32 @@ public class OrdersController : ControllerBase
             cancellationToken);
 
         return Ok(orders);
+    }
+
+    [HttpPost("{id:guid}/decant")]
+    [Authorize(Roles = "Admin")]
+    public Task<IActionResult> MarkDecanted(Guid id, CancellationToken cancellationToken) =>
+        Advance(id, ZibasheERP.Domain.Entities.OrderStatus.Decanted, cancellationToken);
+
+    [HttpPost("{id:guid}/ready-to-ship")]
+    [Authorize(Roles = "Admin")]
+    public Task<IActionResult> MarkReadyToShip(Guid id, CancellationToken cancellationToken) =>
+        Advance(id, ZibasheERP.Domain.Entities.OrderStatus.ReadyToShip, cancellationToken);
+
+    private async Task<IActionResult> Advance(
+        Guid id,
+        ZibasheERP.Domain.Entities.OrderStatus targetStatus,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _mediator.Send(
+                new AdvanceFulfillmentCommand(id, targetStatus),
+                cancellationToken));
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { Message = exception.Message });
+        }
     }
 }

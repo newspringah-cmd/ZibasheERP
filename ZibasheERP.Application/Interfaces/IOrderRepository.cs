@@ -10,6 +10,8 @@ public interface IOrderRepository
     // دریافت سفارش
     Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
+    Task<Order?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken = default);
+
     // دریافت بر اساس شماره سفارش
     Task<Order?> GetByOrderNumberAsync(
         string orderNumber,

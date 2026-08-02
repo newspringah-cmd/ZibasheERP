@@ -39,6 +39,15 @@ public class OrderRepository : IOrderRepository
                 cancellationToken);
     }
 
+    public Task<Order?> GetForUpdateAsync(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        return _dbContext.Orders.FirstOrDefaultAsync(
+            order => order.Id == id && !order.IsDeleted,
+            cancellationToken);
+    }
+
     public async Task<Order?> GetByOrderNumberAsync(
         string orderNumber,
         CancellationToken cancellationToken = default)

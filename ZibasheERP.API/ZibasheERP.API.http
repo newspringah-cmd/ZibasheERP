@@ -69,4 +69,18 @@ GET {{ZibasheERP.API_HostAddress}}/api/invoices/00000000-0000-0000-0000-00000000
 Accept: application/json
 X-Api-Key: {{TelegramApiKey}}
 
+### Register shipment by admin
+POST {{ZibasheERP.API_HostAddress}}/api/shipments
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "orderId": "{{OrderId}}",
+  "addressId": "00000000-0000-0000-0000-000000000000",
+  "shippingCompany": "Post",
+  "shippingCost": 150000,
+  "trackingCode": "POST-TRACKING-001",
+  "notes": "ارسال از انبار مرکزی"
+}
+
 ###

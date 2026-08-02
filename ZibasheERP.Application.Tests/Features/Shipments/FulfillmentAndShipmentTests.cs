@@ -1,0 +1,91 @@
+using ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
+using ZibasheERP.Application.Features.Shipments.CreateShipment;
+using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Domain.Entities;
+using Xunit;
+
+namespace ZibasheERP.Application.Tests.Features.Shipments;
+
+public sealed class FulfillmentAndShipmentTests
+{
+    [Fact]
+    public async Task AdvanceFulfillment_AllowsPaidToDecanted()
+    {
+        var order = new Order { Id = Guid.NewGuid(), Status = OrderStatus.Paid };
+        var repository = new OrderRepositoryStub(order);
+        var handler = new AdvanceFulfillmentCommandHandler(repository);
+
+        var result = await handler.Handle(
+            new AdvanceFulfillmentCommand(order.Id, OrderStatus.Decanted),
+            CancellationToken.None);
+
+        Assert.Equal(OrderStatus.Decanted, order.Status);
+        Assert.Equal("Paid", result.PreviousStatus);
+        Assert.True(repository.SaveChangesCalled);
+    }
+
+    [Fact]
+    public async Task CreateShipment_SnapshotsAddressAndMarksOrderShipped()
+    {
+        var customerId = Guid.NewGuid();
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customerId,
+            Status = OrderStatus.ReadyToShip
+        };
+        var address = new Address
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customerId,
+            ReceiverName = "Test Receiver",
+            Mobile = "09120000000",
+            Province = "Tehran",
+            City = "Tehran",
+            PostalCode = "1234567890",
+            FullAddress = "Test address"
+        };
+        var repository = new ShipmentRepositoryStub(order, address);
+        var handler = new CreateShipmentCommandHandler(repository);
+
+        var result = await handler.Handle(
+            new CreateShipmentCommand(
+                order.Id,
+                address.Id,
+                "Post",
+                150_000,
+                "TRACK-001",
+                null),
+            CancellationToken.None);
+
+        Assert.NotNull(repository.AddedShipment);
+        Assert.Equal(address.FullAddress, repository.AddedShipment!.FullAddress);
+        Assert.Equal(OrderStatus.Shipped, order.Status);
+        Assert.Equal("TRACK-001", result.TrackingCode);
+        Assert.True(repository.SaveChangesCalled);
+    }
+
+    private sealed class OrderRepositoryStub(Order order) : IOrderRepository
+    {
+        public bool SaveChangesCalled { get; private set; }
+        public Task<Order?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(order.Id == id ? order : null);
+        public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task AddAsync(Order value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<Order?> GetByOrderNumberAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyCollection<Order>>(Array.Empty<Order>());
+        public Task<bool> OrderNumberExistsAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task UpdateAsync(Order value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) { SaveChangesCalled = true; return Task.CompletedTask; }
+    }
+
+    private sealed class ShipmentRepositoryStub(Order order, Address address) : IShipmentRepository
+    {
+        public Shipment? AddedShipment { get; private set; }
+        public bool SaveChangesCalled { get; private set; }
+        public Task<Order?> GetOrderForShippingAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(order.Id == id ? order : null);
+        public Task<Address?> GetAddressAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Address?>(address.Id == id ? address : null);
+        public Task<bool> TrackingCodeExistsAsync(string trackingCode, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Shipment shipment, CancellationToken cancellationToken = default) { AddedShipment = shipment; return Task.CompletedTask; }
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) { SaveChangesCalled = true; return Task.CompletedTask; }
+    }
+}

@@ -74,6 +74,7 @@ public sealed class GetCustomerOrdersQueryHandlerTests
                 orders.Where(order => order.CustomerId == customerId).ToArray());
         public Task AddAsync(Order order, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<Order?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<Order?> GetByOrderNumberAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<bool> OrderNumberExistsAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task UpdateAsync(Order order, CancellationToken cancellationToken = default) => Task.CompletedTask;

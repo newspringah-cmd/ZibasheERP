@@ -226,6 +226,11 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Shipment>()
             .Property(x => x.ShippingCost)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Shipment>()
+            .HasIndex(x => x.TrackingCode)
+            .IsUnique()
+            .HasFilter("[TrackingCode] IS NOT NULL");
     }
 
     private static void ConfigureInvoice(ModelBuilder modelBuilder)

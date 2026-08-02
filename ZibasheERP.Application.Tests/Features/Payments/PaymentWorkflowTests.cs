@@ -136,6 +136,8 @@ public sealed class PaymentWorkflowTests
     {
         public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<Order?>(order.Id == id ? order : null);
+        public Task<Order?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Order?>(order.Id == id ? order : null);
         public Task AddAsync(Order value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<Order?> GetByOrderNumberAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken = default) =>
