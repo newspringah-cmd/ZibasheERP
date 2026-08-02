@@ -168,6 +168,10 @@ public class AppDbContext : DbContext
             .HasPrecision(18, 2);
 
         modelBuilder.Entity<Order>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
+
+        modelBuilder.Entity<Order>()
             .HasOne(x => x.Customer)
             .WithMany(x => x.Orders)
             .HasForeignKey(x => x.CustomerId)

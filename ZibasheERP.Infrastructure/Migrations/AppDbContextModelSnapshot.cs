@@ -444,6 +444,13 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<DateTime>("RegisteredAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsRowVersion()
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
                     b.Property<Guid>("SalesListId")
                         .HasColumnType("uniqueidentifier");
 

@@ -61,6 +61,8 @@ public class Order : BaseEntity
 
     public string? Notes { get; set; }
 
+    public byte[] RowVersion { get; set; } = [];
+
     public ICollection<OrderItem> Items { get; set; }
         = new List<OrderItem>();
 
