@@ -95,6 +95,17 @@ public sealed class TelegramCallbackParserTests
     }
 
     [Fact]
+    public void Parse_TrackOrder_RoundTripsCompactGuid()
+    {
+        var orderId = Guid.NewGuid();
+        var result = TelegramCallbackParser.Parse(
+            $"track:{TelegramCallbackParser.EncodeGuid(orderId)}");
+
+        Assert.Equal(TelegramCallbackType.TrackOrder, result.Type);
+        Assert.Equal(orderId, result.SalesListId);
+    }
+
+    [Fact]
     public void Parse_SetDeliveryAddress_RoundTripsBothIds()
     {
         var orderId = Guid.NewGuid();

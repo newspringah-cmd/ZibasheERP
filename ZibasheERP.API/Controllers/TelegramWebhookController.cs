@@ -389,6 +389,12 @@ public sealed class TelegramWebhookController : ControllerBase
             return;
         }
 
+        if (selection.Type == TelegramCallbackType.TrackOrder)
+        {
+            await SendOrderTrackingAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
         if (selection.Type == TelegramCallbackType.ChooseDeliveryAddress)
         {
             await SendDeliveryAddressesAsync(callback, selection.SalesListId, cancellationToken);
@@ -897,6 +903,15 @@ public sealed class TelegramWebhookController : ControllerBase
                     $"shipaddr:{TelegramCallbackParser.EncodeGuid(order.Id)}")
             });
         }
+        if (order.Status is "Shipped" or "Delivered")
+        {
+            rows.Add(new[]
+            {
+                new TelegramInlineButton(
+                    "پیگیری مرسوله",
+                    $"track:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+            });
+        }
 
         if (rows.Count > 0)
         {
@@ -910,6 +925,29 @@ public sealed class TelegramWebhookController : ControllerBase
         {
             await ReplyAsync(callback.Message!.Chat.Id, details, cancellationToken);
         }
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SendOrderTrackingAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var order = await _mediator.Send(new GetOrderQuery(orderId), cancellationToken);
+        if (order is null || order.Customer.TelegramId != callback.From.Id.ToString())
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "سفارش پیدا نشد یا متعلق به این حساب نیست.",
+                cancellationToken);
+            return;
+        }
+
+        await SendShipmentTrackingAsync(
+            callback.Message!.Chat.Id,
+            callback.From.Id.ToString(),
+            order.OrderNumber,
+            cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
