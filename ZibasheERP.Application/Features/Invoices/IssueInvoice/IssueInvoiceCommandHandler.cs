@@ -1,5 +1,6 @@
 using MediatR;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Domain.Enums;
 using OrderState = ZibasheERP.Domain.Entities.OrderStatus;
@@ -10,10 +11,14 @@ public sealed class IssueInvoiceCommandHandler
     : IRequestHandler<IssueInvoiceCommand, InvoiceResponse>
 {
     private readonly IInvoiceRepository _invoiceRepository;
+    private readonly INotificationOutboxRepository _outboxRepository;
 
-    public IssueInvoiceCommandHandler(IInvoiceRepository invoiceRepository)
+    public IssueInvoiceCommandHandler(
+        IInvoiceRepository invoiceRepository,
+        INotificationOutboxRepository outboxRepository)
     {
         _invoiceRepository = invoiceRepository;
+        _outboxRepository = outboxRepository;
     }
 
     public async Task<InvoiceResponse> Handle(
@@ -58,6 +63,19 @@ public sealed class IssueInvoiceCommandHandler
         order.UpdatedAt = now;
 
         await _invoiceRepository.AddAsync(invoice, cancellationToken);
+        var notification = TelegramNotificationFactory.Create(
+            order,
+            "InvoiceIssued",
+            new
+            {
+                order.Id,
+                order.OrderNumber,
+                invoice.InvoiceNumber,
+                invoice.TotalAmount
+            },
+            now);
+        if (notification is not null)
+            await _outboxRepository.AddAsync(notification, cancellationToken);
         await _invoiceRepository.SaveChangesAsync(cancellationToken);
 
         return InvoiceResponse.FromEntity(invoice);

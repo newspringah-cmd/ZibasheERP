@@ -13,6 +13,9 @@ public static class TelegramNotificationMessageFormatter
         return eventType switch
         {
             "OrderPaid" => $"پرداخت سفارش {orderNumber} با موفقیت تأیید شد.",
+            "InvoiceIssued" => $"فاکتور {ReadString(root, "InvoiceNumber") ?? string.Empty} برای سفارش {orderNumber} به مبلغ {ReadDecimal(root, "TotalAmount"):N0} تومان صادر شد.",
+            "OrderDecanted" => $"دکانت سفارش {orderNumber} انجام شد و سفارش در حال آماده‌سازی است.",
+            "OrderReadyToShip" => $"سفارش {orderNumber} آماده ارسال است.",
             "OrderShipped" => FormatShipped(root, orderNumber),
             "OrderDelivered" => $"سفارش {orderNumber} تحویل داده شد. از خرید شما سپاسگزاریم.",
             "PaymentRejected" => $"پرداخت سفارش {orderNumber} تأیید نشد. علت: {ReadString(root, "Reason") ?? "نیازمند بررسی"}",
@@ -31,4 +34,9 @@ public static class TelegramNotificationMessageFormatter
         root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+    private static decimal ReadDecimal(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) && value.TryGetDecimal(out var result)
+            ? result
+            : 0;
 }

@@ -15,7 +15,8 @@ public sealed class IssueInvoiceCommandHandlerTests
         {
             Id = Guid.NewGuid(),
             FullName = "Invoice Customer",
-            Mobile = "09120000000"
+            Mobile = "09120000000",
+            TelegramId = "123456789"
         };
         var order = new Order
         {
@@ -29,7 +30,8 @@ public sealed class IssueInvoiceCommandHandlerTests
             Items = { new OrderItem { Id = Guid.NewGuid(), RequestedVolumeMl = 2 } }
         };
         var repository = new InvoiceRepositoryStub(order);
-        var handler = new IssueInvoiceCommandHandler(repository);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new IssueInvoiceCommandHandler(repository, outbox);
 
         var result = await handler.Handle(
             new IssueInvoiceCommand(order.Id),
@@ -39,6 +41,7 @@ public sealed class IssueInvoiceCommandHandlerTests
         Assert.Equal(InvoiceStatus.Issued, repository.AddedInvoice!.Status);
         Assert.Equal(1_000_000m, result.TotalAmount);
         Assert.Equal(ZibasheERP.Domain.Entities.OrderStatus.Invoiced, order.Status);
+        Assert.Equal("InvoiceIssued", outbox.AddedNotification?.EventType);
         Assert.True(repository.SaveChangesCalled);
     }
 
@@ -64,5 +67,20 @@ public sealed class IssueInvoiceCommandHandlerTests
             SaveChangesCalled = true;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class NotificationOutboxRepositoryStub : INotificationOutboxRepository
+    {
+        public NotificationOutbox? AddedNotification { get; private set; }
+        public Task AddAsync(NotificationOutbox value, CancellationToken cancellationToken = default)
+        {
+            AddedNotification = value;
+            return Task.CompletedTask;
+        }
+        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
+        public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult<NotificationOutbox?>(null);
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

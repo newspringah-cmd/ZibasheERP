@@ -1,5 +1,6 @@
 using MediatR;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
@@ -8,10 +9,14 @@ public sealed class AdvanceFulfillmentCommandHandler
     : IRequestHandler<AdvanceFulfillmentCommand, AdvanceFulfillmentResponse>
 {
     private readonly IOrderRepository _orderRepository;
+    private readonly INotificationOutboxRepository _outboxRepository;
 
-    public AdvanceFulfillmentCommandHandler(IOrderRepository orderRepository)
+    public AdvanceFulfillmentCommandHandler(
+        IOrderRepository orderRepository,
+        INotificationOutboxRepository outboxRepository)
     {
         _orderRepository = orderRepository;
+        _outboxRepository = outboxRepository;
     }
 
     public async Task<AdvanceFulfillmentResponse> Handle(
@@ -35,6 +40,22 @@ public sealed class AdvanceFulfillmentCommandHandler
         var now = DateTime.UtcNow;
         order.Status = request.TargetStatus;
         order.UpdatedAt = now;
+        var eventType = request.TargetStatus switch
+        {
+            OrderStatus.Decanted => "OrderDecanted",
+            OrderStatus.ReadyToShip => "OrderReadyToShip",
+            _ => null
+        };
+        if (eventType is not null)
+        {
+            var notification = TelegramNotificationFactory.Create(
+                order,
+                eventType,
+                new { order.Id, order.OrderNumber, Status = request.TargetStatus.ToString() },
+                now);
+            if (notification is not null)
+                await _outboxRepository.AddAsync(notification, cancellationToken);
+        }
         await _orderRepository.SaveChangesAsync(cancellationToken);
 
         return new AdvanceFulfillmentResponse(

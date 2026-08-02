@@ -48,4 +48,26 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.Contains("ZS-1004", message);
         Assert.Contains("Bank reference not found", message);
     }
+
+    [Fact]
+    public void Format_InvoiceIssued_IncludesInvoiceAndAmount()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "InvoiceIssued",
+            "{\"OrderNumber\":\"ZS-1005\",\"InvoiceNumber\":\"INV-42\",\"TotalAmount\":1250000}");
+
+        Assert.Contains("INV-42", message);
+        Assert.Contains("1,250,000", message);
+    }
+
+    [Fact]
+    public void Format_OrderReadyToShip_IncludesOrderNumber()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "OrderReadyToShip",
+            "{\"OrderNumber\":\"ZS-1006\"}");
+
+        Assert.Contains("ZS-1006", message);
+        Assert.Contains("آماده ارسال", message);
+    }
 }

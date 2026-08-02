@@ -43,7 +43,9 @@ public class OrderRepository : IOrderRepository
         Guid id,
         CancellationToken cancellationToken = default)
     {
-        return _dbContext.Orders.FirstOrDefaultAsync(
+        return _dbContext.Orders
+            .Include(order => order.Customer)
+            .FirstOrDefaultAsync(
             order => order.Id == id && !order.IsDeleted,
             cancellationToken);
     }

@@ -12,9 +12,18 @@ public sealed class FulfillmentAndShipmentTests
     [Fact]
     public async Task AdvanceFulfillment_AllowsPaidToDecanted()
     {
-        var order = new Order { Id = Guid.NewGuid(), Status = OrderStatus.Paid };
+        var customer = new Customer { Id = Guid.NewGuid(), TelegramId = "123456789" };
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customer.Id,
+            Customer = customer,
+            OrderNumber = "ZS-DECANT-TEST",
+            Status = OrderStatus.Paid
+        };
         var repository = new OrderRepositoryStub(order);
-        var handler = new AdvanceFulfillmentCommandHandler(repository);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new AdvanceFulfillmentCommandHandler(repository, outbox);
 
         var result = await handler.Handle(
             new AdvanceFulfillmentCommand(order.Id, OrderStatus.Decanted),
@@ -22,6 +31,7 @@ public sealed class FulfillmentAndShipmentTests
 
         Assert.Equal(OrderStatus.Decanted, order.Status);
         Assert.Equal("Paid", result.PreviousStatus);
+        Assert.Equal("OrderDecanted", outbox.AddedNotification?.EventType);
         Assert.True(repository.SaveChangesCalled);
     }
 
