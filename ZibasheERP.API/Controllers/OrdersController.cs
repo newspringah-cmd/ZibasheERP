@@ -10,6 +10,7 @@ using ZibasheERP.Application.Features.Orders.GetOrder;
 using ZibasheERP.Application.Features.Orders.GetAdminOrders;
 using ZibasheERP.Application.Features.Orders.CancelOrder;
 using ZibasheERP.Application.Features.Shipments.GetShipmentTracking;
+using ZibasheERP.Application.Features.Integrations.GetOrderArtifacts;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -84,6 +85,13 @@ public class OrdersController : ControllerBase
             ? NotFound(new { Message = "سفارش پیدا نشد." })
             : Ok(order);
     }
+
+    [HttpGet("{id:guid}/artifacts")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetArtifacts(
+        Guid id,
+        CancellationToken cancellationToken) =>
+        Ok(await _mediator.Send(new GetOrderArtifactsQuery(id), cancellationToken));
 
     [HttpGet]
     [Authorize(Roles = "Admin")]

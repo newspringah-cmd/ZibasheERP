@@ -23,6 +23,18 @@ public interface ITelegramMessageSender
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendPhotoAsync(
+        string chatId,
+        string photo,
+        string caption,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> SendDocumentAsync(
+        string chatId,
+        string document,
+        string caption,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> AnswerCallbackAsync(
         string callbackQueryId,
         string? message = null,
@@ -99,6 +111,26 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                         }).ToArray()).ToArray()
                 }
             },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> SendPhotoAsync(
+        string chatId,
+        string photo,
+        string caption,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "sendPhoto",
+            new { chat_id = chatId, photo, caption },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> SendDocumentAsync(
+        string chatId,
+        string document,
+        string caption,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "sendDocument",
+            new { chat_id = chatId, document, caption },
             cancellationToken);
 
     public async Task<TelegramSendResult> AnswerCallbackAsync(

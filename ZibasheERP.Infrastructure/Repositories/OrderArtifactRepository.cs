@@ -21,6 +21,16 @@ public sealed class OrderArtifactRepository : IOrderArtifactRepository
             artifact => artifact.SourceEventId == sourceEventId && !artifact.IsDeleted,
             cancellationToken);
 
+    public async Task<IReadOnlyCollection<OrderArtifact>> GetByOrderIdAsync(
+        Guid orderId,
+        CancellationToken cancellationToken = default) =>
+        await _dbContext.Set<OrderArtifact>()
+            .AsNoTracking()
+            .Where(artifact => artifact.OrderId == orderId && !artifact.IsDeleted)
+            .OrderBy(artifact => artifact.Type)
+            .ThenByDescending(artifact => artifact.CreatedAt)
+            .ToArrayAsync(cancellationToken);
+
     public Task AddAsync(OrderArtifact artifact, CancellationToken cancellationToken = default) =>
         _dbContext.Set<OrderArtifact>().AddAsync(artifact, cancellationToken).AsTask();
 

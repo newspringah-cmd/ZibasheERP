@@ -21,6 +21,7 @@ using ZibasheERP.Application.Features.Orders.SetDeliveryAddress;
 using ZibasheERP.Application.Features.Payments.GetPaymentBalance;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
 using ZibasheERP.Application.Features.Shipments.GetShipmentTracking;
+using ZibasheERP.Application.Features.Integrations.GetOrderArtifacts;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
 using ZibasheERP.Domain.Entities;
@@ -432,6 +433,12 @@ public sealed class TelegramWebhookController : ControllerBase
         if (selection.Type == TelegramCallbackType.ConfirmDeleteAddress)
         {
             await DeleteAddressAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.ViewOrderArtifacts)
+        {
+            await SendOrderArtifactsAsync(callback, selection.SalesListId, cancellationToken);
             return;
         }
 
@@ -1039,6 +1046,12 @@ public sealed class TelegramWebhookController : ControllerBase
                     $"invoice:{TelegramCallbackParser.EncodeGuid(order.Id)}")
             });
         }
+        rows.Add(new[]
+        {
+            new TelegramInlineButton(
+                "فایل‌ها و تصاویر سفارش",
+                $"artifacts:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+        });
         if (invoice is not null && order.Status != "Paid" && order.Status != "Cancelled")
         {
             rows.Add(new[]
@@ -1142,6 +1155,41 @@ public sealed class TelegramWebhookController : ControllerBase
             $"مبلغ نهایی: {invoice.TotalAmount:N0} تومان";
 
         await ReplyAsync(callback.Message!.Chat.Id, message, cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SendOrderArtifactsAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var artifacts = await _mediator.Send(
+            new GetOrderArtifactsQuery(orderId, callback.From.Id.ToString()),
+            cancellationToken);
+        if (artifacts.Count == 0)
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "هنوز فایل یا تصویری برای این سفارش آماده نشده است.",
+                cancellationToken);
+            return;
+        }
+
+        foreach (var artifact in artifacts)
+        {
+            var file = artifact.ExternalFileId ?? artifact.FileUrl;
+            if (string.IsNullOrWhiteSpace(file))
+                continue;
+            var caption = ArtifactCaption(artifact.Type, artifact.DeliveredAt);
+            var result = artifact.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+                ? await _sender.SendPhotoAsync(
+                    callback.Message!.Chat.Id.ToString(), file, caption, cancellationToken)
+                : await _sender.SendDocumentAsync(
+                    callback.Message!.Chat.Id.ToString(), file, caption, cancellationToken);
+            if (!result.IsSuccessful)
+                _logger.LogWarning("Telegram order artifact failed: {Error}", result.Error);
+        }
+
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
@@ -1355,6 +1403,14 @@ public sealed class TelegramWebhookController : ControllerBase
         "Paid" => "پرداخت‌شده",
         "Cancelled" => "لغوشده",
         _ => status
+    };
+
+    private static string ArtifactCaption(string type, DateTime deliveredAt) => type switch
+    {
+        "InvoicePdf" => $"فاکتور سفارش — {deliveredAt:yyyy/MM/dd HH:mm}",
+        "DecantPhoto" => $"تصویر دکانت سفارش — {deliveredAt:yyyy/MM/dd HH:mm}",
+        "PostalReceipt" => $"رسید پستی سفارش — {deliveredAt:yyyy/MM/dd HH:mm}",
+        _ => $"فایل سفارش — {deliveredAt:yyyy/MM/dd HH:mm}"
     };
 
     private static bool SecretsMatch(string supplied, string configured)

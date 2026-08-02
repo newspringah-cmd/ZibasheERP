@@ -20,7 +20,8 @@ public enum TelegramCallbackType
     ViewInvoice = 15,
     SetDefaultAddress = 16,
     RequestDeleteAddress = 17,
-    ConfirmDeleteAddress = 18
+    ConfirmDeleteAddress = 18,
+    ViewOrderArtifacts = 19
 }
 
 public sealed record TelegramCallback(
@@ -91,6 +92,9 @@ public static class TelegramCallbackParser
 
         if (parts[0] == "confirmdeleteaddr" && parts.Length == 2)
             return new(TelegramCallbackType.ConfirmDeleteAddress, salesListId);
+
+        if (parts[0] == "artifacts" && parts.Length == 2)
+            return new(TelegramCallbackType.ViewOrderArtifacts, salesListId);
 
         if (parts[0] == "shipaddr" && parts.Length == 2)
             return new(TelegramCallbackType.ChooseDeliveryAddress, salesListId);

@@ -70,6 +70,9 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         public int AddCount { get; private set; }
         public Task<OrderArtifact?> GetBySourceEventIdAsync(Guid sourceEventId, CancellationToken cancellationToken = default) =>
             Task.FromResult<OrderArtifact?>(_artifact?.SourceEventId == sourceEventId ? _artifact : null);
+        public Task<IReadOnlyCollection<OrderArtifact>> GetByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<OrderArtifact>>(
+                _artifact?.OrderId == orderId ? new[] { _artifact } : Array.Empty<OrderArtifact>());
         public Task AddAsync(OrderArtifact artifact, CancellationToken cancellationToken = default)
         {
             _artifact = artifact;
