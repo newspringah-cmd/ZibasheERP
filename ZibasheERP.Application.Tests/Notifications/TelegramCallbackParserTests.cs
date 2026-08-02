@@ -6,6 +6,23 @@ namespace ZibasheERP.Application.Tests.Notifications;
 public sealed class TelegramCallbackParserTests
 {
     [Fact]
+    public void Parse_MainMenuActions_ReturnExpectedTypes()
+    {
+        Assert.Equal(
+            TelegramCallbackType.MenuLists,
+            TelegramCallbackParser.Parse("menu:lists").Type);
+        Assert.Equal(
+            TelegramCallbackType.MenuOrders,
+            TelegramCallbackParser.Parse("menu:orders").Type);
+        Assert.Equal(
+            TelegramCallbackType.MenuBalance,
+            TelegramCallbackParser.Parse("menu:balance").Type);
+        Assert.Equal(
+            TelegramCallbackType.MenuAddresses,
+            TelegramCallbackParser.Parse("menu:addresses").Type);
+    }
+
+    [Fact]
     public void Parse_ListSelection_ReturnsSalesListId()
     {
         var id = Guid.NewGuid();

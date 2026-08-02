@@ -11,7 +11,11 @@ public enum TelegramCallbackType
     ViewOrder = 6,
     StartPayment = 7,
     ChooseDeliveryAddress = 8,
-    SetDeliveryAddress = 9
+    SetDeliveryAddress = 9,
+    MenuLists = 10,
+    MenuOrders = 11,
+    MenuBalance = 12,
+    MenuAddresses = 13
 }
 
 public sealed record TelegramCallback(
@@ -29,6 +33,17 @@ public static class TelegramCallbackParser
 
         if (data == "cancel")
             return new(TelegramCallbackType.Cancel, Guid.Empty);
+
+        var menuType = data switch
+        {
+            "menu:lists" => TelegramCallbackType.MenuLists,
+            "menu:orders" => TelegramCallbackType.MenuOrders,
+            "menu:balance" => TelegramCallbackType.MenuBalance,
+            "menu:addresses" => TelegramCallbackType.MenuAddresses,
+            _ => TelegramCallbackType.Unknown
+        };
+        if (menuType != TelegramCallbackType.Unknown)
+            return new(menuType, Guid.Empty);
 
         var parts = data.Split(':');
         if (parts.Length < 2 || !TryDecodeGuid(parts[1], out var salesListId))

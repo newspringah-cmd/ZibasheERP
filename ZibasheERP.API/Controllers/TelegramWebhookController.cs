@@ -136,7 +136,7 @@ public sealed class TelegramWebhookController : ControllerBase
         var command = TelegramCommandParser.Parse(message.Text);
         if (command == TelegramCommand.Help)
         {
-            await ReplyAsync(message.Chat.Id, CommandHelp(), cancellationToken);
+            await SendMainMenuAsync(message.Chat.Id, CommandHelp(), cancellationToken);
             return Ok();
         }
 
@@ -174,7 +174,7 @@ public sealed class TelegramWebhookController : ControllerBase
 
             if (command == TelegramCommand.Start)
             {
-                await ReplyAsync(
+                await SendMainMenuAsync(
                     message.Chat.Id,
                     $"{usernameLink.CustomerName} عزیز، به زیباشه خوش آمدید 🌿\nبرای مشاهده لیست‌ها /lists و سفارش‌های خود /orders را ارسال کنید.",
                     cancellationToken);
@@ -226,6 +226,33 @@ public sealed class TelegramWebhookController : ControllerBase
 
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
         return Ok();
+    }
+
+    private async Task SendMainMenuAsync(
+        long chatId,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        var rows = new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[]
+            {
+                new TelegramInlineButton("🧴 لیست‌های فروش", "menu:lists"),
+                new TelegramInlineButton("📦 سفارش‌های من", "menu:orders")
+            },
+            new[]
+            {
+                new TelegramInlineButton("💳 حساب و اعتبار", "menu:balance"),
+                new TelegramInlineButton("📍 آدرس‌های من", "menu:addresses")
+            }
+        };
+        var result = await _sender.SendInlineKeyboardAsync(
+            chatId.ToString(),
+            message,
+            rows,
+            cancellationToken);
+        if (!result.IsSuccessful)
+            _logger.LogWarning("Telegram main menu failed: {Error}", result.Error);
     }
 
     private async Task SendOpenListsAsync(long chatId, CancellationToken cancellationToken)
@@ -281,6 +308,25 @@ public sealed class TelegramWebhookController : ControllerBase
         }
 
         var selection = TelegramCallbackParser.Parse(callback.Data);
+        if (selection.Type is TelegramCallbackType.MenuLists or
+            TelegramCallbackType.MenuOrders or
+            TelegramCallbackType.MenuBalance or
+            TelegramCallbackType.MenuAddresses)
+        {
+            var telegramId = callback.From.Id.ToString();
+            if (selection.Type == TelegramCallbackType.MenuLists)
+                await SendOpenListsAsync(callback.Message.Chat.Id, cancellationToken);
+            else if (selection.Type == TelegramCallbackType.MenuOrders)
+                await SendOrdersAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
+            else if (selection.Type == TelegramCallbackType.MenuBalance)
+                await SendAccountBalanceAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
+            else
+                await SendAddressesAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
+
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+            return;
+        }
+
         if (selection.Type == TelegramCallbackType.Cancel)
         {
             var telegramId = callback.From.Id.ToString();
