@@ -21,4 +21,5 @@ public sealed class NotificationOutbox : BaseEntity
     public DateTime? ProcessedAt { get; set; }
     public string? LastError { get; set; }
     public DateTime? LockedUntil { get; set; }
+    public DateTime? NextAttemptAt { get; set; }
 }

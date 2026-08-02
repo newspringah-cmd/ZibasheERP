@@ -359,6 +359,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<DateTime?>("LockedUntil")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<Guid?>("OrderId")
                         .HasColumnType("uniqueidentifier");
 
@@ -383,7 +386,7 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Status", "LockedUntil", "CreatedAt");
+                    b.HasIndex("Status", "NextAttemptAt", "LockedUntil", "CreatedAt");
 
                     b.ToTable("NotificationOutbox");
                 });

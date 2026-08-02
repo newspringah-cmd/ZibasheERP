@@ -40,6 +40,7 @@ public sealed class RetryFailedNotificationCommandHandler
         notification.LastError = null;
         notification.ProcessedAt = null;
         notification.LockedUntil = null;
+        notification.NextAttemptAt = null;
         notification.UpdatedAt = DateTime.UtcNow;
         await _repository.SaveChangesAsync(cancellationToken);
         return FailedNotificationMapper.ToResponse(notification);

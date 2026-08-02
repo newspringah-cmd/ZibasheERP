@@ -350,6 +350,7 @@ public class AppDbContext : DbContext
             .HasIndex(notification => new
             {
                 notification.Status,
+                notification.NextAttemptAt,
                 notification.LockedUntil,
                 notification.CreatedAt
             });

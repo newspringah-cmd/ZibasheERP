@@ -83,6 +83,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
             notification.Attempts++;
             notification.UpdatedAt = now;
             notification.LockedUntil = null;
+            notification.NextAttemptAt = null;
             if (result.IsSuccessful)
             {
                 notification.Status = NotificationOutboxStatus.Processed;
@@ -95,6 +96,8 @@ public sealed class TelegramOutboxWorker : BackgroundService
                     ? NotificationOutboxStatus.Failed
                     : NotificationOutboxStatus.Pending;
                 notification.LastError = Truncate(result.Error ?? "Telegram delivery failed.", 1000);
+                if (notification.Status == NotificationOutboxStatus.Pending)
+                    notification.NextAttemptAt = now + NotificationRetryPolicy.DelayAfter(notification.Attempts);
             }
 
             await repository.SaveChangesAsync(cancellationToken);
@@ -103,4 +106,5 @@ public sealed class TelegramOutboxWorker : BackgroundService
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
+
 }

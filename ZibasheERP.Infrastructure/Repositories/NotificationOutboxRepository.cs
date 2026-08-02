@@ -32,7 +32,8 @@ public sealed class NotificationOutboxRepository : INotificationOutboxRepository
                 SELECT TOP ({{batchSize}}) *
                 FROM [NotificationOutbox] WITH (UPDLOCK, READPAST, ROWLOCK)
                 WHERE [IsDeleted] = 0
-                  AND ([Status] = {{NotificationOutboxStatus.Pending}}
+                  AND (([Status] = {{NotificationOutboxStatus.Pending}}
+                    AND ([NextAttemptAt] IS NULL OR [NextAttemptAt] <= {{now}}))
                     OR ([Status] = {{NotificationOutboxStatus.Processing}} AND [LockedUntil] < {{now}}))
                 ORDER BY [CreatedAt]
                 """)
