@@ -395,6 +395,12 @@ public sealed class TelegramWebhookController : ControllerBase
             return;
         }
 
+        if (selection.Type == TelegramCallbackType.ViewInvoice)
+        {
+            await SendInvoiceAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
         if (selection.Type == TelegramCallbackType.ChooseDeliveryAddress)
         {
             await SendDeliveryAddressesAsync(callback, selection.SalesListId, cancellationToken);
@@ -885,6 +891,15 @@ public sealed class TelegramWebhookController : ControllerBase
         var details = $"سفارش {order.OrderNumber}\nوضعیت: {TranslateStatus(order.Status)}\n" +
             $"{string.Join("\n", items)}\n\n{invoiceLine}\nمبلغ نهایی: {order.FinalAmount:N0} تومان";
         var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (invoice is not null)
+        {
+            rows.Add(new[]
+            {
+                new TelegramInlineButton(
+                    "مشاهده فاکتور",
+                    $"invoice:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+            });
+        }
         if (invoice is not null && order.Status != "Paid" && order.Status != "Cancelled")
         {
             rows.Add(new[]
@@ -948,6 +963,46 @@ public sealed class TelegramWebhookController : ControllerBase
             callback.From.Id.ToString(),
             order.OrderNumber,
             cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SendInvoiceAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var invoice = await _mediator.Send(
+            new GetOrderInvoiceQuery(orderId),
+            cancellationToken);
+        if (invoice is null || invoice.Customer.TelegramId != callback.From.Id.ToString())
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "فاکتور پیدا نشد یا متعلق به این حساب نیست.",
+                cancellationToken);
+            return;
+        }
+
+        var lines = invoice.Items.Select((item, index) =>
+        {
+            var bottle = item.IsBottleOwner
+                ? "مالک شیشه"
+                : string.IsNullOrWhiteSpace(item.BottleName)
+                    ? "بدون شیشه"
+                    : $"شیشه: {item.BottleName} — {item.BottlePrice:N0} تومان";
+            return $"{index + 1}. {item.PerfumeName} — {item.PerfumeBrand}\n" +
+                $"{item.VolumeMl} میل × {item.PricePerMl:N0} تومان\n" +
+                $"{bottle}\nجمع ردیف: {item.LineTotal:N0} تومان";
+        });
+        var message = $"فاکتور {invoice.InvoiceNumber}\n" +
+            $"تاریخ صدور: {invoice.IssuedAt:yyyy/MM/dd HH:mm}\n" +
+            $"وضعیت: {TranslateInvoiceStatus(invoice.Status)}\n\n" +
+            $"{string.Join("\n\n", lines)}\n\n" +
+            $"جمع عطر: {invoice.PerfumeTotal:N0} تومان\n" +
+            $"جمع شیشه: {invoice.BottleTotal:N0} تومان\n" +
+            $"مبلغ نهایی: {invoice.TotalAmount:N0} تومان";
+
+        await ReplyAsync(callback.Message!.Chat.Id, message, cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
@@ -1150,6 +1205,15 @@ public sealed class TelegramWebhookController : ControllerBase
         "ReadyToShip" => "آماده ارسال",
         "Shipped" => "ارسال‌شده",
         "Delivered" => "تحویل‌شده",
+        "Cancelled" => "لغوشده",
+        _ => status
+    };
+
+    private static string TranslateInvoiceStatus(string status) => status switch
+    {
+        "Draft" => "پیش‌نویس",
+        "Issued" => "صادرشده",
+        "Paid" => "پرداخت‌شده",
         "Cancelled" => "لغوشده",
         _ => status
     };
