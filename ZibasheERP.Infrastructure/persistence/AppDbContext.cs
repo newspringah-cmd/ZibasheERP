@@ -273,6 +273,10 @@ public class AppDbContext : DbContext
             .HasPrecision(18, 2);
 
         modelBuilder.Entity<Payment>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
+
+        modelBuilder.Entity<Payment>()
             .HasIndex(x => x.TransactionId)
             .IsUnique()
             .HasFilter("[TransactionId] IS NOT NULL");

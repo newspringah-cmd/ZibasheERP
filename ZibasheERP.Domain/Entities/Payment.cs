@@ -24,4 +24,6 @@ public class Payment : BaseEntity
 
     [System.ComponentModel.DataAnnotations.MaxLength(500)]
     public string? Notes { get; set; }
+
+    public byte[] RowVersion { get; set; } = [];
 }
