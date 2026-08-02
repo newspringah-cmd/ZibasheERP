@@ -52,4 +52,7 @@ public class Customer : BaseEntity
 
     public ICollection<Address> Addresses { get; set; }
         = new List<Address>();
+
+    public CustomerTelegramGroup? TelegramGroup { get; set; }
+        = null;
 }

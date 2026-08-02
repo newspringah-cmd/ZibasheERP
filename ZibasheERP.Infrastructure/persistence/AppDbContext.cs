@@ -23,6 +23,7 @@ public class AppDbContext : DbContext
     public DbSet<OrderArtifact> OrderArtifacts => Set<OrderArtifact>();
     public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
     public DbSet<TelegramProcessedUpdate> TelegramProcessedUpdates => Set<TelegramProcessedUpdate>();
+    public DbSet<CustomerTelegramGroup> CustomerTelegramGroups => Set<CustomerTelegramGroup>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     public DbSet<Payment> Payments => Set<Payment>();
@@ -44,6 +45,7 @@ public class AppDbContext : DbContext
         ConfigureOrderArtifact(modelBuilder);
         ConfigureTelegramOrderDraft(modelBuilder);
         ConfigureTelegramProcessedUpdate(modelBuilder);
+        ConfigureCustomerTelegramGroup(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
         ConfigureShipment(modelBuilder);
@@ -97,6 +99,23 @@ public class AppDbContext : DbContext
             .HasIndex(x => new { x.CustomerId, x.IsDefault })
             .IsUnique()
             .HasFilter("[IsDefault] = 1 AND [IsDeleted] = 0");
+    }
+
+    private static void ConfigureCustomerTelegramGroup(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<CustomerTelegramGroup>()
+            .HasOne(group => group.Customer)
+            .WithOne(customer => customer.TelegramGroup)
+            .HasForeignKey<CustomerTelegramGroup>(group => group.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CustomerTelegramGroup>()
+            .HasIndex(group => group.CustomerId)
+            .IsUnique();
+
+        modelBuilder.Entity<CustomerTelegramGroup>()
+            .HasIndex(group => group.ChatId)
+            .IsUnique();
     }
 
     private static void ConfigurePerfume(ModelBuilder modelBuilder)
