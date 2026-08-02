@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
 using ZibasheERP.Application.Notifications;
 
@@ -48,7 +49,7 @@ public sealed class TelegramWebhookController : ControllerBase
         }
 
         var message = update.Message;
-        if (message?.From is null || string.IsNullOrWhiteSpace(message.Text))
+        if (message?.From is null)
             return Ok();
 
         if (!string.Equals(message.Chat.Type, "private", StringComparison.OrdinalIgnoreCase))
@@ -60,9 +61,54 @@ public sealed class TelegramWebhookController : ControllerBase
             return Ok();
         }
 
-        var response = TelegramCommandParser.Parse(message.Text) switch
+        if (message.Contact is not null)
         {
-            TelegramCommand.Start => BuildWelcomeMessage(),
+            var contactResponse = message.Contact.UserId != message.From.Id
+                ? "برای امنیت حساب، فقط شماره متعلق به خودتان را با دکمه ربات ارسال کنید."
+                : FormatLinkResult(await _mediator.Send(
+                    new LinkTelegramCustomerCommand(
+                        message.From.Id.ToString(),
+                        message.Contact.PhoneNumber,
+                        message.From.Username),
+                    cancellationToken));
+
+            await ReplyAsync(message.Chat.Id, contactResponse, cancellationToken);
+            return Ok();
+        }
+
+        if (string.IsNullOrWhiteSpace(message.Text))
+            return Ok();
+
+        var command = TelegramCommandParser.Parse(message.Text);
+        if (command is TelegramCommand.Start or TelegramCommand.Orders)
+        {
+            var usernameLink = await _mediator.Send(
+                new LinkTelegramByUsernameCommand(
+                    message.From.Id.ToString(),
+                    message.From.Username),
+                cancellationToken);
+
+            if (!IsLinked(usernameLink))
+            {
+                if (usernameLink.Status == LinkTelegramCustomerStatus.UsernameNotFound)
+                    await RequestContactAsync(message.Chat.Id, cancellationToken);
+                else
+                    await ReplyAsync(message.Chat.Id, FormatLinkResult(usernameLink), cancellationToken);
+                return Ok();
+            }
+
+            if (command == TelegramCommand.Start)
+            {
+                await ReplyAsync(
+                    message.Chat.Id,
+                    $"{usernameLink.CustomerName} عزیز، به زیباشه خوش آمدید 🌿\nبرای مشاهده سفارش‌ها /orders را ارسال کنید.",
+                    cancellationToken);
+                return Ok();
+            }
+        }
+
+        var response = command switch
+        {
             TelegramCommand.Orders => await BuildOrdersMessageAsync(
                 message.From.Id.ToString(),
                 cancellationToken),
@@ -71,6 +117,16 @@ public sealed class TelegramWebhookController : ControllerBase
 
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
         return Ok();
+    }
+
+    private async Task RequestContactAsync(long chatId, CancellationToken cancellationToken)
+    {
+        var result = await _sender.RequestContactAsync(
+            chatId.ToString(),
+            "به زیباشه خوش آمدید 🌿\nبرای اتصال امن حساب و مشاهده سفارش‌ها، شماره موبایل خود را با دکمه زیر ارسال کنید.",
+            cancellationToken);
+        if (!result.IsSuccessful)
+            _logger.LogWarning("Telegram contact request failed: {Error}", result.Error);
     }
 
     private async Task<string> BuildOrdersMessageAsync(
@@ -102,8 +158,30 @@ public sealed class TelegramWebhookController : ControllerBase
             _logger.LogWarning("Telegram webhook reply failed: {Error}", result.Error);
     }
 
-    private static string BuildWelcomeMessage() =>
-        "به زیباشه خوش آمدید 🌿\nبرای مشاهده سفارش‌های خود، فرمان /orders را ارسال کنید.";
+    private static string FormatLinkResult(LinkTelegramCustomerResult result) => result.Status switch
+    {
+        LinkTelegramCustomerStatus.Linked =>
+            $"{result.CustomerName} عزیز، حساب شما با موفقیت متصل شد. برای مشاهده سفارش‌ها /orders را ارسال کنید.",
+        LinkTelegramCustomerStatus.AlreadyLinked =>
+            $"{result.CustomerName} عزیز، حساب شما قبلاً متصل شده است. برای مشاهده سفارش‌ها /orders را ارسال کنید.",
+        LinkTelegramCustomerStatus.InvalidMobile =>
+            "شماره موبایل معتبر نیست. لطفاً از دکمه «ارسال شماره موبایل» استفاده کنید.",
+        LinkTelegramCustomerStatus.CustomerNotFound =>
+            "این شماره در زیباشه ثبت نشده است. لطفاً با پشتیبانی تماس بگیرید.",
+        LinkTelegramCustomerStatus.TelegramAlreadyLinked =>
+            "این حساب تلگرام قبلاً به شماره دیگری متصل شده است. لطفاً با پشتیبانی تماس بگیرید.",
+        LinkTelegramCustomerStatus.CustomerLinkedToAnotherTelegram =>
+            "این شماره قبلاً به حساب تلگرام دیگری متصل شده است. لطفاً با پشتیبانی تماس بگیرید.",
+        LinkTelegramCustomerStatus.UsernameNotFound =>
+            "Username شما در اطلاعات مشتریان پیدا نشد. لطفاً شماره موبایل خود را با دکمه ربات ارسال کنید.",
+        LinkTelegramCustomerStatus.UsernameLinkedToAnotherTelegram =>
+            "این Username قبلاً به حساب تلگرام دیگری متصل شده است. لطفاً با پشتیبانی تماس بگیرید.",
+        _ => "اتصال حساب انجام نشد. لطفاً دوباره تلاش کنید."
+    };
+
+    private static bool IsLinked(LinkTelegramCustomerResult result) =>
+        result.Status is LinkTelegramCustomerStatus.Linked or
+            LinkTelegramCustomerStatus.AlreadyLinked;
 
     private static string TranslateStatus(string status) => status switch
     {

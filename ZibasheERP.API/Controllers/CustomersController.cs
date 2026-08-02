@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Contracts.Customers;
+using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -62,13 +63,17 @@ public sealed class CustomersController : ControllerBase
         CreateCustomerRequest request,
         CancellationToken cancellationToken)
     {
-        var mobile = NormalizeRequired(request.Mobile);
+        var mobile = IranianMobileNormalizer.Normalize(request.Mobile);
+        if (mobile is null)
+            return BadRequest(new { Message = "شماره موبایل معتبر نیست." });
         var telegramId = NormalizeOptional(request.TelegramId);
+        var username = NormalizeUsername(request.Username);
 
         var duplicateExists = await _context.Customers.AnyAsync(
             customer => !customer.IsDeleted &&
                 (customer.Mobile == mobile ||
-                 (telegramId != null && customer.TelegramId == telegramId)),
+                 (telegramId != null && customer.TelegramId == telegramId) ||
+                 (username != null && (customer.Username == username || customer.Username == "@" + username))),
             cancellationToken);
 
         if (duplicateExists)
@@ -86,7 +91,7 @@ public sealed class CustomersController : ControllerBase
             FullName = NormalizeRequired(request.FullName),
             Mobile = mobile,
             TelegramId = telegramId,
-            Username = NormalizeOptional(request.Username),
+            Username = username,
             Notes = NormalizeOptional(request.Notes),
             WalletBalance = 0,
             CreditLimit = 0,
@@ -118,13 +123,17 @@ public sealed class CustomersController : ControllerBase
         if (customer is null)
             return NotFound();
 
-        var mobile = NormalizeRequired(request.Mobile);
+        var mobile = IranianMobileNormalizer.Normalize(request.Mobile);
+        if (mobile is null)
+            return BadRequest(new { Message = "شماره موبایل معتبر نیست." });
         var telegramId = NormalizeOptional(request.TelegramId);
+        var username = NormalizeUsername(request.Username);
         var duplicateExists = await _context.Customers.AnyAsync(
             value => value.Id != id &&
                 !value.IsDeleted &&
                 (value.Mobile == mobile ||
-                 (telegramId != null && value.TelegramId == telegramId)),
+                 (telegramId != null && value.TelegramId == telegramId) ||
+                 (username != null && (value.Username == username || value.Username == "@" + username))),
             cancellationToken);
 
         if (duplicateExists)
@@ -138,7 +147,7 @@ public sealed class CustomersController : ControllerBase
         customer.FullName = NormalizeRequired(request.FullName);
         customer.Mobile = mobile;
         customer.TelegramId = telegramId;
-        customer.Username = NormalizeOptional(request.Username);
+        customer.Username = username;
         customer.Notes = NormalizeOptional(request.Notes);
         customer.UpdatedAt = DateTime.UtcNow;
 
@@ -170,4 +179,10 @@ public sealed class CustomersController : ControllerBase
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? NormalizeUsername(string? value)
+    {
+        var username = NormalizeOptional(value)?.TrimStart('@');
+        return string.IsNullOrWhiteSpace(username) ? null : username;
+    }
 }

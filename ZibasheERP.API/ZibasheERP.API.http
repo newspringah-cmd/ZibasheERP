@@ -107,7 +107,31 @@ X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
       "type": "private"
     },
     "from": {
-      "id": 123456789
+      "id": 123456789,
+      "username": "sample_customer"
+    }
+  }
+}
+
+### Simulate Telegram contact sharing
+POST {{ZibasheERP.API_HostAddress}}/api/telegram/webhook
+Content-Type: application/json
+X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
+
+{
+  "update_id": 10002,
+  "message": {
+    "chat": {
+      "id": 123456789,
+      "type": "private"
+    },
+    "from": {
+      "id": 123456789,
+      "username": "sample_customer"
+    },
+    "contact": {
+      "phone_number": "+989120000000",
+      "user_id": 123456789
     }
   }
 }

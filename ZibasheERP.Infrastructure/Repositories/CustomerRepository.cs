@@ -36,6 +36,27 @@ public class CustomerRepository : ICustomerRepository
                 cancellationToken);
     }
 
+    public async Task<Customer?> GetByMobileAsync(
+        string mobile,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Customers.FirstOrDefaultAsync(
+            customer => customer.Mobile == mobile && !customer.IsDeleted,
+            cancellationToken);
+    }
+
+    public async Task<Customer?> GetByUsernameAsync(
+        string username,
+        CancellationToken cancellationToken = default)
+    {
+        var withPrefix = "@" + username;
+        return await _dbContext.Customers.FirstOrDefaultAsync(
+            customer =>
+                (customer.Username == username || customer.Username == withPrefix) &&
+                !customer.IsDeleted,
+            cancellationToken);
+    }
+
     public async Task AddAsync(
         Customer customer,
         CancellationToken cancellationToken = default)
@@ -50,5 +71,10 @@ public class CustomerRepository : ICustomerRepository
         _dbContext.Customers.Update(customer);
 
         return Task.CompletedTask;
+    }
+
+    public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 }

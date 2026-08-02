@@ -63,8 +63,13 @@ public sealed class GetCustomerOrdersQueryHandlerTests
             Task.FromResult(customer?.Id == id ? customer : null);
         public Task<Customer?> GetByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default) =>
             Task.FromResult(customer?.TelegramId == telegramId ? customer : null);
+        public Task<Customer?> GetByMobileAsync(string mobile, CancellationToken cancellationToken = default) =>
+            Task.FromResult(customer?.Mobile == mobile ? customer : null);
+        public Task<Customer?> GetByUsernameAsync(string username, CancellationToken cancellationToken = default) =>
+            Task.FromResult(customer?.Username == username ? customer : null);
         public Task AddAsync(Customer value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task UpdateAsync(Customer value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class OrderRepositoryStub(params Order[] orders) : IOrderRepository

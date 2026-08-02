@@ -11,6 +11,11 @@ public interface ITelegramMessageSender
         string chatId,
         string message,
         CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> RequestContactAsync(
+        string chatId,
+        string message,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record TelegramSendResult(bool IsSuccessful, string? Error = null);
@@ -34,6 +39,37 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string chatId,
         string message,
         CancellationToken cancellationToken = default)
+        => await SendRequestAsync(
+            chatId,
+            new { chat_id = chatId, text = message },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> RequestContactAsync(
+        string chatId,
+        string message,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            chatId,
+            new
+            {
+                chat_id = chatId,
+                text = message,
+                reply_markup = new
+                {
+                    keyboard = new[]
+                    {
+                        new[] { new { text = "ارسال شماره موبایل", request_contact = true } }
+                    },
+                    resize_keyboard = true,
+                    one_time_keyboard = true
+                }
+            },
+            cancellationToken);
+
+    private async Task<TelegramSendResult> SendRequestAsync(
+        string chatId,
+        object request,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_botToken))
             return new TelegramSendResult(false, "Telegram bot token is not configured.");
@@ -42,7 +78,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         {
             using var response = await _httpClient.PostAsJsonAsync(
                 $"bot{_botToken}/sendMessage",
-                new { chat_id = chatId, text = message },
+                request,
                 cancellationToken);
             var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
                 cancellationToken: cancellationToken);
