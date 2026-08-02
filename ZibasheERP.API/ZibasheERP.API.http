@@ -371,3 +371,37 @@ X-Api-Key: {{AdminApiKey}}
 {
   "pricePerMl": 275000
 }
+### Get business report (defaults to last 30 days)
+GET {{ZibasheERP.API_HostAddress}}/api/reports/business?topLimit=10
+X-Api-Key: {{AdminApiKey}}
+### Search customers for admin (username, mobile, Telegram id, name)
+GET {{ZibasheERP.API_HostAddress}}/api/customers/admin?search=sample_customer&debtOnly=false&limit=100
+X-Api-Key: {{AdminApiKey}}
+
+### Block customer
+POST {{ZibasheERP.API_HostAddress}}/api/customers/00000000-0000-0000-0000-000000000000/access
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "isBlocked": true,
+  "canPlaceOrder": false
+}
+
+### Set customer credit and wallet
+POST {{ZibasheERP.API_HostAddress}}/api/customers/00000000-0000-0000-0000-000000000000/credit
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "creditLimit": 50000000,
+  "walletBalance": 0
+}
+### Queue Telegram debt reminder
+POST {{ZibasheERP.API_HostAddress}}/api/customers/00000000-0000-0000-0000-000000000000/debt-reminder
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "message": "لطفاً برای هماهنگی تسویه با پشتیبانی تماس بگیرید."
+}

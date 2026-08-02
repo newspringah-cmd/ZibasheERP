@@ -37,11 +37,13 @@ builder.Services.AddValidatorsFromAssembly(typeof(CreateOrderValidator).Assembly
 
 // Repositories
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
+builder.Services.AddScoped<IAdminCustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<ISalesListRepository, SalesListRepository>();
 builder.Services.AddScoped<IBottleRepository, BottleRepository>();
 builder.Services.AddScoped<IBatchRepository, BatchRepository>();
 builder.Services.AddScoped<IPerfumeRepository, PerfumeRepository>();
+builder.Services.AddScoped<IReportingRepository, ReportingRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IShipmentRepository, ShipmentRepository>();

@@ -93,4 +93,15 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.Contains("750,000", message);
         Assert.Contains("Customer request", message);
     }
+
+    [Fact]
+    public void Format_DebtReminder_IncludesAmountAndCustomMessage()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "DebtReminder",
+            "{\"Amount\":750000,\"Message\":\"Please settle\"}");
+
+        Assert.Contains("750,000", message);
+        Assert.Contains("Please settle", message);
+    }
 }

@@ -3,6 +3,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Contracts.Customers;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
+using ZibasheERP.Application.Features.Customers.ManageCustomers;
+using ZibasheERP.Application.Features.Customers.SendDebtReminder;
+using MediatR;
+using FluentValidation;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -13,11 +17,67 @@ namespace ZibasheERP.API.Controllers;
 public sealed class CustomersController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IMediator _mediator;
 
-    public CustomersController(AppDbContext context)
+    public CustomersController(AppDbContext context, IMediator mediator)
     {
         _context = context;
+        _mediator = mediator;
     }
+
+    [HttpGet("admin")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> SearchForAdmin(
+        [FromQuery] string? search,
+        [FromQuery] bool debtOnly = false,
+        [FromQuery] int limit = 100,
+        CancellationToken cancellationToken = default) =>
+        Ok(await _mediator.Send(new SearchCustomersQuery(search, debtOnly, limit), cancellationToken));
+
+    [HttpPost("{id:guid}/access")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> SetAccess(
+        Guid id,
+        SetCustomerAccessRequest request,
+        CancellationToken cancellationToken) =>
+        await Execute(() => _mediator.Send(
+            new SetCustomerAccessCommand(id, request.IsBlocked, request.CanPlaceOrder),
+            cancellationToken));
+
+    [HttpPost("{id:guid}/credit")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> SetCredit(
+        Guid id,
+        SetCustomerCreditRequest request,
+        CancellationToken cancellationToken) =>
+        await Execute(() => _mediator.Send(
+            new SetCustomerCreditCommand(id, request.CreditLimit, request.WalletBalance),
+            cancellationToken));
+
+    private async Task<IActionResult> Execute<T>(Func<Task<T>> action)
+    {
+        try
+        {
+            return Ok(await action());
+        }
+        catch (ValidationException exception)
+        {
+            var errors = exception.Errors.GroupBy(error => error.PropertyName)
+                .ToDictionary(group => group.Key, group => group.Select(error => error.ErrorMessage).ToArray());
+            return ValidationProblem(new ValidationProblemDetails(errors));
+        }
+        catch (InvalidOperationException exception)
+        {
+            return NotFound(new { Message = exception.Message });
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new { Message = "اعتبار یا وضعیت مشتری هم‌زمان تغییر کرده است؛ دوباره تلاش کنید." });
+        }
+    }
+
+    public sealed record SetCustomerAccessRequest(bool IsBlocked, bool CanPlaceOrder);
+    public sealed record SetCustomerCreditRequest(decimal CreditLimit, decimal WalletBalance);
 
     [HttpGet]
     [Authorize(Roles = "Admin")]
@@ -155,6 +215,16 @@ public sealed class CustomersController : ControllerBase
         return Ok(CustomerResponse.FromEntity(customer));
     }
 
+    [HttpPost("{id:guid}/debt-reminder")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> SendDebtReminder(
+        Guid id,
+        SendDebtReminderRequest request,
+        CancellationToken cancellationToken) =>
+        await Execute(() => _mediator.Send(
+            new SendDebtReminderCommand(id, request.Message),
+            cancellationToken));
+
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(
@@ -176,6 +246,8 @@ public sealed class CustomersController : ControllerBase
     }
 
     private static string NormalizeRequired(string value) => value.Trim();
+
+    public sealed record SendDebtReminderRequest(string? Message);
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

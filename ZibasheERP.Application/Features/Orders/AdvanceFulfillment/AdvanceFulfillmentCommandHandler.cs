@@ -9,13 +9,16 @@ public sealed class AdvanceFulfillmentCommandHandler
     : IRequestHandler<AdvanceFulfillmentCommand, AdvanceFulfillmentResponse>
 {
     private readonly IOrderRepository _orderRepository;
+    private readonly IBatchRepository _batchRepository;
     private readonly INotificationOutboxRepository _outboxRepository;
 
     public AdvanceFulfillmentCommandHandler(
         IOrderRepository orderRepository,
+        IBatchRepository batchRepository,
         INotificationOutboxRepository outboxRepository)
     {
         _orderRepository = orderRepository;
+        _batchRepository = batchRepository;
         _outboxRepository = outboxRepository;
     }
 
@@ -38,6 +41,24 @@ public sealed class AdvanceFulfillmentCommandHandler
 
         var previous = order.Status;
         var now = DateTime.UtcNow;
+        if (request.TargetStatus == OrderStatus.Decanted)
+        {
+            var batchId = order.SalesList?.BatchId
+                ?? throw new InvalidOperationException("بچ سفارش بارگذاری نشده است.");
+            var batch = await _batchRepository.GetByIdAsync(batchId, cancellationToken)
+                ?? throw new InvalidOperationException("بچ سفارش پیدا نشد.");
+            var volume = order.Items.Where(item => !item.IsDeleted)
+                .Sum(item => item.RequestedVolumeMl);
+            if (volume <= 0)
+                throw new InvalidOperationException("حجم سفارش برای کسر از موجودی معتبر نیست.");
+            if (batch.RemainingVolumeMl < volume)
+                throw new InvalidOperationException("موجودی بچ برای انجام دکانت کافی نیست.");
+
+            batch.RemainingVolumeMl -= volume;
+            batch.Status = batch.RemainingVolumeMl == 0 ? "Depleted" : batch.Status;
+            batch.UpdatedAt = now;
+            await _batchRepository.UpdateAsync(batch, cancellationToken);
+        }
         order.Status = request.TargetStatus;
         order.UpdatedAt = now;
         var eventType = request.TargetStatus switch

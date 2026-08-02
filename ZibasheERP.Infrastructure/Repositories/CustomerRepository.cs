@@ -5,7 +5,7 @@ using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.Infrastructure.Repositories;
 
-public class CustomerRepository : ICustomerRepository
+public class CustomerRepository : ICustomerRepository, IAdminCustomerRepository
 {
     private readonly AppDbContext _dbContext;
 
@@ -76,5 +76,33 @@ public class CustomerRepository : ICustomerRepository
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<Customer>> SearchAsync(
+        string? search,
+        bool debtOnly,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _dbContext.Customers.AsNoTracking()
+            .Where(customer => !customer.IsDeleted);
+        if (debtOnly)
+            query = query.Where(customer => customer.CurrentDebt > 0);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().TrimStart('@');
+            query = query.Where(customer =>
+                customer.FullName.Contains(term) ||
+                customer.Mobile.Contains(term) ||
+                (customer.Username != null &&
+                 (customer.Username.Contains(term) || customer.Username == "@" + term)) ||
+                (customer.TelegramId != null && customer.TelegramId.Contains(term)));
+        }
+
+        return await query
+            .OrderByDescending(customer => customer.CurrentDebt)
+            .ThenBy(customer => customer.FullName)
+            .Take(Math.Clamp(limit, 1, 200))
+            .ToArrayAsync(cancellationToken);
     }
 }

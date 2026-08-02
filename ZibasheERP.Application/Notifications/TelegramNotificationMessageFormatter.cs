@@ -8,6 +8,11 @@ public static class TelegramNotificationMessageFormatter
     {
         using var document = JsonDocument.Parse(payload);
         var root = document.RootElement;
+        if (eventType == "DebtReminder")
+        {
+            var message = ReadString(root, "Message") ?? "لطفاً برای تسویه اقدام کنید.";
+            return $"یادآوری زیباشه: مانده بدهی شما {ReadDecimal(root, "Amount"):N0} تومان است. {message}";
+        }
         var orderNumber = ReadString(root, "OrderNumber") ?? "نامشخص";
 
         return eventType switch

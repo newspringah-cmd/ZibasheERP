@@ -13,17 +13,29 @@ public sealed class FulfillmentAndShipmentTests
     public async Task AdvanceFulfillment_AllowsPaidToDecanted()
     {
         var customer = new Customer { Id = Guid.NewGuid(), TelegramId = "123456789" };
+        var batch = new Batch
+        {
+            Id = Guid.NewGuid(),
+            RemainingVolumeMl = 100,
+            TotalVolumeMl = 100,
+            Status = "Open"
+        };
         var order = new Order
         {
             Id = Guid.NewGuid(),
             CustomerId = customer.Id,
             Customer = customer,
             OrderNumber = "ZS-DECANT-TEST",
-            Status = OrderStatus.Paid
+            Status = OrderStatus.Paid,
+            SalesList = new SalesList { BatchId = batch.Id }
         };
+        order.Items.Add(new OrderItem { RequestedVolumeMl = 20 });
         var repository = new OrderRepositoryStub(order);
         var outbox = new NotificationOutboxRepositoryStub();
-        var handler = new AdvanceFulfillmentCommandHandler(repository, outbox);
+        var handler = new AdvanceFulfillmentCommandHandler(
+            repository,
+            new BatchRepositoryStub(batch),
+            outbox);
 
         var result = await handler.Handle(
             new AdvanceFulfillmentCommand(order.Id, OrderStatus.Decanted),
@@ -32,7 +44,34 @@ public sealed class FulfillmentAndShipmentTests
         Assert.Equal(OrderStatus.Decanted, order.Status);
         Assert.Equal("Paid", result.PreviousStatus);
         Assert.Equal("OrderDecanted", outbox.AddedNotification?.EventType);
+        Assert.Equal(80m, batch.RemainingVolumeMl);
         Assert.True(repository.SaveChangesCalled);
+    }
+
+    [Fact]
+    public async Task AdvanceFulfillment_RejectsDecantWhenBatchInventoryIsInsufficient()
+    {
+        var batch = new Batch { Id = Guid.NewGuid(), RemainingVolumeMl = 10, TotalVolumeMl = 100 };
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            Customer = new Customer { TelegramId = "123456789" },
+            Status = OrderStatus.Paid,
+            SalesList = new SalesList { BatchId = batch.Id }
+        };
+        order.Items.Add(new OrderItem { RequestedVolumeMl = 20 });
+        var handler = new AdvanceFulfillmentCommandHandler(
+            new OrderRepositoryStub(order),
+            new BatchRepositoryStub(batch),
+            new NotificationOutboxRepositoryStub());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.Handle(
+                new AdvanceFulfillmentCommand(order.Id, OrderStatus.Decanted),
+                CancellationToken.None));
+
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Equal(10m, batch.RemainingVolumeMl);
     }
 
     [Fact]
@@ -142,6 +181,18 @@ public sealed class FulfillmentAndShipmentTests
         public Task<bool> OrderNumberExistsAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task UpdateAsync(Order value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) { SaveChangesCalled = true; return Task.CompletedTask; }
+    }
+
+    private sealed class BatchRepositoryStub(Batch batch) : IBatchRepository
+    {
+        public Task<IReadOnlyCollection<Batch>> GetForInventoryAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Batch>>(new[] { batch });
+        public Task<Batch?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Batch?>(batch.Id == id ? batch : null);
+        public Task<bool> BatchNumberExistsAsync(string batchNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Batch value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UpdateAsync(Batch value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class ShipmentRepositoryStub(

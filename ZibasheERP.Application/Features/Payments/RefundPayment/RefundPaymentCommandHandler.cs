@@ -38,7 +38,7 @@ public sealed class RefundPaymentCommandHandler
             return BuildResponse(payment, order, reason);
         if (payment.Status != PaymentStatus.Confirmed)
             throw new InvalidOperationException("فقط پرداخت تأییدشده قابل بازپرداخت است.");
-        if (order.Status is OrderState.Shipped or OrderState.Delivered)
+        if (order.Status is OrderState.Decanted or OrderState.ReadyToShip or OrderState.Shipped or OrderState.Delivered)
             throw new InvalidOperationException("پرداخت سفارش ارسال‌شده یا تحویل‌شده قابل بازپرداخت نیست.");
 
         var now = DateTime.UtcNow;

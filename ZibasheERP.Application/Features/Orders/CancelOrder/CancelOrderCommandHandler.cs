@@ -36,7 +36,7 @@ public sealed class CancelOrderCommandHandler
 
         if (order.Status == OrderState.Cancelled && order.CancelledAt.HasValue)
             return new(order.Id, order.Status.ToString(), order.CancelReason ?? reason, order.CancelledAt.Value);
-        if (order.Status is OrderState.Shipped or OrderState.Delivered)
+        if (order.Status is OrderState.Decanted or OrderState.ReadyToShip or OrderState.Shipped or OrderState.Delivered)
             throw new InvalidOperationException("سفارش ارسال‌شده یا تحویل‌شده قابل لغو نیست.");
         if (order.Payments.Any(payment =>
                 !payment.IsDeleted && payment.Status == PaymentStatus.Confirmed))
