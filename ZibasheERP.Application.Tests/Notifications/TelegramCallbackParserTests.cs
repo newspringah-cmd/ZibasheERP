@@ -128,6 +128,21 @@ public sealed class TelegramCallbackParserTests
     }
 
     [Fact]
+    public void Parse_DeleteAddressActions_RoundTripCompactGuid()
+    {
+        var addressId = Guid.NewGuid();
+
+        Assert.Equal(
+            TelegramCallbackType.RequestDeleteAddress,
+            TelegramCallbackParser.Parse(
+                $"deleteaddr:{TelegramCallbackParser.EncodeGuid(addressId)}").Type);
+        var confirmation = TelegramCallbackParser.Parse(
+            $"confirmdeleteaddr:{TelegramCallbackParser.EncodeGuid(addressId)}");
+        Assert.Equal(TelegramCallbackType.ConfirmDeleteAddress, confirmation.Type);
+        Assert.Equal(addressId, confirmation.SalesListId);
+    }
+
+    [Fact]
     public void Parse_SetDeliveryAddress_RoundTripsBothIds()
     {
         var orderId = Guid.NewGuid();

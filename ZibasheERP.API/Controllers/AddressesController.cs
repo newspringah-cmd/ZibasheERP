@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
+using ZibasheERP.Application.Features.Addresses.DeleteAddress;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
@@ -107,6 +108,18 @@ public sealed class AddressesController : ControllerBase
     {
         await _mediator.Send(
             new SetDefaultAddressCommand(addressId, customerId, null),
+            cancellationToken);
+        return NoContent();
+    }
+
+    [HttpDelete("customer/{customerId:guid}/{addressId:guid}")]
+    public async Task<IActionResult> Delete(
+        Guid customerId,
+        Guid addressId,
+        CancellationToken cancellationToken)
+    {
+        await _mediator.Send(
+            new DeleteAddressCommand(addressId, customerId, null),
             cancellationToken);
         return NoContent();
     }
