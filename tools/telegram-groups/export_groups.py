@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import csv
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,7 @@ FIELDS = (
     "chat_id",
     "title",
     "username",
+    "customer_username",
     "group_type",
     "is_archived",
     "is_creator",
@@ -23,6 +25,8 @@ FIELDS = (
     "exported_at_utc",
     "status",
 )
+
+CUSTOMER_USERNAME_PATTERN = re.compile(r"@([A-Za-z0-9_]{5,32})")
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +80,11 @@ def classify_status(row: dict[str, object], previous: dict[str, str] | None) -> 
     )
 
 
+def extract_customer_username(title: str) -> str:
+    match = CUSTOMER_USERNAME_PATTERN.search(title)
+    return f"@{match.group(1).lower()}" if match else ""
+
+
 async def export() -> None:
     args = parse_args()
     api_id_text = os.environ.get("TELEGRAM_API_ID", "").strip()
@@ -100,10 +109,12 @@ async def export() -> None:
                 continue
 
             chat_id = str(utils.get_peer_id(entity))
+            title = dialog.name or ""
             row: dict[str, object] = {
                 "chat_id": chat_id,
-                "title": dialog.name or "",
+                "title": title,
                 "username": getattr(entity, "username", None) or "",
+                "customer_username": extract_customer_username(title),
                 "group_type": "supergroup" if is_supergroup else "group",
                 "is_archived": dialog.folder_id == 1,
                 "is_creator": bool(getattr(entity, "creator", False)),
