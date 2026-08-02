@@ -208,6 +208,11 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Payment>()
             .Property(x => x.Amount)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Payment>()
+            .HasIndex(x => x.TransactionId)
+            .IsUnique()
+            .HasFilter("[TransactionId] IS NOT NULL");
     }
 
     private static void ConfigureShipment(ModelBuilder modelBuilder)

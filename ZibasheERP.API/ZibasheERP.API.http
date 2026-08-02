@@ -43,4 +43,21 @@ GET {{ZibasheERP.API_HostAddress}}/api/orders/by-telegram/123456789
 Accept: application/json
 X-Api-Key: {{TelegramApiKey}}
 
+### Submit payment receipt from Telegram
+POST {{ZibasheERP.API_HostAddress}}/api/payments
+Content-Type: application/json
+X-Api-Key: {{TelegramApiKey}}
+
+{
+  "orderId": "{{OrderId}}",
+  "amount": 4500000,
+  "paymentMethod": "CardToCard",
+  "transactionId": "BANK-REFERENCE-001",
+  "notes": "رسید ارسال‌شده از تلگرام"
+}
+
+### Confirm payment by admin
+POST {{ZibasheERP.API_HostAddress}}/api/payments/00000000-0000-0000-0000-000000000000/confirm
+X-Api-Key: {{AdminApiKey}}
+
 ###
