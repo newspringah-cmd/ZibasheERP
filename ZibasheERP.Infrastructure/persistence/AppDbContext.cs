@@ -119,6 +119,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Batch>()
             .Property(x => x.TotalVolumeMl)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Batch>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
     }
 
     private static void ConfigureSalesList(ModelBuilder modelBuilder)

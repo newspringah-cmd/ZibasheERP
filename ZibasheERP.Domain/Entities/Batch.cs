@@ -16,5 +16,7 @@ public class Batch : BaseEntity
 
     public string Status { get; set; } = "Draft";
 
+    public byte[] RowVersion { get; set; } = [];
+
     public Perfume Perfume { get; set; } = null!;
 }
