@@ -16,9 +16,21 @@ public interface ITelegramMessageSender
         string chatId,
         string message,
         CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> SendInlineKeyboardAsync(
+        string chatId,
+        string message,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> AnswerCallbackAsync(
+        string callbackQueryId,
+        string? message = null,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record TelegramSendResult(bool IsSuccessful, string? Error = null);
+public sealed record TelegramInlineButton(string Text, string CallbackData);
 
 public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
@@ -40,7 +52,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string message,
         CancellationToken cancellationToken = default)
         => await SendRequestAsync(
-            chatId,
+            "sendMessage",
             new { chat_id = chatId, text = message },
             cancellationToken);
 
@@ -49,7 +61,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string message,
         CancellationToken cancellationToken = default) =>
         await SendRequestAsync(
-            chatId,
+            "sendMessage",
             new
             {
                 chat_id = chatId,
@@ -66,8 +78,40 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             },
             cancellationToken);
 
-    private async Task<TelegramSendResult> SendRequestAsync(
+    public async Task<TelegramSendResult> SendInlineKeyboardAsync(
         string chatId,
+        string message,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "sendMessage",
+            new
+            {
+                chat_id = chatId,
+                text = message,
+                reply_markup = new
+                {
+                    inline_keyboard = rows.Select(row =>
+                        row.Select(button => new
+                        {
+                            text = button.Text,
+                            callback_data = button.CallbackData
+                        }).ToArray()).ToArray()
+                }
+            },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> AnswerCallbackAsync(
+        string callbackQueryId,
+        string? message = null,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "answerCallbackQuery",
+            new { callback_query_id = callbackQueryId, text = message },
+            cancellationToken);
+
+    private async Task<TelegramSendResult> SendRequestAsync(
+        string method,
         object request,
         CancellationToken cancellationToken)
     {
@@ -77,7 +121,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         try
         {
             using var response = await _httpClient.PostAsJsonAsync(
-                $"bot{_botToken}/sendMessage",
+                $"bot{_botToken}/{method}",
                 request,
                 cancellationToken);
             var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(

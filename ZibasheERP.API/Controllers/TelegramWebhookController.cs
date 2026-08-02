@@ -49,6 +49,12 @@ public sealed class TelegramWebhookController : ControllerBase
             return Unauthorized();
         }
 
+        if (update.CallbackQuery is not null)
+        {
+            await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
+            return Ok();
+        }
+
         var message = update.Message;
         if (message?.From is null)
             return Ok();
@@ -81,6 +87,12 @@ public sealed class TelegramWebhookController : ControllerBase
             return Ok();
 
         var command = TelegramCommandParser.Parse(message.Text);
+        if (command == TelegramCommand.Lists)
+        {
+            await SendOpenListsAsync(message.Chat.Id, cancellationToken);
+            return Ok();
+        }
+
         if (command is TelegramCommand.Start or TelegramCommand.Orders)
         {
             var usernameLink = await _mediator.Send(
@@ -113,7 +125,6 @@ public sealed class TelegramWebhookController : ControllerBase
             TelegramCommand.Orders => await BuildOrdersMessageAsync(
                 message.From.Id.ToString(),
                 cancellationToken),
-            TelegramCommand.Lists => await BuildOpenListsMessageAsync(cancellationToken),
             _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من"
         };
 
@@ -121,13 +132,16 @@ public sealed class TelegramWebhookController : ControllerBase
         return Ok();
     }
 
-    private async Task<string> BuildOpenListsMessageAsync(CancellationToken cancellationToken)
+    private async Task SendOpenListsAsync(long chatId, CancellationToken cancellationToken)
     {
         var lists = await _mediator.Send(
             new GetOpenSalesListsQuery(10),
             cancellationToken);
         if (lists.Count == 0)
-            return "در حال حاضر لیست فروش فعالی وجود ندارد.";
+        {
+            await ReplyAsync(chatId, "در حال حاضر لیست فروش فعالی وجود ندارد.", cancellationToken);
+            return;
+        }
 
         var lines = lists.Select((item, index) =>
         {
@@ -139,8 +153,96 @@ public sealed class TelegramWebhookController : ControllerBase
                 $"هر میل: {item.PricePerMl:N0} تومان | باقی‌مانده: {item.RemainingVolumeMl} میل | {bottle}";
         });
 
-        return "لیست‌های فروش فعال:\n\n" + string.Join("\n\n", lines) +
-            "\n\nبه‌زودی انتخاب و ثبت سفارش مستقیم از همین بخش فعال می‌شود.";
+        var buttons = lists.Select(item =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"انتخاب {item.PerfumeName}",
+                    $"list:{item.Id:N}")
+            }).ToArray();
+        var result = await _sender.SendInlineKeyboardAsync(
+            chatId.ToString(),
+            "لیست‌های فروش فعال:\n\n" + string.Join("\n\n", lines) +
+                "\n\nبرای انتخاب، دکمه عطر موردنظر را بزنید.",
+            buttons,
+            cancellationToken);
+        if (!result.IsSuccessful)
+            _logger.LogWarning("Telegram sales-list keyboard failed: {Error}", result.Error);
+    }
+
+    private async Task HandleCallbackAsync(
+        TelegramCallbackQuery callback,
+        CancellationToken cancellationToken)
+    {
+        if (callback.Message is null ||
+            !string.Equals(callback.Message.Chat.Type, "private", StringComparison.OrdinalIgnoreCase))
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "این عملیات فقط در گفت‌وگوی خصوصی ممکن است.",
+                cancellationToken);
+            return;
+        }
+
+        var selection = TelegramCallbackParser.Parse(callback.Data);
+        var lists = await _mediator.Send(new GetOpenSalesListsQuery(50), cancellationToken);
+        var salesList = lists.FirstOrDefault(item => item.Id == selection.SalesListId);
+        if (salesList is null)
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "این لیست دیگر فعال نیست.",
+                cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.SelectSalesList)
+        {
+            var volumes = new[] { 5, 10, 15, 20, 30, 50 }
+                .Where(value => value <= salesList.RemainingVolumeMl)
+                .ToArray();
+            if (volumes.Length == 0)
+            {
+                await _sender.AnswerCallbackAsync(
+                    callback.Id,
+                    "حجم قابل سفارشی باقی نمانده است.",
+                    cancellationToken);
+                return;
+            }
+
+            var rows = volumes
+                .Chunk(3)
+                .Select(row => (IReadOnlyCollection<TelegramInlineButton>)row
+                    .Select(volume => new TelegramInlineButton(
+                        $"{volume} میل",
+                        $"volume:{salesList.Id:N}:{volume}"))
+                    .ToArray())
+                .ToArray();
+            await _sender.SendInlineKeyboardAsync(
+                callback.Message.Chat.Id.ToString(),
+                $"{salesList.PerfumeName} انتخاب شد. حجم موردنظر را انتخاب کنید:",
+                rows,
+                cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.SelectVolume &&
+            selection.VolumeMl is { } volume &&
+            volume <= salesList.RemainingVolumeMl)
+        {
+            await ReplyAsync(
+                callback.Message.Chat.Id,
+                $"{salesList.PerfumeName}، حجم {volume} میل انتخاب شد.\nدر مرحله بعد انتخاب شیشه و تأیید نهایی سفارش اضافه می‌شود.",
+                cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+            return;
+        }
+
+        await _sender.AnswerCallbackAsync(
+            callback.Id,
+            "انتخاب نامعتبر است.",
+            cancellationToken);
     }
 
     private async Task RequestContactAsync(long chatId, CancellationToken cancellationToken)

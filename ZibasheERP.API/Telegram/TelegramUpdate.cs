@@ -4,7 +4,8 @@ namespace ZibasheERP.API.Telegram;
 
 public sealed record TelegramUpdate(
     [property: JsonPropertyName("update_id")] long UpdateId,
-    [property: JsonPropertyName("message")] TelegramMessage? Message);
+    [property: JsonPropertyName("message")] TelegramMessage? Message,
+    [property: JsonPropertyName("callback_query")] TelegramCallbackQuery? CallbackQuery);
 
 public sealed record TelegramMessage(
     [property: JsonPropertyName("text")] string? Text,
@@ -23,3 +24,9 @@ public sealed record TelegramUser(
 public sealed record TelegramContact(
     [property: JsonPropertyName("phone_number")] string PhoneNumber,
     [property: JsonPropertyName("user_id")] long? UserId);
+
+public sealed record TelegramCallbackQuery(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("from")] TelegramUser From,
+    [property: JsonPropertyName("message")] TelegramMessage? Message,
+    [property: JsonPropertyName("data")] string? Data);

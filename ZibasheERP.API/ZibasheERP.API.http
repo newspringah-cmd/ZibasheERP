@@ -156,6 +156,29 @@ X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
   }
 }
 
+### Simulate Telegram list-selection callback
+POST {{ZibasheERP.API_HostAddress}}/api/telegram/webhook
+Content-Type: application/json
+X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
+
+{
+  "update_id": 10004,
+  "callback_query": {
+    "id": "callback-query-id",
+    "from": {
+      "id": 123456789,
+      "username": "sample_customer"
+    },
+    "message": {
+      "chat": {
+        "id": 123456789,
+        "type": "private"
+      }
+    },
+    "data": "list:00000000000000000000000000000000"
+  }
+}
+
 ### Acknowledge a Telegram notification
 POST {{ZibasheERP.API_HostAddress}}/api/notifications/00000000-0000-0000-0000-000000000000/processed
 X-Api-Key: {{TelegramApiKey}}
