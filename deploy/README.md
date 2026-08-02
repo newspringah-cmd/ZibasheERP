@@ -23,6 +23,8 @@ docker compose -f docker-compose.production.yml up -d
 docker compose -f docker-compose.production.yml ps
 ```
 
+در CI نیز پس از موفقیت Build و تست‌های .NET، Dockerfile با Buildx ساخته می‌شود ولی تا زمان تعریف Registry و سیاست انتشار VPS هیچ imageای push یا deploy نمی‌شود.
+
 در Production، API پیش از پذیرش درخواست‌ها migrationهای EF Core را اعمال می‌کند. قبل از اولین اجرا و هر ارتقا از دیتابیس backup بگیرید.
 
 ## Reverse proxy
