@@ -6,8 +6,17 @@ obj/
 *.suo
 
 .vscode/
+.venv/
+__pycache__/
+*.py[cod]
 
 TestResults/
 
 *.cache
 *.zip
+
+# Telegram group inventory (local secrets and generated data)
+.env.telegram
+*.session
+*.session-journal
+tools/telegram-groups/output/
