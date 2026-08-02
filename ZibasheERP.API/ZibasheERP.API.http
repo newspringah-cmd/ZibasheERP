@@ -44,6 +44,15 @@ GET {{ZibasheERP.API_HostAddress}}/api/orders?status=Invoiced&limit=50
 Accept: application/json
 X-Api-Key: {{AdminApiKey}}
 
+### Cancel unpaid order by admin
+POST {{ZibasheERP.API_HostAddress}}/api/orders/{{OrderId}}/cancel
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "reason": "لغو با درخواست مشتری"
+}
+
 ### Get Telegram customer's orders
 GET {{ZibasheERP.API_HostAddress}}/api/orders/by-telegram/123456789
 Accept: application/json

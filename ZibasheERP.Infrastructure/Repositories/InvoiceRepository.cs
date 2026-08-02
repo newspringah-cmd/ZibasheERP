@@ -24,6 +24,13 @@ public sealed class InvoiceRepository : IInvoiceRepository
             invoice => invoice.OrderId == orderId && !invoice.IsDeleted,
             cancellationToken);
 
+    public Task<Invoice?> GetForUpdateByOrderIdAsync(
+        Guid orderId,
+        CancellationToken cancellationToken = default) =>
+        _dbContext.Invoices.FirstOrDefaultAsync(
+            invoice => invoice.OrderId == orderId && !invoice.IsDeleted,
+            cancellationToken);
+
     public Task<Order?> GetOrderForInvoiceAsync(Guid orderId, CancellationToken cancellationToken = default)
     {
         return _dbContext.Orders

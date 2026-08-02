@@ -36,6 +36,8 @@ public sealed class GetOrderInvoiceQueryHandlerTests
             Task.FromResult<Invoice?>(invoice.Id == id ? invoice : null);
         public Task<Invoice?> GetByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) =>
             Task.FromResult<Invoice?>(invoice.OrderId == orderId ? invoice : null);
+        public Task<Invoice?> GetForUpdateByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Invoice?>(invoice.OrderId == orderId ? invoice : null);
         public Task<Order?> GetOrderForInvoiceAsync(Guid orderId, CancellationToken cancellationToken = default) =>
             Task.FromResult<Order?>(invoice.OrderId == orderId ? invoice.Order : null);
         public Task<bool> InvoiceNumberExistsAsync(string invoiceNumber, CancellationToken cancellationToken = default) =>

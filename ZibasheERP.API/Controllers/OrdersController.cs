@@ -8,6 +8,7 @@ using ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
 using ZibasheERP.Application.Features.Orders.GetOrder;
 using ZibasheERP.Application.Features.Orders.GetAdminOrders;
+using ZibasheERP.Application.Features.Orders.CancelOrder;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -123,6 +124,29 @@ public class OrdersController : ControllerBase
     public Task<IActionResult> MarkReadyToShip(Guid id, CancellationToken cancellationToken) =>
         Advance(id, ZibasheERP.Domain.Entities.OrderStatus.ReadyToShip, cancellationToken);
 
+    [HttpPost("{id:guid}/cancel")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Cancel(
+        Guid id,
+        CancelOrderRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _mediator.Send(
+                new CancelOrderCommand(id, request.Reason),
+                cancellationToken));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new { Message = "سفارش، اعتبار مشتری یا ظرفیت لیست هم‌زمان تغییر کرده است." });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { Message = exception.Message });
+        }
+    }
+
     private async Task<IActionResult> Advance(
         Guid id,
         ZibasheERP.Domain.Entities.OrderStatus targetStatus,
@@ -139,4 +163,6 @@ public class OrdersController : ControllerBase
             return BadRequest(new { Message = exception.Message });
         }
     }
+
+    public sealed record CancelOrderRequest(string Reason);
 }

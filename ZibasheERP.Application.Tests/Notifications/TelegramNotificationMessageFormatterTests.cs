@@ -70,4 +70,15 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.Contains("ZS-1006", message);
         Assert.Contains("آماده ارسال", message);
     }
+
+    [Fact]
+    public void Format_OrderCancelled_IncludesReason()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "OrderCancelled",
+            "{\"OrderNumber\":\"ZS-1007\",\"Reason\":\"Customer request\"}");
+
+        Assert.Contains("ZS-1007", message);
+        Assert.Contains("Customer request", message);
+    }
 }

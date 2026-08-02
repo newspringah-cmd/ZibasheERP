@@ -16,6 +16,7 @@ public static class TelegramNotificationMessageFormatter
             "InvoiceIssued" => $"فاکتور {ReadString(root, "InvoiceNumber") ?? string.Empty} برای سفارش {orderNumber} به مبلغ {ReadDecimal(root, "TotalAmount"):N0} تومان صادر شد.",
             "OrderDecanted" => $"دکانت سفارش {orderNumber} انجام شد و سفارش در حال آماده‌سازی است.",
             "OrderReadyToShip" => $"سفارش {orderNumber} آماده ارسال است.",
+            "OrderCancelled" => $"سفارش {orderNumber} لغو شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
             "OrderShipped" => FormatShipped(root, orderNumber),
             "OrderDelivered" => $"سفارش {orderNumber} تحویل داده شد. از خرید شما سپاسگزاریم.",
             "PaymentRejected" => $"پرداخت سفارش {orderNumber} تأیید نشد. علت: {ReadString(root, "Reason") ?? "نیازمند بررسی"}",

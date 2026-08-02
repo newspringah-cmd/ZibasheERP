@@ -45,6 +45,9 @@ public class OrderRepository : IOrderRepository
     {
         return _dbContext.Orders
             .Include(order => order.Customer)
+            .Include(order => order.Items)
+            .Include(order => order.Payments)
+            .Include(order => order.SalesList)
             .FirstOrDefaultAsync(
             order => order.Id == id && !order.IsDeleted,
             cancellationToken);
