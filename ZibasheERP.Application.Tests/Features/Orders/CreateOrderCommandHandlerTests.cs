@@ -247,6 +247,14 @@ public sealed class CreateOrderCommandHandlerTests
 
         public Task<List<Bottle>> GetActiveAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new List<Bottle> { bottle });
+        public Task<IReadOnlyCollection<Bottle>> GetForAdminAsync(bool includeInactive, int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Bottle>>(new[] { bottle });
+        public Task<Bottle?> GetForAdminByIdAsync(Guid id, CancellationToken cancellationToken = default) => GetByIdAsync(id, cancellationToken);
+        public Task<bool> ExistsAsync(string name, int volumeMl, BottleType type, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<bool> DefaultExistsAsync(int volumeMl, BottleType type, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Bottle value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UpdateAsync(Bottle value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class FakeBatchRepository(Batch batch) : IBatchRepository

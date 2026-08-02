@@ -328,3 +328,29 @@ X-Api-Key: {{AdminApiKey}}
 ### Close sales list
 POST {{ZibasheERP.API_HostAddress}}/api/sales-lists/00000000-0000-0000-0000-000000000000/close
 X-Api-Key: {{AdminApiKey}}
+### Get admin bottle catalog
+GET {{ZibasheERP.API_HostAddress}}/api/bottles?includeInactive=true&limit=100
+X-Api-Key: {{AdminApiKey}}
+
+### Create bottle
+POST {{ZibasheERP.API_HostAddress}}/api/bottles
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "name": "20ml Fancy Bottle",
+  "volumeMl": 20,
+  "type": 2,
+  "salePrice": 150000,
+  "isDefault": true,
+  "notes": null
+}
+
+### Deactivate bottle
+POST {{ZibasheERP.API_HostAddress}}/api/bottles/00000000-0000-0000-0000-000000000000/status
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "isActive": false
+}

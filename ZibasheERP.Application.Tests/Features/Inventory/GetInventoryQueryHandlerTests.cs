@@ -82,5 +82,13 @@ public sealed class GetInventoryQueryHandlerTests
             Task.FromResult(bottles.FirstOrDefault(bottle => bottle.Type == type));
         public Task<List<Bottle>> GetActiveAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(bottles.Where(bottle => bottle.IsActive).ToList());
+        public Task<IReadOnlyCollection<Bottle>> GetForAdminAsync(bool includeInactive, int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Bottle>>(bottles.Take(limit).ToArray());
+        public Task<Bottle?> GetForAdminByIdAsync(Guid id, CancellationToken cancellationToken = default) => GetByIdAsync(id, cancellationToken);
+        public Task<bool> ExistsAsync(string name, int volumeMl, BottleType type, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<bool> DefaultExistsAsync(int volumeMl, BottleType type, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Bottle bottle, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UpdateAsync(Bottle bottle, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

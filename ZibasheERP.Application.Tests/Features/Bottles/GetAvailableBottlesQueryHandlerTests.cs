@@ -30,5 +30,13 @@ public sealed class GetAvailableBottlesQueryHandlerTests
             Task.FromResult<Bottle?>(bottles.FirstOrDefault(value => value.Id == id));
         public Task<Bottle?> GetByTypeAsync(BottleType type, CancellationToken cancellationToken = default) =>
             Task.FromResult<Bottle?>(bottles.FirstOrDefault(value => value.Type == type));
+        public Task<IReadOnlyCollection<Bottle>> GetForAdminAsync(bool includeInactive, int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Bottle>>(bottles.Take(limit).ToArray());
+        public Task<Bottle?> GetForAdminByIdAsync(Guid id, CancellationToken cancellationToken = default) => GetByIdAsync(id, cancellationToken);
+        public Task<bool> ExistsAsync(string name, int volumeMl, BottleType type, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<bool> DefaultExistsAsync(int volumeMl, BottleType type, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Bottle bottle, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UpdateAsync(Bottle bottle, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }
