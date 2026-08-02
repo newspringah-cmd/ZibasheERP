@@ -87,4 +87,22 @@ X-Api-Key: {{AdminApiKey}}
 POST {{ZibasheERP.API_HostAddress}}/api/shipments/00000000-0000-0000-0000-000000000000/delivered
 X-Api-Key: {{AdminApiKey}}
 
+### Poll pending Telegram notifications
+GET {{ZibasheERP.API_HostAddress}}/api/notifications/pending?limit=20
+Accept: application/json
+X-Api-Key: {{TelegramApiKey}}
+
+### Acknowledge a Telegram notification
+POST {{ZibasheERP.API_HostAddress}}/api/notifications/00000000-0000-0000-0000-000000000000/processed
+X-Api-Key: {{TelegramApiKey}}
+
+### Report a Telegram notification failure
+POST {{ZibasheERP.API_HostAddress}}/api/notifications/00000000-0000-0000-0000-000000000000/failed
+Content-Type: application/json
+X-Api-Key: {{TelegramApiKey}}
+
+{
+  "error": "Telegram API timeout"
+}
+
 ###

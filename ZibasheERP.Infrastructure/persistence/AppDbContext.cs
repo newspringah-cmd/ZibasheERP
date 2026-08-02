@@ -25,6 +25,7 @@ public class AppDbContext : DbContext
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Shipment> Shipments => Set<Shipment>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +42,7 @@ public class AppDbContext : DbContext
         ConfigurePayment(modelBuilder);
         ConfigureShipment(modelBuilder);
         ConfigureInvoice(modelBuilder);
+        ConfigureNotificationOutbox(modelBuilder);
     }
 
     private static void ConfigureCustomer(ModelBuilder modelBuilder)
@@ -260,5 +262,26 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Invoice>()
             .HasIndex(x => x.InvoiceNumber)
             .IsUnique();
+    }
+
+    private static void ConfigureNotificationOutbox(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<NotificationOutbox>()
+            .Property(notification => notification.Channel)
+            .HasMaxLength(30);
+        modelBuilder.Entity<NotificationOutbox>()
+            .Property(notification => notification.EventType)
+            .HasMaxLength(100);
+        modelBuilder.Entity<NotificationOutbox>()
+            .Property(notification => notification.Recipient)
+            .HasMaxLength(100);
+        modelBuilder.Entity<NotificationOutbox>()
+            .Property(notification => notification.Payload)
+            .HasMaxLength(4000);
+        modelBuilder.Entity<NotificationOutbox>()
+            .Property(notification => notification.LastError)
+            .HasMaxLength(1000);
+        modelBuilder.Entity<NotificationOutbox>()
+            .HasIndex(notification => new { notification.Status, notification.CreatedAt });
     }
 }

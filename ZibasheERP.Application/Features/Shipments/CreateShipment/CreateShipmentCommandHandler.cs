@@ -1,5 +1,6 @@
 using MediatR;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.Application.Features.Shipments.CreateShipment;
@@ -8,10 +9,14 @@ public sealed class CreateShipmentCommandHandler
     : IRequestHandler<CreateShipmentCommand, CreateShipmentResponse>
 {
     private readonly IShipmentRepository _shipmentRepository;
+    private readonly INotificationOutboxRepository _notificationOutboxRepository;
 
-    public CreateShipmentCommandHandler(IShipmentRepository shipmentRepository)
+    public CreateShipmentCommandHandler(
+        IShipmentRepository shipmentRepository,
+        INotificationOutboxRepository notificationOutboxRepository)
     {
         _shipmentRepository = shipmentRepository;
+        _notificationOutboxRepository = notificationOutboxRepository;
     }
 
     public async Task<CreateShipmentResponse> Handle(
@@ -67,6 +72,20 @@ public sealed class CreateShipmentCommandHandler
         order.UpdatedAt = now;
 
         await _shipmentRepository.AddAsync(shipment, cancellationToken);
+        var notification = TelegramNotificationFactory.Create(
+            order,
+            "OrderShipped",
+            new
+            {
+                order.Id,
+                order.OrderNumber,
+                Status = OrderStatus.Shipped.ToString(),
+                shipment.ShippingCompany,
+                shipment.TrackingCode
+            },
+            now);
+        if (notification is not null)
+            await _notificationOutboxRepository.AddAsync(notification, cancellationToken);
         await _shipmentRepository.SaveChangesAsync(cancellationToken);
 
         return new CreateShipmentResponse(

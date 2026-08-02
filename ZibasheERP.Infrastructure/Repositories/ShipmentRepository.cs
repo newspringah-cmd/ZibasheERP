@@ -37,6 +37,7 @@ public sealed class ShipmentRepository : IShipmentRepository
     {
         return _dbContext.Shipments
             .Include(shipment => shipment.Order)
+                .ThenInclude(order => order!.Customer)
             .FirstOrDefaultAsync(
                 shipment => shipment.Id == shipmentId && !shipment.IsDeleted,
                 cancellationToken);

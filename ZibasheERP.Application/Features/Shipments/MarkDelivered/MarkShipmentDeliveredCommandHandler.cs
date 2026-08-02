@@ -1,5 +1,6 @@
 using MediatR;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.Application.Features.Shipments.MarkDelivered;
@@ -8,10 +9,14 @@ public sealed class MarkShipmentDeliveredCommandHandler
     : IRequestHandler<MarkShipmentDeliveredCommand, MarkShipmentDeliveredResponse>
 {
     private readonly IShipmentRepository _shipmentRepository;
+    private readonly INotificationOutboxRepository _notificationOutboxRepository;
 
-    public MarkShipmentDeliveredCommandHandler(IShipmentRepository shipmentRepository)
+    public MarkShipmentDeliveredCommandHandler(
+        IShipmentRepository shipmentRepository,
+        INotificationOutboxRepository notificationOutboxRepository)
     {
         _shipmentRepository = shipmentRepository;
+        _notificationOutboxRepository = notificationOutboxRepository;
     }
 
     public async Task<MarkShipmentDeliveredResponse> Handle(
@@ -38,6 +43,13 @@ public sealed class MarkShipmentDeliveredCommandHandler
         order.Status = OrderStatus.Delivered;
         order.UpdatedAt = now;
 
+        var notification = TelegramNotificationFactory.Create(
+            order,
+            "OrderDelivered",
+            new { order.Id, order.OrderNumber, Status = OrderStatus.Delivered.ToString() },
+            now);
+        if (notification is not null)
+            await _notificationOutboxRepository.AddAsync(notification, cancellationToken);
         await _shipmentRepository.SaveChangesAsync(cancellationToken);
         return BuildResponse(shipment, order, now);
     }

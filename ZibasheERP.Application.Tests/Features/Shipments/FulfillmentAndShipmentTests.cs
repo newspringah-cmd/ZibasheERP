@@ -33,6 +33,8 @@ public sealed class FulfillmentAndShipmentTests
         {
             Id = Guid.NewGuid(),
             CustomerId = customerId,
+            Customer = new Customer { Id = customerId, TelegramId = "123456789" },
+            OrderNumber = "ZS-SHIP-TEST",
             Status = OrderStatus.ReadyToShip
         };
         var address = new Address
@@ -47,7 +49,8 @@ public sealed class FulfillmentAndShipmentTests
             FullAddress = "Test address"
         };
         var repository = new ShipmentRepositoryStub(order, address);
-        var handler = new CreateShipmentCommandHandler(repository);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new CreateShipmentCommandHandler(repository, outbox);
 
         var result = await handler.Handle(
             new CreateShipmentCommand(
@@ -63,13 +66,22 @@ public sealed class FulfillmentAndShipmentTests
         Assert.Equal(address.FullAddress, repository.AddedShipment!.FullAddress);
         Assert.Equal(OrderStatus.Shipped, order.Status);
         Assert.Equal("TRACK-001", result.TrackingCode);
+        Assert.Equal("OrderShipped", outbox.AddedNotification?.EventType);
         Assert.True(repository.SaveChangesCalled);
     }
 
     [Fact]
     public async Task MarkDelivered_UpdatesShipmentAndOrder()
     {
-        var order = new Order { Id = Guid.NewGuid(), Status = OrderStatus.Shipped };
+        var customer = new Customer { Id = Guid.NewGuid(), TelegramId = "123456789" };
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            CustomerId = customer.Id,
+            Customer = customer,
+            OrderNumber = "ZS-DELIVERY-TEST",
+            Status = OrderStatus.Shipped
+        };
         var shipment = new Shipment
         {
             Id = Guid.NewGuid(),
@@ -78,7 +90,8 @@ public sealed class FulfillmentAndShipmentTests
             SentAt = DateTime.UtcNow.AddDays(-1)
         };
         var repository = new ShipmentRepositoryStub(order, new Address(), shipment);
-        var handler = new MarkShipmentDeliveredCommandHandler(repository);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new MarkShipmentDeliveredCommandHandler(repository, outbox);
 
         var result = await handler.Handle(
             new MarkShipmentDeliveredCommand(shipment.Id),
@@ -87,7 +100,22 @@ public sealed class FulfillmentAndShipmentTests
         Assert.True(shipment.IsDelivered);
         Assert.Equal(OrderStatus.Delivered, order.Status);
         Assert.Equal("Delivered", result.OrderStatus);
+        Assert.Equal("OrderDelivered", outbox.AddedNotification?.EventType);
         Assert.True(repository.SaveChangesCalled);
+    }
+
+    private sealed class NotificationOutboxRepositoryStub : INotificationOutboxRepository
+    {
+        public NotificationOutbox? AddedNotification { get; private set; }
+        public Task AddAsync(NotificationOutbox value, CancellationToken cancellationToken = default)
+        {
+            AddedNotification = value;
+            return Task.CompletedTask;
+        }
+        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
+        public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<NotificationOutbox?>(null);
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class OrderRepositoryStub(Order order) : IOrderRepository

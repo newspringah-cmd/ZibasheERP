@@ -74,7 +74,8 @@ public sealed class PaymentWorkflowTests
         };
         order.Payments.Add(payment);
         var payments = new PaymentRepositoryStub(payment);
-        var handler = new ConfirmPaymentCommandHandler(payments);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new ConfirmPaymentCommandHandler(payments, outbox);
 
         var result = await handler.Handle(
             new ConfirmPaymentCommand(payment.Id),
@@ -85,6 +86,7 @@ public sealed class PaymentWorkflowTests
         Assert.Equal(ZibasheERP.Domain.Entities.OrderStatus.Paid, order.Status);
         Assert.Equal(0m, order.Customer.CurrentDebt);
         Assert.Equal(0m, result.RemainingAmount);
+        Assert.Equal("OrderPaid", outbox.AddedNotification?.EventType);
         Assert.True(payments.SaveChangesCalled);
     }
 
@@ -94,7 +96,8 @@ public sealed class PaymentWorkflowTests
         {
             Id = Guid.NewGuid(),
             FullName = "Test Customer",
-            Mobile = "09120000000"
+            Mobile = "09120000000",
+            TelegramId = "123456789"
         };
 
         return new Order
@@ -106,6 +109,20 @@ public sealed class PaymentWorkflowTests
             FinalAmount = finalAmount,
             Status = ZibasheERP.Domain.Entities.OrderStatus.Registered
         };
+    }
+
+    private sealed class NotificationOutboxRepositoryStub : INotificationOutboxRepository
+    {
+        public NotificationOutbox? AddedNotification { get; private set; }
+        public Task AddAsync(NotificationOutbox value, CancellationToken cancellationToken = default)
+        {
+            AddedNotification = value;
+            return Task.CompletedTask;
+        }
+        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
+        public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<NotificationOutbox?>(null);
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class PaymentRepositoryStub(Payment? payment = null) : IPaymentRepository

@@ -1,5 +1,6 @@
 using MediatR;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Domain.Enums;
 using OrderState = ZibasheERP.Domain.Entities.OrderStatus;
@@ -10,10 +11,14 @@ public sealed class ConfirmPaymentCommandHandler
     : IRequestHandler<ConfirmPaymentCommand, ConfirmPaymentResponse>
 {
     private readonly IPaymentRepository _paymentRepository;
+    private readonly INotificationOutboxRepository _notificationOutboxRepository;
 
-    public ConfirmPaymentCommandHandler(IPaymentRepository paymentRepository)
+    public ConfirmPaymentCommandHandler(
+        IPaymentRepository paymentRepository,
+        INotificationOutboxRepository notificationOutboxRepository)
     {
         _paymentRepository = paymentRepository;
+        _notificationOutboxRepository = notificationOutboxRepository;
     }
 
     public async Task<ConfirmPaymentResponse> Handle(
@@ -58,6 +63,14 @@ public sealed class ConfirmPaymentCommandHandler
         {
             order.Status = OrderState.Paid;
             order.PaidAt = now;
+
+            var notification = TelegramNotificationFactory.Create(
+                order,
+                "OrderPaid",
+                new { order.Id, order.OrderNumber, Status = OrderState.Paid.ToString() },
+                now);
+            if (notification is not null)
+                await _notificationOutboxRepository.AddAsync(notification, cancellationToken);
         }
 
         order.UpdatedAt = now;
