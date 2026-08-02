@@ -1,19 +1,39 @@
+using FluentValidation;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
+using ZibasheERP.Application.Features.Orders.CreateOrder;
+using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Infrastructure.Persistence;
+using ZibasheERP.Infrastructure.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Controllers
 builder.Services.AddControllers();
 
+// Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddAuthorization();
-
+// Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// MediatR
+builder.Services.AddMediatR(cfg =>
+    cfg.RegisterServicesFromAssembly(typeof(CreateOrderCommand).Assembly));
+
+// FluentValidation
+builder.Services.AddValidatorsFromAssembly(typeof(CreateOrderValidator).Assembly);
+
+// Repositories
+builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
+builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+builder.Services.AddScoped<ISalesListRepository, SalesListRepository>();
+builder.Services.AddScoped<IBottleRepository, BottleRepository>();
+builder.Services.AddScoped<IBatchRepository, BatchRepository>();
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 

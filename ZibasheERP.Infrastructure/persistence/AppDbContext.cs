@@ -11,33 +11,118 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<Address> Addresses => Set<Address>();
 
     public DbSet<Perfume> Perfumes => Set<Perfume>();
-
     public DbSet<Bottle> Bottles => Set<Bottle>();
 
-    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<Batch> Batches => Set<Batch>();
+    public DbSet<SalesList> SalesLists => Set<SalesList>();
 
+    public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     public DbSet<Payment> Payments => Set<Payment>();
-
     public DbSet<Shipment> Shipments => Set<Shipment>();
-
     public DbSet<Invoice> Invoices => Set<Invoice>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
+        ConfigureCustomer(modelBuilder);
+        ConfigureAddress(modelBuilder);
+        ConfigurePerfume(modelBuilder);
+        ConfigureBottle(modelBuilder);
+        ConfigureBatch(modelBuilder);
+        ConfigureSalesList(modelBuilder);
+        ConfigureOrder(modelBuilder);
+        ConfigureOrderItem(modelBuilder);
+        ConfigurePayment(modelBuilder);
+        ConfigureShipment(modelBuilder);
+        ConfigureInvoice(modelBuilder);
+    }
+
+    private static void ConfigureCustomer(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Customer>()
+            .Property(x => x.WalletBalance)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Customer>()
+            .Property(x => x.CreditLimit)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Customer>()
+            .Property(x => x.CurrentDebt)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Customer>()
+            .HasIndex(x => x.Mobile);
+
+        modelBuilder.Entity<Customer>()
+            .HasIndex(x => x.TelegramId);
+    }
+
+    private static void ConfigureAddress(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Address>()
+            .HasOne(x => x.Customer)
+            .WithMany(x => x.Addresses)
+            .HasForeignKey(x => x.CustomerId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigurePerfume(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Perfume>()
             .Property(x => x.PricePerMl)
             .HasPrecision(18, 2);
+    }
 
+    private static void ConfigureBottle(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Bottle>()
             .Property(x => x.SalePrice)
             .HasPrecision(18, 2);
+    }
 
+    private static void ConfigureBatch(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Batch>()
+            .Property(x => x.PurchasePrice)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Batch>()
+            .Property(x => x.RemainingVolumeMl)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Batch>()
+            .Property(x => x.TotalVolumeMl)
+            .HasPrecision(18, 2);
+    }
+
+    private static void ConfigureSalesList(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesList>()
+            .Property(x => x.PricePerMl)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<SalesList>()
+            .HasOne(x => x.Batch)
+            .WithMany()
+            .HasForeignKey(x => x.BatchId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<SalesList>()
+            .HasOne(x => x.BottleOwnerCustomer)
+            .WithMany()
+            .HasForeignKey(x => x.BottleOwnerCustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureOrder(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Order>()
             .Property(x => x.PerfumeTotal)
             .HasPrecision(18, 2);
@@ -56,11 +141,24 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.CustomerId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<Order>()
+            .HasIndex(x => x.OrderNumber)
+            .IsUnique();
+    }
+
+    private static void ConfigureOrderItem(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<OrderItem>()
             .HasOne(x => x.Order)
             .WithMany(x => x.Items)
             .HasForeignKey(x => x.OrderId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<OrderItem>()
+            .HasOne(x => x.SalesList)
+            .WithMany()
+            .HasForeignKey(x => x.SalesListId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<OrderItem>()
             .HasOne(x => x.Perfume)
@@ -89,13 +187,23 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<OrderItem>()
             .Property(x => x.LineTotal)
             .HasPrecision(18, 2);
+    }
 
+    private static void ConfigurePayment(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Payment>()
             .HasOne(x => x.Order)
             .WithMany(x => x.Payments)
             .HasForeignKey(x => x.OrderId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<Payment>()
+            .Property(x => x.Amount)
+            .HasPrecision(18, 2);
+    }
+
+    private static void ConfigureShipment(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Shipment>()
             .HasOne(x => x.Order)
             .WithMany(x => x.Shipments)
@@ -105,7 +213,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Shipment>()
             .Property(x => x.ShippingCost)
             .HasPrecision(18, 2);
+    }
 
+    private static void ConfigureInvoice(ModelBuilder modelBuilder)
+    {
         modelBuilder.Entity<Invoice>()
             .HasOne(x => x.Order)
             .WithMany()

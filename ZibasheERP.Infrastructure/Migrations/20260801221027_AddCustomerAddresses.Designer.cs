@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using ZibasheERP.Infrastructure.Persistence;
 namespace ZibasheERP.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801221027_AddCustomerAddresses")]
+    partial class AddCustomerAddresses
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -107,11 +110,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<decimal>("PurchasePrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("RemainingVolumeMl")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("Status")
@@ -119,7 +120,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("TotalVolumeMl")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -357,8 +357,7 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasIndex("CustomerId");
 
-                    b.HasIndex("OrderNumber")
-                        .IsUnique();
+                    b.HasIndex("OrderNumber");
 
                     b.ToTable("Orders");
                 });
@@ -536,24 +535,17 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<Guid>("BatchId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid?>("BottleOwnerCustomerId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<DateTime?>("ClosedDate")
                         .HasColumnType("datetime2");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<bool>("HasBottleOwner")
-                        .HasColumnType("bit");
-
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
                     b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("OpenDate")
                         .HasColumnType("datetime2");
@@ -569,8 +561,7 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasColumnType("int");
 
                     b.Property<string>("TelegramChannelId")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<long?>("TelegramMessageId")
                         .HasColumnType("bigint");
@@ -584,8 +575,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("BatchId");
-
-                    b.HasIndex("BottleOwnerCustomerId");
 
                     b.ToTable("SalesLists");
                 });
@@ -738,14 +727,7 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("ZibasheERP.Domain.Entities.Customer", "BottleOwnerCustomer")
-                        .WithMany()
-                        .HasForeignKey("BottleOwnerCustomerId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.Navigation("Batch");
-
-                    b.Navigation("BottleOwnerCustomer");
                 });
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Shipment", b =>

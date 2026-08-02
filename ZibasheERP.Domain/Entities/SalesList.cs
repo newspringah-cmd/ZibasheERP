@@ -1,18 +1,20 @@
-﻿namespace ZibasheERP.Domain.Entities;
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace ZibasheERP.Domain.Entities;
 
 public enum SalesListStatus
 {
-    Open = 1,        // لیست با اولین درخواست باز شده است
-    Full = 2,        // حجم لیست کامل شده است
-    Purchased = 3,   // عطر خریداری شده است
-    Invoiced = 4,    // فاکتورها صادر شده‌اند
-    Closed = 5,      // کار لیست تمام شده است
-    Cancelled = 6    // لیست لغو شده است
+    Open = 1,          // لیست باز است
+    Full = 2,          // ظرفیت تکمیل شده
+    Purchased = 3,     // عطر خریداری شده
+    Invoiced = 4,      // فاکتور صادر شده
+    Closed = 5,        // پایان کار
+    Cancelled = 6      // لغو شده
 }
 
 public class SalesList : BaseEntity
 {
-    // بچ یا نوبت فروش مربوط به این لیست
+    // بچ مربوط به این لیست
     public Guid BatchId { get; set; }
 
     public Batch Batch { get; set; } = null!;
@@ -20,30 +22,40 @@ public class SalesList : BaseEntity
     // قیمت هر میل در زمان باز شدن لیست
     public decimal PricePerMl { get; set; }
 
-    // حجم کل شیشه اصلی، مثلاً 100 میل
+    // حجم کل شیشه اصلی
     public int TotalVolume { get; set; } = 100;
 
-    // مجموع حجم درخواست‌شده مشتریان
+    // حجم رزرو شده
     public int ReservedVolume { get; set; }
 
-    // حجم باقی‌مانده لیست
+    // حجم باقی مانده
     public int RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
 
-    // تاریخ باز شدن لیست با اولین درخواست
+    // آیا صاحب باتل مشخص شده است؟
+    public bool HasBottleOwner { get; set; }
+
+    // مشتری صاحب باتل
+    public Guid? BottleOwnerCustomerId { get; set; }
+
+    public Customer? BottleOwnerCustomer { get; set; }
+
+    // تاریخ باز شدن لیست
     public DateTime OpenDate { get; set; } = DateTime.UtcNow;
 
-    // تاریخ تکمیل یا بسته شدن لیست
+    // تاریخ بسته شدن
     public DateTime? ClosedDate { get; set; }
 
+    // وضعیت لیست
     public SalesListStatus Status { get; set; } = SalesListStatus.Open;
 
-    // شناسه پست مربوطه در کانال تلگرام
+    // پیام تلگرام
     public long? TelegramMessageId { get; set; }
 
-    // نام کاربری یا شناسه کانال؛ در صورت نیاز
+    // کانال تلگرام
+    [MaxLength(100)]
     public string? TelegramChannelId { get; set; }
 
+    // توضیحات
+    [MaxLength(500)]
     public string? Notes { get; set; }
-
-    public ICollection<Order> Orders { get; set; } = new List<Order>();
 }

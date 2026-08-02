@@ -59,7 +59,9 @@ public class Order : BaseEntity
 
     public ICollection<Payment> Payments { get; set; }
         = new List<Payment>();
+    public Guid SalesListId { get; set; }
 
+    public SalesList? SalesList { get; set; }
     public ICollection<Shipment> Shipments { get; set; }
         = new List<Shipment>();
 }

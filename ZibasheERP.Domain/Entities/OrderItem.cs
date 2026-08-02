@@ -27,8 +27,7 @@ public class OrderItem : BaseEntity
     // مبلغ عطر
     public decimal PerfumeAmount { get; set; }
 
-    // آیا صاحب شیشه اصلی است؟
-    public bool UsesOriginalBottle { get; set; }
+    
 
     // صاحب باتل این لیست است؟
     public bool IsBottleOwner { get; set; }

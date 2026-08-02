@@ -12,9 +12,13 @@
 
   <ItemGroup>
     <Folder Include="Common\" />
-    <Folder Include="Features\Orders\CreateOrder\" />
     <Folder Include="Behaviors\" />
     <Folder Include="Services\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
+    <PackageReference Include="MediatR" Version="14.2.0" />
   </ItemGroup>
 
 </Project>

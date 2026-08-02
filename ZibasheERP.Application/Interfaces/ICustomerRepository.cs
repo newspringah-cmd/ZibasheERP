@@ -1,12 +1,14 @@
-﻿using ZibasheERP.Domain.Entities;
+﻿namespace ZibasheERP.Application.Interfaces;
 
-namespace ZibasheERP.Application.Interfaces;
+using ZibasheERP.Domain.Entities;
 
 public interface ICustomerRepository
 {
-    Task<Customer?> GetByIdAsync(Guid id);
+    Task<Customer?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
-    Task<Customer?> GetByTelegramIdAsync(string telegramId);
+    Task<Customer?> GetByTelegramIdAsync(string telegramId, CancellationToken cancellationToken = default);
 
-    Task UpdateAsync(Customer customer);
+    Task AddAsync(Customer customer, CancellationToken cancellationToken = default);
+
+    Task UpdateAsync(Customer customer, CancellationToken cancellationToken = default);
 }
