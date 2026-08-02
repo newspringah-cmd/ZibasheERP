@@ -41,4 +41,10 @@ public sealed class TelegramCommandParserTests
         Assert.Equal(TelegramCommand.Help, TelegramCommandParser.Parse("/help"));
         Assert.Equal(TelegramCommand.Cancel, TelegramCommandParser.Parse("/cancel@ZibasheBot"));
     }
+
+    [Fact]
+    public void Parse_Balance_ReturnsBalance()
+    {
+        Assert.Equal(TelegramCommand.Balance, TelegramCommandParser.Parse("/balance"));
+    }
 }

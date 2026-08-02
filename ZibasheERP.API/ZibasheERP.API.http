@@ -411,3 +411,6 @@ X-Correlation-ID: local-health-check
 
 ### Readiness health check (includes database)
 GET {{ZibasheERP.API_HostAddress}}/health/ready
+### Get shared customer account summary
+GET {{ZibasheERP.API_HostAddress}}/api/customers/00000000-0000-0000-0000-000000000000/account
+X-Api-Key: {{AdminApiKey}}

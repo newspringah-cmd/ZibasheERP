@@ -8,7 +8,8 @@ public enum TelegramCommand
     Lists = 3,
     Addresses = 4,
     Help = 5,
-    Cancel = 6
+    Cancel = 6,
+    Balance = 7
 }
 
 public static class TelegramCommandParser
@@ -29,6 +30,7 @@ public static class TelegramCommandParser
             "/addresses" => TelegramCommand.Addresses,
             "/help" => TelegramCommand.Help,
             "/cancel" => TelegramCommand.Cancel,
+            "/balance" => TelegramCommand.Balance,
             _ => TelegramCommand.Unknown
         };
     }

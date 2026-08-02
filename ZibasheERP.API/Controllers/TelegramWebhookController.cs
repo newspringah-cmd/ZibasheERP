@@ -9,6 +9,7 @@ using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
+using ZibasheERP.Application.Features.Customers.GetCustomerAccount;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Features.Invoices.GetOrderInvoice;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
@@ -153,7 +154,7 @@ public sealed class TelegramWebhookController : ControllerBase
             return Ok();
         }
 
-        if (command is TelegramCommand.Start or TelegramCommand.Orders or TelegramCommand.Addresses)
+        if (command is TelegramCommand.Start or TelegramCommand.Orders or TelegramCommand.Addresses or TelegramCommand.Balance)
         {
             var usernameLink = await _mediator.Send(
                 new LinkTelegramByUsernameCommand(
@@ -191,6 +192,15 @@ public sealed class TelegramWebhookController : ControllerBase
             if (command == TelegramCommand.Addresses)
             {
                 await SendAddressesAsync(
+                    message.Chat.Id,
+                    message.From.Id.ToString(),
+                    cancellationToken);
+                return Ok();
+            }
+
+            if (command == TelegramCommand.Balance)
+            {
+                await SendAccountBalanceAsync(
                     message.Chat.Id,
                     message.From.Id.ToString(),
                     cancellationToken);
@@ -660,6 +670,34 @@ public sealed class TelegramWebhookController : ControllerBase
         }
     }
 
+    private async Task SendAccountBalanceAsync(
+        long chatId,
+        string telegramId,
+        CancellationToken cancellationToken)
+    {
+        var account = await _mediator.Send(
+            new GetCustomerAccountQuery(null, telegramId),
+            cancellationToken);
+        if (account is null)
+        {
+            await ReplyAsync(chatId, "حساب مشتری پیدا نشد. ابتدا /start را ارسال کنید.", cancellationToken);
+            return;
+        }
+
+        var access = account.IsBlocked || !account.CanPlaceOrder
+            ? "امکان ثبت سفارش: غیرفعال"
+            : "امکان ثبت سفارش: فعال";
+        await ReplyAsync(
+            chatId,
+            $"وضعیت حساب {account.FullName}:\n" +
+            $"کیف پول: {account.WalletBalance:N0} تومان\n" +
+            $"سقف اعتبار: {account.CreditLimit:N0} تومان\n" +
+            $"بدهی فعلی: {account.CurrentDebt:N0} تومان\n" +
+            $"اعتبار قابل استفاده: {account.AvailableCredit:N0} تومان\n" +
+            access,
+            cancellationToken);
+    }
+
     private async Task CancelLatestDraftAsync(
         long chatId,
         string telegramId,
@@ -682,6 +720,7 @@ public sealed class TelegramWebhookController : ControllerBase
         "راهنمای ربات زیباشه:\n" +
         "/lists — مشاهده لیست‌های فروش فعال\n" +
         "/orders — سفارش‌های من\n" +
+        "/balance — وضعیت بدهی و اعتبار من\n" +
         "/addresses — آدرس‌های من\n" +
         "/addaddress — ثبت آدرس جدید\n" +
         "/pay — راهنمای ثبت پرداخت\n" +

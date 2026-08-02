@@ -5,6 +5,7 @@ using ZibasheERP.API.Contracts.Customers;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Customers.ManageCustomers;
 using ZibasheERP.Application.Features.Customers.SendDebtReminder;
+using ZibasheERP.Application.Features.Customers.GetCustomerAccount;
 using MediatR;
 using FluentValidation;
 using ZibasheERP.Domain.Entities;
@@ -115,6 +116,30 @@ public sealed class CustomersController : ControllerBase
         return customer is null
             ? NotFound()
             : Ok(CustomerResponse.FromEntity(customer));
+    }
+
+    [HttpGet("{id:guid}/account")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAccount(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var account = await _mediator.Send(
+            new GetCustomerAccountQuery(id, null),
+            cancellationToken);
+        return account is null ? NotFound() : Ok(account);
+    }
+
+    [HttpGet("by-telegram/{telegramId}/account")]
+    [Authorize(Roles = "Admin,TelegramBot")]
+    public async Task<IActionResult> GetAccountByTelegram(
+        string telegramId,
+        CancellationToken cancellationToken)
+    {
+        var account = await _mediator.Send(
+            new GetCustomerAccountQuery(null, telegramId),
+            cancellationToken);
+        return account is null ? NotFound() : Ok(account);
     }
 
     [HttpPost]
