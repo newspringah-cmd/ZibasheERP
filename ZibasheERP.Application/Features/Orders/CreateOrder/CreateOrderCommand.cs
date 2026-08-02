@@ -4,10 +4,10 @@ namespace ZibasheERP.Application.Features.Orders.CreateOrder;
 
 public class CreateOrderCommand : IRequest<Guid>
 {
-    // مشتری انتخاب‌شده در پنل ادمین
+    // برای پنل مدیریت؛ در این حالت TelegramId باید null باشد.
     public Guid CustomerId { get; set; }
 
-    // برای ثبت سفارش از ربات تلگرام در آینده
+    // برای ثبت سفارش از ربات تلگرام؛ در این حالت CustomerId باید خالی باشد.
     public string? TelegramId { get; set; }
 
     // لیست فروش

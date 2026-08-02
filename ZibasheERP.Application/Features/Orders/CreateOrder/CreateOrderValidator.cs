@@ -6,9 +6,18 @@ public class CreateOrderValidator : AbstractValidator<CreateOrderCommand>
 {
     public CreateOrderValidator()
     {
-        RuleFor(x => x.CustomerId)
-            .NotEmpty()
-            .WithMessage("مشتری انتخاب نشده است.");
+        RuleFor(x => x)
+            .Must(command =>
+                command.CustomerId != Guid.Empty ^
+                !string.IsNullOrWhiteSpace(command.TelegramId))
+            .WithName(nameof(CreateOrderCommand.CustomerId))
+            .WithMessage(
+                "برای شناسایی مشتری دقیقاً یکی از CustomerId یا TelegramId باید ارسال شود.");
+
+        RuleFor(x => x.TelegramId)
+            .MaximumLength(50)
+            .When(x => !string.IsNullOrWhiteSpace(x.TelegramId))
+            .WithMessage("شناسه تلگرام نمی‌تواند بیشتر از ۵۰ کاراکتر باشد.");
 
         RuleFor(x => x.SalesListId)
             .NotEmpty()

@@ -1,11 +1,17 @@
 ﻿using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
+using FluentValidation;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
+using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
+using ZibasheERP.Application.Features.Orders.GetOrder;
 
 namespace ZibasheERP.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = "Admin,TelegramBot")]
 public class OrdersController : ControllerBase
 {
     private readonly IMediator _mediator;
@@ -42,14 +48,56 @@ public class OrdersController : ControllerBase
                 Message = exception.Message
             });
         }
+        catch (ValidationException exception)
+        {
+            var errors = exception.Errors
+                .GroupBy(error => error.PropertyName)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(error => error.ErrorMessage).ToArray());
+
+            return ValidationProblem(new ValidationProblemDetails(errors));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                Message = "اطلاعات اعتبار یا ظرفیت لیست هم‌زمان تغییر کرده است؛ سفارش را دوباره ارسال کنید."
+            });
+        }
     }
 
     [HttpGet("{id:guid}")]
-    public IActionResult GetById(Guid id)
+    public async Task<IActionResult> GetById(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        return Ok(new
+        var order = await _mediator.Send(
+            new GetOrderQuery(id),
+            cancellationToken);
+
+        return order is null
+            ? NotFound(new { Message = "سفارش پیدا نشد." })
+            : Ok(order);
+    }
+
+    [HttpGet("by-telegram/{telegramId}")]
+    public async Task<IActionResult> GetByTelegramId(
+        string telegramId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(telegramId) || telegramId.Length > 50)
         {
-            OrderId = id
-        });
+            return BadRequest(new
+            {
+                Message = "شناسه تلگرام معتبر نیست."
+            });
+        }
+
+        var orders = await _mediator.Send(
+            new GetCustomerOrdersQuery(null, telegramId),
+            cancellationToken);
+
+        return Ok(orders);
     }
 }

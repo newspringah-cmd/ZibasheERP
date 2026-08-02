@@ -218,6 +218,12 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsRowVersion()
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
                     b.Property<string>("TelegramId")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
@@ -566,6 +572,12 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.Property<int>("ReservedVolume")
                         .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsRowVersion()
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");

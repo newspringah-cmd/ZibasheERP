@@ -26,7 +26,12 @@ public class OrderRepository : IOrderRepository
         CancellationToken cancellationToken = default)
     {
         return await _dbContext.Orders
+            .AsNoTracking()
+            .Include(x => x.Customer)
             .Include(x => x.Items)
+                .ThenInclude(x => x.Perfume)
+            .Include(x => x.Items)
+                .ThenInclude(x => x.Bottle)
             .Include(x => x.Payments)
             .Include(x => x.Shipments)
             .FirstOrDefaultAsync(
@@ -39,12 +44,31 @@ public class OrderRepository : IOrderRepository
         CancellationToken cancellationToken = default)
     {
         return await _dbContext.Orders
+            .AsNoTracking()
+            .Include(x => x.Customer)
             .Include(x => x.Items)
+                .ThenInclude(x => x.Perfume)
+            .Include(x => x.Items)
+                .ThenInclude(x => x.Bottle)
             .Include(x => x.Payments)
             .Include(x => x.Shipments)
             .FirstOrDefaultAsync(
                 x => x.OrderNumber == orderNumber && !x.IsDeleted,
                 cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Orders
+            .AsNoTracking()
+            .Where(order =>
+                order.CustomerId == customerId &&
+                !order.IsDeleted)
+            .Include(order => order.Items)
+            .OrderByDescending(order => order.RegisteredAt)
+            .ToArrayAsync(cancellationToken);
     }
 
     public async Task<bool> OrderNumberExistsAsync(

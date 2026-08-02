@@ -48,6 +48,9 @@ public class SalesList : BaseEntity
     // وضعیت لیست
     public SalesListStatus Status { get; set; } = SalesListStatus.Open;
 
+    // Optimistic concurrency token for volume reservations and bottle ownership.
+    public byte[] RowVersion { get; set; } = [];
+
     // پیام تلگرام
     public long? TelegramMessageId { get; set; }
 

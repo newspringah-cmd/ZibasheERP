@@ -58,6 +58,10 @@ public class AppDbContext : DbContext
             .HasPrecision(18, 2);
 
         modelBuilder.Entity<Customer>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
+
+        modelBuilder.Entity<Customer>()
             .HasIndex(x => x.Mobile);
 
         modelBuilder.Entity<Customer>()
@@ -107,6 +111,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SalesList>()
             .Property(x => x.PricePerMl)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<SalesList>()
+            .Property(x => x.RowVersion)
+            .IsRowVersion();
 
         modelBuilder.Entity<SalesList>()
             .HasOne(x => x.Batch)

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ZibasheERP.Application\ZibasheERP.Application.csproj" />
+    <ProjectReference Include="..\ZibasheERP.Domain\ZibasheERP.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

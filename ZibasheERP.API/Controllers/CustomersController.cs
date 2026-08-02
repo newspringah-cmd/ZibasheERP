@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using ZibasheERP.API.Contracts.Customers;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -7,7 +9,7 @@ namespace ZibasheERP.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class CustomersController : ControllerBase
+public sealed class CustomersController : ControllerBase
 {
     private readonly AppDbContext _context;
 
@@ -16,93 +18,156 @@ public class CustomersController : ControllerBase
         _context = context;
     }
 
-    // GET: api/customers
     [HttpGet]
-    public async Task<IActionResult> Get()
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<IReadOnlyCollection<CustomerResponse>>> GetAll(
+        CancellationToken cancellationToken)
     {
-        var customers = await _context.Customers.ToListAsync();
+        var customers = await _context.Customers
+            .AsNoTracking()
+            .Where(customer => !customer.IsDeleted)
+            .OrderBy(customer => customer.FullName)
+            .Select(customer => new CustomerResponse(
+                customer.Id,
+                customer.FullName,
+                customer.Mobile,
+                customer.TelegramId,
+                customer.Username,
+                customer.CreatedAt))
+            .ToArrayAsync(cancellationToken);
+
         return Ok(customers);
     }
 
-    // GET: api/customers/{id}
-    [HttpGet("{id}")]
-
-    public async Task<IActionResult> Get(Guid id)
+    [HttpGet("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<CustomerResponse>> GetById(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var customer = await _context.Customers.FindAsync(id);
+        var customer = await _context.Customers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                value => value.Id == id && !value.IsDeleted,
+                cancellationToken);
 
-        if (customer == null)
-            return NotFound();
-
-        return Ok(customer);
+        return customer is null
+            ? NotFound()
+            : Ok(CustomerResponse.FromEntity(customer));
     }
 
-    // POST: api/customers
     [HttpPost]
-    public async Task<IActionResult> Create(Customer customer)
+    [Authorize(Roles = "Admin,TelegramBot")]
+    public async Task<ActionResult<CustomerResponse>> Create(
+        CreateCustomerRequest request,
+        CancellationToken cancellationToken)
     {
-        _context.Customers.Add(customer);
-        await _context.SaveChangesAsync();
+        var mobile = NormalizeRequired(request.Mobile);
+        var telegramId = NormalizeOptional(request.TelegramId);
 
-        return Ok(customer);
-    }
+        var duplicateExists = await _context.Customers.AnyAsync(
+            customer => !customer.IsDeleted &&
+                (customer.Mobile == mobile ||
+                 (telegramId != null && customer.TelegramId == telegramId)),
+            cancellationToken);
 
-    // GET: api/customers/addtest
-    [HttpGet("addtest")]
-    public async Task<IActionResult> AddTest()
-    {
+        if (duplicateExists)
+        {
+            return Conflict(new
+            {
+                Message = "مشتری دیگری با این شماره موبایل یا شناسه تلگرام وجود دارد."
+            });
+        }
+
         var customer = new Customer
         {
-            FullName = "Amir Nobahar",
-            Mobile = "09123456789",
-            TelegramId = "123456789",
-            Username = "amir",
-            Notes = "First Test Customer",
+            Id = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow,
+            FullName = NormalizeRequired(request.FullName),
+            Mobile = mobile,
+            TelegramId = telegramId,
+            Username = NormalizeOptional(request.Username),
+            Notes = NormalizeOptional(request.Notes),
+            WalletBalance = 0,
+            CreditLimit = 0,
+            CurrentDebt = 0,
+            CanPlaceOrder = true,
             IsBlocked = false
         };
 
         _context.Customers.Add(customer);
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(cancellationToken);
 
-        return Ok(customer);
+        return CreatedAtAction(
+            nameof(GetById),
+            new { id = customer.Id },
+            CustomerResponse.FromEntity(customer));
     }
 
-    // PUT: api/customers/{id}
-    [HttpPut("{id}")]
-    public async Task<IActionResult> Update(Guid id, Customer customer)
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<CustomerResponse>> Update(
+        Guid id,
+        UpdateCustomerRequest request,
+        CancellationToken cancellationToken)
     {
-        if (id != customer.Id)
-            return BadRequest();
+        var customer = await _context.Customers.FirstOrDefaultAsync(
+            value => value.Id == id && !value.IsDeleted,
+            cancellationToken);
 
-        var existingCustomer = await _context.Customers.FindAsync(id);
-
-        if (existingCustomer == null)
+        if (customer is null)
             return NotFound();
 
-        existingCustomer.FullName = customer.FullName;
-        existingCustomer.Mobile = customer.Mobile;
-        existingCustomer.TelegramId = customer.TelegramId;
-        existingCustomer.Username = customer.Username;
-        existingCustomer.Notes = customer.Notes;
-        existingCustomer.IsBlocked = customer.IsBlocked;
+        var mobile = NormalizeRequired(request.Mobile);
+        var telegramId = NormalizeOptional(request.TelegramId);
+        var duplicateExists = await _context.Customers.AnyAsync(
+            value => value.Id != id &&
+                !value.IsDeleted &&
+                (value.Mobile == mobile ||
+                 (telegramId != null && value.TelegramId == telegramId)),
+            cancellationToken);
 
-        await _context.SaveChangesAsync();
+        if (duplicateExists)
+        {
+            return Conflict(new
+            {
+                Message = "مشتری دیگری با این شماره موبایل یا شناسه تلگرام وجود دارد."
+            });
+        }
 
-        return Ok(existingCustomer);
+        customer.FullName = NormalizeRequired(request.FullName);
+        customer.Mobile = mobile;
+        customer.TelegramId = telegramId;
+        customer.Username = NormalizeOptional(request.Username);
+        customer.Notes = NormalizeOptional(request.Notes);
+        customer.UpdatedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync(cancellationToken);
+        return Ok(CustomerResponse.FromEntity(customer));
     }
 
-    // DELETE: api/customers/{id}
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(Guid id)
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Delete(
+        Guid id,
+        CancellationToken cancellationToken)
     {
-        var customer = await _context.Customers.FindAsync(id);
+        var customer = await _context.Customers.FirstOrDefaultAsync(
+            value => value.Id == id && !value.IsDeleted,
+            cancellationToken);
 
-        if (customer == null)
+        if (customer is null)
             return NotFound();
 
-        _context.Customers.Remove(customer);
-        await _context.SaveChangesAsync();
+        customer.IsDeleted = true;
+        customer.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync(cancellationToken);
 
-        return Ok("Customer Deleted Successfully");
+        return NoContent();
     }
+
+    private static string NormalizeRequired(string value) => value.Trim();
+
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

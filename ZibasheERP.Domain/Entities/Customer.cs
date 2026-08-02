@@ -41,6 +41,9 @@ public class Customer : BaseEntity
     // آخرین زمان ثبت سفارش
     public DateTime? LastOrderAt { get; set; }
 
+    // Optimistic concurrency token for credit and debt updates.
+    public byte[] RowVersion { get; set; } = [];
+
     [MaxLength(500)]
     public string? Notes { get; set; }
 

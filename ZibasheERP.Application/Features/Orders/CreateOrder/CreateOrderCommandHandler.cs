@@ -32,9 +32,13 @@ public class CreateOrderCommandHandler
         CancellationToken cancellationToken)
 
     {
-        var customer = await _customerRepository.GetByIdAsync(
-            request.CustomerId,
-            cancellationToken);
+        var customer = request.CustomerId != Guid.Empty
+            ? await _customerRepository.GetByIdAsync(
+                request.CustomerId,
+                cancellationToken)
+            : await _customerRepository.GetByTelegramIdAsync(
+                NormalizeTelegramId(request.TelegramId!),
+                cancellationToken);
 
         if (customer is null)
             throw new InvalidOperationException("مشتری پیدا نشد.");
@@ -315,5 +319,10 @@ public class CreateOrderCommandHandler
         return normalized.Length <= 500
             ? normalized
             : normalized[..500];
+    }
+
+    private static string NormalizeTelegramId(string telegramId)
+    {
+        return telegramId.Trim();
     }
 }

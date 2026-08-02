@@ -15,6 +15,10 @@ public interface IOrderRepository
         string orderNumber,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(
+        Guid customerId,
+        CancellationToken cancellationToken = default);
+
     // بررسی تکراری نبودن شماره سفارش
     Task<bool> OrderNumberExistsAsync(
         string orderNumber,

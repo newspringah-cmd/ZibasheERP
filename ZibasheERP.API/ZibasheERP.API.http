@@ -1,6 +1,46 @@
 @ZibasheERP.API_HostAddress = http://localhost:5143
+@SalesListId = 55555555-5555-5555-5555-555555555555
+@CustomerId = 44444444-4444-4444-4444-444444444444
+@OrderId = 00000000-0000-0000-0000-000000000000
+@TelegramApiKey = SET_FROM_A_SECURE_SOURCE
+@AdminApiKey = SET_FROM_A_SECURE_SOURCE
 
-GET {{ZibasheERP.API_HostAddress}}/weatherforecast/
+### Create order from Telegram
+POST {{ZibasheERP.API_HostAddress}}/api/orders
+Content-Type: application/json
+X-Api-Key: {{TelegramApiKey}}
+
+{
+  "telegramId": "123456789",
+  "salesListId": "{{SalesListId}}",
+  "requestedVolumeMl": 10,
+  "isBottleOwner": true,
+  "bottleId": null,
+  "notes": "ثبت‌شده از ربات تلگرام"
+}
+
+### Create order from admin panel
+POST {{ZibasheERP.API_HostAddress}}/api/orders
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "customerId": "{{CustomerId}}",
+  "salesListId": "{{SalesListId}}",
+  "requestedVolumeMl": 10,
+  "isBottleOwner": false,
+  "bottleId": "33333333-3333-3333-3333-333333333333",
+  "notes": "ثبت‌شده از پنل مدیریت"
+}
+
+### Get order details
+GET {{ZibasheERP.API_HostAddress}}/api/orders/{{OrderId}}
 Accept: application/json
+X-Api-Key: {{AdminApiKey}}
+
+### Get Telegram customer's orders
+GET {{ZibasheERP.API_HostAddress}}/api/orders/by-telegram/123456789
+Accept: application/json
+X-Api-Key: {{TelegramApiKey}}
 
 ###
