@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
+using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Features.Invoices.GetOrderInvoice;
@@ -99,6 +100,23 @@ public sealed class TelegramWebhookController : ControllerBase
         if (string.IsNullOrWhiteSpace(message.Text))
             return Ok();
 
+        if (message.Text.TrimStart().StartsWith("/addaddress", StringComparison.OrdinalIgnoreCase))
+        {
+            var addressCommand = TelegramAddressCommandParser.Parse(message.Text);
+            if (addressCommand is null)
+            {
+                await ReplyAsync(message.Chat.Id, AddressCommandHelp(), cancellationToken);
+                return Ok();
+            }
+
+            await AddTelegramAddressAsync(
+                message.Chat.Id,
+                message.From,
+                addressCommand,
+                cancellationToken);
+            return Ok();
+        }
+
         var paymentCommand = TelegramPaymentCommandParser.Parse(message.Text);
         if (paymentCommand is not null)
         {
@@ -164,7 +182,7 @@ public sealed class TelegramWebhookController : ControllerBase
 
         var response = command switch
         {
-            _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من\n/addresses آدرس‌های من"
+            _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من\n/addresses آدرس‌های من\n/addaddress ثبت آدرس جدید"
         };
 
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
@@ -541,7 +559,7 @@ public sealed class TelegramWebhookController : ControllerBase
         {
             await ReplyAsync(
                 chatId,
-                "هنوز آدرسی برای حساب شما ثبت نشده است. برای ثبت آدرس با پشتیبانی تماس بگیرید.",
+                "هنوز آدرسی برای حساب شما ثبت نشده است.\n\n" + AddressCommandHelp(),
                 cancellationToken);
             return;
         }
@@ -555,6 +573,52 @@ public sealed class TelegramWebhookController : ControllerBase
             "آدرس‌های ثبت‌شده شما:\n\n" + string.Join("\n\n", lines),
             cancellationToken);
     }
+
+    private async Task AddTelegramAddressAsync(
+        long chatId,
+        TelegramUser user,
+        TelegramAddressCommand command,
+        CancellationToken cancellationToken)
+    {
+        var link = await _mediator.Send(
+            new LinkTelegramByUsernameCommand(user.Id.ToString(), user.Username),
+            cancellationToken);
+        if (!IsLinked(link))
+        {
+            await ReplyAsync(
+                chatId,
+                "ابتدا حساب خود را با فرمان /start متصل کنید.",
+                cancellationToken);
+            return;
+        }
+
+        try
+        {
+            var address = await _mediator.Send(
+                new AddTelegramAddressCommand(
+                    user.Id.ToString(),
+                    command.Description,
+                    command.ReceiverName,
+                    command.Province,
+                    command.City,
+                    command.PostalCode,
+                    command.FullAddress),
+                cancellationToken);
+            await ReplyAsync(
+                chatId,
+                $"آدرس «{address.Description}» با موفقیت ثبت شد.\n" +
+                $"{address.Province}، {address.City}، {address.FullAddress}",
+                cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await ReplyAsync(chatId, exception.Message + "\n\n" + AddressCommandHelp(), cancellationToken);
+        }
+    }
+
+    private static string AddressCommandHelp() =>
+        "برای ثبت آدرس از قالب زیر استفاده کنید:\n" +
+        "/addaddress عنوان | نام گیرنده | استان | شهر | کدپستی | نشانی کامل";
 
     private async Task SendOrderDetailsAsync(
         TelegramCallbackQuery callback,

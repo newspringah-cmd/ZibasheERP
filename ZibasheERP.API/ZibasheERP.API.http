@@ -173,6 +173,26 @@ X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
   }
 }
 
+### Simulate Telegram /addaddress
+POST {{ZibasheERP.API_HostAddress}}/api/telegram/webhook
+Content-Type: application/json
+X-Telegram-Bot-Api-Secret-Token: {{TelegramWebhookSecret}}
+
+{
+  "update_id": 10005,
+  "message": {
+    "text": "/addaddress منزل | نام گیرنده | تهران | تهران | 1234567890 | نشانی کامل",
+    "chat": {
+      "id": 123456789,
+      "type": "private"
+    },
+    "from": {
+      "id": 123456789,
+      "username": "sample_customer"
+    }
+  }
+}
+
 ### Simulate Telegram contact sharing
 POST {{ZibasheERP.API_HostAddress}}/api/telegram/webhook
 Content-Type: application/json

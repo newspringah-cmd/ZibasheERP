@@ -7,10 +7,7 @@ public static class IranianMobileNormalizer
         if (string.IsNullOrWhiteSpace(value))
             return null;
 
-        var digits = new string(value
-            .Where(char.IsDigit)
-            .Select(ToLatinDigit)
-            .ToArray());
+        var digits = NormalizeDigits(value);
 
         if (digits.StartsWith("0098", StringComparison.Ordinal))
             digits = "0" + digits[4..];
@@ -21,6 +18,9 @@ public static class IranianMobileNormalizer
             ? digits
             : null;
     }
+
+    public static string NormalizeDigits(string value) => new(
+        value.Where(char.IsDigit).Select(ToLatinDigit).ToArray());
 
     private static char ToLatinDigit(char value) => value switch
     {
