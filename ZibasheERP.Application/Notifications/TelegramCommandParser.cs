@@ -4,7 +4,8 @@ public enum TelegramCommand
 {
     Unknown = 0,
     Start = 1,
-    Orders = 2
+    Orders = 2,
+    Lists = 3
 }
 
 public static class TelegramCommandParser
@@ -21,6 +22,7 @@ public static class TelegramCommandParser
         {
             "/start" => TelegramCommand.Start,
             "/orders" => TelegramCommand.Orders,
+            "/lists" => TelegramCommand.Lists,
             _ => TelegramCommand.Unknown
         };
     }

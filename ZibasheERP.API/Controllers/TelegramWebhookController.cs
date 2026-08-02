@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
+using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
 using ZibasheERP.Application.Notifications;
 
 namespace ZibasheERP.API.Controllers;
@@ -101,7 +102,7 @@ public sealed class TelegramWebhookController : ControllerBase
             {
                 await ReplyAsync(
                     message.Chat.Id,
-                    $"{usernameLink.CustomerName} عزیز، به زیباشه خوش آمدید 🌿\nبرای مشاهده سفارش‌ها /orders را ارسال کنید.",
+                    $"{usernameLink.CustomerName} عزیز، به زیباشه خوش آمدید 🌿\nبرای مشاهده لیست‌ها /lists و سفارش‌های خود /orders را ارسال کنید.",
                     cancellationToken);
                 return Ok();
             }
@@ -112,11 +113,34 @@ public sealed class TelegramWebhookController : ControllerBase
             TelegramCommand.Orders => await BuildOrdersMessageAsync(
                 message.From.Id.ToString(),
                 cancellationToken),
-            _ => "فرمان را متوجه نشدم. برای مشاهده سفارش‌ها /orders را ارسال کنید."
+            TelegramCommand.Lists => await BuildOpenListsMessageAsync(cancellationToken),
+            _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من"
         };
 
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
         return Ok();
+    }
+
+    private async Task<string> BuildOpenListsMessageAsync(CancellationToken cancellationToken)
+    {
+        var lists = await _mediator.Send(
+            new GetOpenSalesListsQuery(10),
+            cancellationToken);
+        if (lists.Count == 0)
+            return "در حال حاضر لیست فروش فعالی وجود ندارد.";
+
+        var lines = lists.Select((item, index) =>
+        {
+            var bottle = item.BottleOwnerAvailable ? "باتل آزاد" : "باتل رزرو";
+            var name = string.IsNullOrWhiteSpace(item.PerfumeName)
+                ? item.EnglishName
+                : item.PerfumeName;
+            return $"{index + 1}. {name} — {item.Brand}\n" +
+                $"هر میل: {item.PricePerMl:N0} تومان | باقی‌مانده: {item.RemainingVolumeMl} میل | {bottle}";
+        });
+
+        return "لیست‌های فروش فعال:\n\n" + string.Join("\n\n", lines) +
+            "\n\nبه‌زودی انتخاب و ثبت سفارش مستقیم از همین بخش فعال می‌شود.";
     }
 
     private async Task RequestContactAsync(long chatId, CancellationToken cancellationToken)

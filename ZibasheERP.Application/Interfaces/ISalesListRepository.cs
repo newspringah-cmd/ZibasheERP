@@ -6,6 +6,10 @@ public interface ISalesListRepository
 {
     Task<SalesList?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<SalesList>> GetOpenAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task UpdateAsync(SalesList salesList, CancellationToken cancellationToken = default);
 
     Task SaveChangesAsync(CancellationToken cancellationToken = default);

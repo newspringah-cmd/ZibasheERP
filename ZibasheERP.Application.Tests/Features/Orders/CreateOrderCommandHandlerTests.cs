@@ -202,6 +202,9 @@ public sealed class CreateOrderCommandHandlerTests
 
     private sealed class FakeSalesListRepository(SalesList salesList) : ISalesListRepository
     {
+        public Task<IReadOnlyCollection<SalesList>> GetOpenAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<SalesList>>(Array.Empty<SalesList>());
+
         public Task<SalesList?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<SalesList?>(salesList.Id == id ? salesList : null);
 

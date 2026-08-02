@@ -26,6 +26,23 @@ public class SalesListRepository : ISalesListRepository
                 cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<SalesList>> GetOpenAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.SalesLists
+            .AsNoTracking()
+            .Include(salesList => salesList.Batch)
+                .ThenInclude(batch => batch.Perfume)
+            .Where(salesList =>
+                salesList.Status == SalesListStatus.Open &&
+                salesList.ReservedVolume < salesList.TotalVolume &&
+                !salesList.IsDeleted)
+            .OrderByDescending(salesList => salesList.OpenDate)
+            .Take(Math.Clamp(limit, 1, 50))
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task UpdateAsync(
         SalesList salesList,
         CancellationToken cancellationToken = default)
