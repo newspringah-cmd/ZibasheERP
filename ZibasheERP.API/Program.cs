@@ -1,6 +1,7 @@
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using ZibasheERP.API.Data;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Infrastructure.Persistence;
@@ -33,9 +34,16 @@ builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<ISalesListRepository, SalesListRepository>();
 builder.Services.AddScoped<IBottleRepository, BottleRepository>();
 builder.Services.AddScoped<IBatchRepository, BatchRepository>();
+
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await SeedData.InitializeAsync(db);
+}
 
 if (app.Environment.IsDevelopment())
 {

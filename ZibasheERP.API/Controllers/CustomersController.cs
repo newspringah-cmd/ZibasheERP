@@ -26,6 +26,7 @@ public class CustomersController : ControllerBase
 
     // GET: api/customers/{id}
     [HttpGet("{id}")]
+
     public async Task<IActionResult> Get(Guid id)
     {
         var customer = await _context.Customers.FindAsync(id);

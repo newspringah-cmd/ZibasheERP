@@ -30,6 +30,7 @@ public class CreateOrderCommandHandler
     public async Task<Guid> Handle(
         CreateOrderCommand request,
         CancellationToken cancellationToken)
+
     {
         var customer = await _customerRepository.GetByIdAsync(
             request.CustomerId,
