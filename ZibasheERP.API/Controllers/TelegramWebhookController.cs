@@ -315,8 +315,33 @@ public sealed class TelegramWebhookController : ControllerBase
         {
             var telegramId = callback.From.Id.ToString();
             if (selection.Type == TelegramCallbackType.MenuLists)
+            {
                 await SendOpenListsAsync(callback.Message.Chat.Id, cancellationToken);
-            else if (selection.Type == TelegramCallbackType.MenuOrders)
+                await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+                return;
+            }
+
+            var usernameLink = await _mediator.Send(
+                new LinkTelegramByUsernameCommand(telegramId, callback.From.Username),
+                cancellationToken);
+            if (!IsLinked(usernameLink))
+            {
+                if (usernameLink.Status == LinkTelegramCustomerStatus.UsernameNotFound)
+                    await RequestContactAsync(callback.Message.Chat.Id, cancellationToken);
+                else
+                    await ReplyAsync(
+                        callback.Message.Chat.Id,
+                        FormatLinkResult(usernameLink),
+                        cancellationToken);
+
+                await _sender.AnswerCallbackAsync(
+                    callback.Id,
+                    "ابتدا حساب خود را متصل کنید.",
+                    cancellationToken);
+                return;
+            }
+
+            if (selection.Type == TelegramCallbackType.MenuOrders)
                 await SendOrdersAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
             else if (selection.Type == TelegramCallbackType.MenuBalance)
                 await SendAccountBalanceAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
