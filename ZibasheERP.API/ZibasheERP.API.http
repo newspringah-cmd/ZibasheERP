@@ -405,3 +405,8 @@ X-Api-Key: {{AdminApiKey}}
 {
   "message": "لطفاً برای هماهنگی تسویه با پشتیبانی تماس بگیرید."
 }
+### Liveness health check
+GET {{ZibasheERP.API_HostAddress}}/health/live
+
+### Readiness health check (includes database)
+GET {{ZibasheERP.API_HostAddress}}/health/ready
