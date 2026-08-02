@@ -4,7 +4,7 @@ public sealed record UpsertCustomerTelegramGroupRequest(
     string ChatId,
     string Title,
     string? Username,
-    bool IsActive = true);
+    bool IsActive = false);
 
 public sealed record CustomerTelegramGroupResponse(
     Guid Id,
@@ -34,3 +34,15 @@ public sealed record TelegramGroupCsvImportIssueResponse(
     string Message,
     string? CustomerUsername,
     string? ChatId);
+
+public sealed record TelegramGroupReadinessResponse(
+    int TotalCustomers,
+    int CustomersWithUsername,
+    int MappedCustomers,
+    int UnmappedCustomers,
+    int ActiveGroups,
+    int InactiveGroups,
+    int GroupsNeverSeenByBot,
+    decimal MappingPercent,
+    decimal DeliveryReadyPercent,
+    bool IsReadyForAutomatedDelivery);

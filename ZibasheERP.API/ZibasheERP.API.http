@@ -437,6 +437,10 @@ Content-Type: text/csv
 < ../tools/telegram-groups/output/telegram-groups-current.csv
 --ZibasheTelegramGroups--
 
+### Telegram group delivery readiness
+GET {{ZibasheERP.API_HostAddress}}/api/telegram-groups/readiness
+X-Api-Key: {{AdminApiKey}}
+
 ### Apply Telegram group CSV import (run only after reviewing dry run)
 POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/import-csv?dryRun=false
 X-Api-Key: {{AdminApiKey}}

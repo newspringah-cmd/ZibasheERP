@@ -45,6 +45,44 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
         return Ok(groups);
     }
 
+    [HttpGet("readiness")]
+    public async Task<ActionResult<TelegramGroupReadinessResponse>> GetReadiness(
+        CancellationToken cancellationToken = default)
+    {
+        var customers = await context.Customers
+            .AsNoTracking()
+            .Where(customer => !customer.IsDeleted)
+            .Select(customer => new
+            {
+                HasUsername = customer.Username != null && customer.Username != string.Empty,
+                HasGroup = customer.TelegramGroup != null && !customer.TelegramGroup.IsDeleted
+            })
+            .ToArrayAsync(cancellationToken);
+        var groups = await context.CustomerTelegramGroups
+            .AsNoTracking()
+            .Where(group => !group.IsDeleted && !group.Customer.IsDeleted)
+            .Select(group => new { group.IsActive, group.LastSeenAt })
+            .ToArrayAsync(cancellationToken);
+
+        var totalCustomers = customers.Length;
+        var mappedCustomers = customers.Count(customer => customer.HasGroup);
+        var activeGroups = groups.Count(group => group.IsActive);
+        var mappingPercent = Percentage(mappedCustomers, totalCustomers);
+        var deliveryReadyPercent = Percentage(activeGroups, totalCustomers);
+
+        return Ok(new TelegramGroupReadinessResponse(
+            totalCustomers,
+            customers.Count(customer => customer.HasUsername),
+            mappedCustomers,
+            totalCustomers - mappedCustomers,
+            activeGroups,
+            groups.Length - activeGroups,
+            groups.Count(group => group.LastSeenAt is null),
+            mappingPercent,
+            deliveryReadyPercent,
+            totalCustomers > 0 && activeGroups == totalCustomers));
+    }
+
     [HttpPut("customers/{customerId:guid}")]
     public async Task<ActionResult<CustomerTelegramGroupResponse>> Upsert(
         Guid customerId,
@@ -283,6 +321,9 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
 
     private static string Field(IReadOnlyList<string> fields, int index) =>
         index < fields.Count ? fields[index] : string.Empty;
+
+    private static decimal Percentage(int value, int total) =>
+        total == 0 ? 0 : Math.Round(value * 100m / total, 2);
 
     private static bool IsValidGroupChatId(string chatId) =>
         long.TryParse(chatId, out var value) && value < 0;
