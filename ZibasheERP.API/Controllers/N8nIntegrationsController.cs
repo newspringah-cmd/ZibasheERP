@@ -1,8 +1,14 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using System.Text.Json;
+using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Integrations.RecordOrderArtifact;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -12,10 +18,17 @@ namespace ZibasheERP.API.Controllers;
 public sealed class N8nIntegrationsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly AppDbContext _context;
+    private readonly TelegramOptions _telegramOptions;
 
-    public N8nIntegrationsController(IMediator mediator)
+    public N8nIntegrationsController(
+        IMediator mediator,
+        AppDbContext context,
+        IOptions<TelegramOptions> telegramOptions)
     {
         _mediator = mediator;
+        _context = context;
+        _telegramOptions = telegramOptions.Value;
     }
 
     [HttpPost("order-artifacts")]
@@ -47,4 +60,123 @@ public sealed class N8nIntegrationsController : ControllerBase
         string? FileUrl,
         string? ExternalFileId,
         string? ContentType);
+
+    [HttpPost("delivery-failures")]
+    public async Task<IActionResult> ReportDeliveryFailure(
+        ReportN8nDeliveryFailureRequest request,
+        CancellationToken cancellationToken)
+    {
+        var chatId = request.ChatId.Trim();
+        var error = request.Error.Trim();
+        if (!long.TryParse(chatId, out var numericChatId) || numericChatId >= 0 ||
+            string.IsNullOrWhiteSpace(error))
+        {
+            return BadRequest(new { Message = "شناسه گروه یا متن خطا معتبر نیست." });
+        }
+
+        var existing = await _context.IntegrationDeliveryFailures
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                failure => failure.SourceEventId == request.SourceEventId,
+                cancellationToken);
+        if (existing is not null)
+            return Ok(ToFailureResponse(existing, true));
+
+        var sourceEvent = await _context.NotificationOutbox
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                value => value.Id == request.SourceEventId && value.Channel == "N8n",
+                cancellationToken);
+        if (sourceEvent is null)
+            return NotFound(new { Message = "رویداد مبدأ n8n پیدا نشد." });
+        if (!N8nDeliveryTargetValidator.MatchesTelegramGroup(sourceEvent.Payload, chatId))
+            return Conflict(new { Message = "مقصد گزارش با مقصد مجاز رویداد یکسان نیست." });
+
+        var group = await _context.CustomerTelegramGroups.FirstOrDefaultAsync(
+            value => value.ChatId == chatId &&
+                value.CustomerId == sourceEvent.CustomerId &&
+                !value.IsDeleted,
+            cancellationToken);
+        if (group is null)
+            return NotFound(new { Message = "نگاشت گروه مشتری پیدا نشد." });
+
+        var now = DateTime.UtcNow;
+        group.IsActive = false;
+        group.UpdatedAt = now;
+        var failure = new IntegrationDeliveryFailure
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = now,
+            SourceEventId = sourceEvent.Id,
+            CustomerId = sourceEvent.CustomerId,
+            OrderId = sourceEvent.OrderId,
+            CustomerTelegramGroupId = group.Id,
+            Recipient = chatId,
+            Error = error.Length <= 1000 ? error : error[..1000],
+            ReportedAt = now
+        };
+        _context.IntegrationDeliveryFailures.Add(failure);
+
+        var adminChatId = _telegramOptions.AdminChatId.Trim();
+        if (!string.IsNullOrWhiteSpace(adminChatId))
+        {
+            var alert = new NotificationOutbox
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = now,
+                CustomerId = sourceEvent.CustomerId,
+                OrderId = sourceEvent.OrderId,
+                Channel = "Telegram",
+                EventType = "TelegramGroupDeliveryFailed",
+                Recipient = adminChatId,
+                Payload = JsonSerializer.Serialize(new
+                {
+                    sourceEvent.CustomerId,
+                    GroupChatId = chatId,
+                    NotificationId = sourceEvent.Id,
+                    Source = "n8n",
+                    Error = failure.Error
+                })
+            };
+            failure.AdminNotificationId = alert.Id;
+            _context.NotificationOutbox.Add(alert);
+        }
+
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            _context.ChangeTracker.Clear();
+            var concurrent = await _context.IntegrationDeliveryFailures
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    value => value.SourceEventId == request.SourceEventId,
+                    cancellationToken);
+            if (concurrent is null)
+                throw;
+            return Ok(ToFailureResponse(concurrent, true));
+        }
+        return Ok(ToFailureResponse(failure, false));
+    }
+
+    private static object ToFailureResponse(
+        IntegrationDeliveryFailure failure,
+        bool duplicate) => new
+        {
+            failure.Id,
+            failure.SourceEventId,
+            failure.CustomerId,
+            failure.OrderId,
+            failure.Recipient,
+            failure.ReportedAt,
+            failure.AdminNotificationId,
+            Duplicate = duplicate
+        };
+
+    public sealed record ReportN8nDeliveryFailureRequest(
+        Guid SourceEventId,
+        string ChatId,
+        string Error);
 }

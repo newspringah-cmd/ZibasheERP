@@ -4,6 +4,7 @@
 @OrderId = 00000000-0000-0000-0000-000000000000
 @TelegramApiKey = SET_FROM_A_SECURE_SOURCE
 @AdminApiKey = SET_FROM_A_SECURE_SOURCE
+@N8nApiKey = SET_FROM_A_SECURE_SOURCE
 @TelegramWebhookSecret = SET_FROM_A_SECURE_SOURCE
 
 ### Create order from Telegram
@@ -424,6 +425,17 @@ X-Api-Key: {{AdminApiKey}}
 ### Get shipment tracking for Telegram customer
 GET {{ZibasheERP.API_HostAddress}}/api/orders/tracking/ZS-ORDER-NUMBER/by-telegram/123456789
 X-Api-Key: {{TelegramApiKey}}
+
+### n8n reports a permanent Telegram group delivery failure
+POST {{ZibasheERP.API_HostAddress}}/api/integrations/n8n/delivery-failures
+Content-Type: application/json
+X-Api-Key: {{N8nApiKey}}
+
+{
+  "sourceEventId": "00000000-0000-0000-0000-000000000000",
+  "chatId": "-1001234567890",
+  "error": "Forbidden: bot was kicked from the supergroup chat"
+}
 
 ### Preview Telegram group CSV import (does not write)
 POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/import-csv?dryRun=true

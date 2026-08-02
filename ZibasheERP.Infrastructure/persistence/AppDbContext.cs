@@ -30,6 +30,7 @@ public class AppDbContext : DbContext
     public DbSet<Shipment> Shipments => Set<Shipment>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
+    public DbSet<IntegrationDeliveryFailure> IntegrationDeliveryFailures => Set<IntegrationDeliveryFailure>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -51,6 +52,7 @@ public class AppDbContext : DbContext
         ConfigureShipment(modelBuilder);
         ConfigureInvoice(modelBuilder);
         ConfigureNotificationOutbox(modelBuilder);
+        ConfigureIntegrationDeliveryFailure(modelBuilder);
     }
 
     private static void ConfigureCustomer(ModelBuilder modelBuilder)
@@ -390,5 +392,14 @@ public class AppDbContext : DbContext
                 notification.LockedUntil,
                 notification.CreatedAt
             });
+    }
+
+    private static void ConfigureIntegrationDeliveryFailure(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<IntegrationDeliveryFailure>()
+            .HasIndex(failure => failure.SourceEventId)
+            .IsUnique();
+        modelBuilder.Entity<IntegrationDeliveryFailure>()
+            .HasIndex(failure => new { failure.CustomerId, failure.ReportedAt });
     }
 }

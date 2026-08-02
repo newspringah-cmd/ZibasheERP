@@ -104,6 +104,8 @@ dotnet user-secrets set "ApiKeys:N8n" "A_DIFFERENT_RANDOM_KEY_WITH_AT_LEAST_32_C
 
 پس از تولید و ارسال فایل، workflow نتیجه را با هدر `X-Api-Key` مربوط به نقش N8n به `POST /api/integrations/n8n/order-artifacts` برمی‌گرداند. نوع فایل یکی از `InvoicePdf`، `DecantPhoto` یا `PostalReceipt` است و `SourceEventId` باید همان EventId دریافتی باشد.
 
+اگر ارسال فایل به گروه شکست قطعی خورد، workflow باید `SourceEventId`، `ChatId` و متن خطا را به `POST /api/integrations/n8n/delivery-failures` بفرستد. ERP مقصد را با event اصلی تطبیق می‌دهد، گزارش را با SourceEventId یکتا ثبت می‌کند، گروه را غیرفعال می‌کند و هشدار ادمین را در Outbox قرار می‌دهد. callback تکراری پاسخ idempotent می‌گیرد و هشدار تکراری ایجاد نمی‌کند.
+
 تنظیمات worker تلگرام:
 
 - `Telegram:PollIntervalSeconds`: فاصله بررسی Outbox، بین ۱ تا ۳۰۰ ثانیه
