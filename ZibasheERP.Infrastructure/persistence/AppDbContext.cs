@@ -90,6 +90,11 @@ public class AppDbContext : DbContext
             .WithMany(x => x.Addresses)
             .HasForeignKey(x => x.CustomerId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Address>()
+            .HasIndex(x => new { x.CustomerId, x.IsDefault })
+            .IsUnique()
+            .HasFilter("[IsDefault] = 1 AND [IsDeleted] = 0");
     }
 
     private static void ConfigurePerfume(ModelBuilder modelBuilder)

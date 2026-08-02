@@ -79,7 +79,9 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CustomerId");
+                    b.HasIndex("CustomerId", "IsDefault")
+                        .IsUnique()
+                        .HasFilter("[IsDefault] = 1 AND [IsDeleted] = 0");
 
                     b.ToTable("Addresses");
                 });
