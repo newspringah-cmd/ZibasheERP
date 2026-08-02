@@ -13,6 +13,11 @@ public static class TelegramNotificationMessageFormatter
             var message = ReadString(root, "Message") ?? "لطفاً برای تسویه اقدام کنید.";
             return $"یادآوری زیباشه: مانده بدهی شما {ReadDecimal(root, "Amount"):N0} تومان است. {message}";
         }
+        if (eventType == "TelegramGroupDeliveryTest")
+        {
+            return ReadString(root, "Message") ??
+                "✅ اتصال گروه به سامانه زیباشه با موفقیت آزمایش شد.";
+        }
         var orderNumber = ReadString(root, "OrderNumber") ?? "نامشخص";
 
         return eventType switch

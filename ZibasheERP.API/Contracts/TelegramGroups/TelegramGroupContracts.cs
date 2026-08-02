@@ -46,3 +46,9 @@ public sealed record TelegramGroupReadinessResponse(
     decimal MappingPercent,
     decimal DeliveryReadyPercent,
     bool IsReadyForAutomatedDelivery);
+
+public sealed record TelegramGroupDeliveryTestResponse(
+    Guid NotificationId,
+    Guid CustomerId,
+    string ChatId,
+    string Status);

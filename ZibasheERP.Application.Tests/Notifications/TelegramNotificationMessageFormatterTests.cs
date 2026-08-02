@@ -6,6 +6,16 @@ namespace ZibasheERP.Application.Tests.Notifications;
 public sealed class TelegramNotificationMessageFormatterTests
 {
     [Fact]
+    public void Format_GroupDeliveryTest_ReturnsSafeOperationalMessage()
+    {
+        var result = TelegramNotificationMessageFormatter.Format(
+            "TelegramGroupDeliveryTest",
+            "{\"Message\":\"اتصال آزمایشی زیباشه\"}");
+
+        Assert.Equal("اتصال آزمایشی زیباشه", result);
+    }
+
+    [Fact]
     public void Format_OrderPaid_IncludesOrderNumber()
     {
         var message = TelegramNotificationMessageFormatter.Format(

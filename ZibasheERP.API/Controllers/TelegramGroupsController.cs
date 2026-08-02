@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualBasic.FileIO;
+using System.Text.Json;
 using ZibasheERP.API.Contracts.TelegramGroups;
 using ZibasheERP.Application.Features.Integrations.ImportTelegramGroups;
 using ZibasheERP.Domain.Entities;
@@ -262,6 +263,50 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
                 issue.Message,
                 issue.CustomerUsername,
                 issue.ChatId)).ToArray()));
+    }
+
+    [HttpPost("{id:guid}/test-delivery")]
+    public async Task<ActionResult<TelegramGroupDeliveryTestResponse>> TestDelivery(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        var group = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
+            value => value.Id == id && !value.IsDeleted,
+            cancellationToken);
+        if (group is null)
+            return NotFound(new { Message = "گروه پیدا نشد." });
+        if (!group.IsActive || group.LastSeenAt is null)
+        {
+            return Conflict(new
+            {
+                Message = "عضویت و اجازه ارسال ربات در این گروه هنوز تأیید نشده است."
+            });
+        }
+
+        var now = DateTime.UtcNow;
+        var notification = new NotificationOutbox
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = now,
+            CustomerId = group.CustomerId,
+            Channel = "Telegram",
+            EventType = "TelegramGroupDeliveryTest",
+            Recipient = group.ChatId,
+            Payload = JsonSerializer.Serialize(new
+            {
+                Message = "✅ اتصال گروه به سامانه زیباشه با موفقیت آزمایش شد.",
+                GroupId = group.Id,
+                TestedAt = now
+            })
+        };
+        context.NotificationOutbox.Add(notification);
+        await context.SaveChangesAsync(cancellationToken);
+
+        return Accepted(new TelegramGroupDeliveryTestResponse(
+            notification.Id,
+            group.CustomerId,
+            group.ChatId,
+            notification.Status.ToString()));
     }
 
     private static async Task<IReadOnlyCollection<TelegramGroupImportRow>> ReadCsvAsync(

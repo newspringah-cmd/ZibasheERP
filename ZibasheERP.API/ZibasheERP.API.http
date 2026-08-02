@@ -441,6 +441,10 @@ Content-Type: text/csv
 GET {{ZibasheERP.API_HostAddress}}/api/telegram-groups/readiness
 X-Api-Key: {{AdminApiKey}}
 
+### Queue a safe test message for an active Telegram group
+POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/00000000-0000-0000-0000-000000000000/test-delivery
+X-Api-Key: {{AdminApiKey}}
+
 ### Apply Telegram group CSV import (run only after reviewing dry run)
 POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/import-csv?dryRun=false
 X-Api-Key: {{AdminApiKey}}
