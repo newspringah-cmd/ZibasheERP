@@ -25,4 +25,18 @@ public class BatchRepository : IBatchRepository
                      !x.IsDeleted,
                 cancellationToken);
     }
+
+    public Task UpdateAsync(
+        Batch batch,
+        CancellationToken cancellationToken = default)
+    {
+        _dbContext.Batches.Update(batch);
+        return Task.CompletedTask;
+    }
+
+    public async Task SaveChangesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
 }

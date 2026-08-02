@@ -21,8 +21,30 @@ public class BottleRepository : IBottleRepository
         return await _dbContext.Bottles
             .FirstOrDefaultAsync(
                 x => x.Id == id &&
-                     !x.IsDeleted &&
-                     x.IsActive,
+                     x.IsActive &&
+                     !x.IsDeleted,
                 cancellationToken);
+    }
+
+    public async Task<Bottle?> GetByTypeAsync(
+        BottleType type,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Bottles
+            .FirstOrDefaultAsync(
+                x => x.Type == type &&
+                     x.IsDefault &&
+                     x.IsActive &&
+                     !x.IsDeleted,
+                cancellationToken);
+    }
+
+    public async Task<List<Bottle>> GetActiveAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Bottles
+            .Where(x => x.IsActive && !x.IsDeleted)
+            .OrderBy(x => x.VolumeMl)
+            .ToListAsync(cancellationToken);
     }
 }
