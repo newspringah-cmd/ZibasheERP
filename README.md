@@ -2,6 +2,8 @@
 
 بک‌اند عملیاتی اکوسیستم زیباشه برای مدیریت مشتری، فروش دکانت عطر، سفارش، اعتبار، پرداخت، فاکتور، موجودی، ارسال و اعلان‌ها.
 
+معیار دقیق تکمیل، تست عملیاتی و rollout امن گروه‌ها در `docs/phase-1-acceptance.md` ثبت شده است.
+
 رابط اصلی مشتری در نسخه فعلی ربات تلگرام است. تمام عملیات روی مدل مشترک `Customer` انجام می‌شوند تا وب‌سایت و اپلیکیشن آینده بتوانند با همان حساب، موبایل، TelegramId و username کار کنند.
 
 ## معماری
@@ -73,6 +75,8 @@ dotnet user-secrets set "Telegram:AdminChatId" "ADMIN_PRIVATE_OR_GROUP_CHAT_ID" 
 ```
 
 برای فعال‌کردن خروجی امن n8n:
+
+قراردادهای نسخه‌بندی‌شده، نمونه payload و معیار پذیرش workflowها در `integrations/n8n/README.md` نگهداری می‌شوند.
 
 ```powershell
 dotnet user-secrets set "N8n:Enabled" "true" --project ZibasheERP.API\ZibasheERP.API.csproj

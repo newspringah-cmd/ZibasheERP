@@ -33,6 +33,13 @@ jobs:
       - name: Validate deployment scripts
         run: bash -n deploy/preflight.sh deploy/smoke-test.sh
 
+      - name: Validate integration JSON contracts
+        run: >-
+          python3 -m json.tool integrations/n8n/contracts/event-envelope.schema.json >/dev/null &&
+          python3 -m json.tool integrations/n8n/contracts/artifact-callback.schema.json >/dev/null &&
+          python3 -m json.tool integrations/n8n/contracts/delivery-failure.schema.json >/dev/null &&
+          python3 -m json.tool integrations/n8n/samples/invoice-issued.json >/dev/null
+
       - name: Restore
         run: dotnet restore ZibasheERP.slnx
 

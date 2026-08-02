@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zibashe.local/schemas/n8n/artifact-callback.schema.json",
+  "title": "Delivered order artifact callback",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sourceEventId", "orderId", "type"],
+  "anyOf": [
+    {
+      "required": ["fileUrl"],
+      "properties": { "fileUrl": { "type": "string", "format": "uri", "minLength": 1, "maxLength": 2000 } }
+    },
+    {
+      "required": ["externalFileId"],
+      "properties": { "externalFileId": { "type": "string", "minLength": 1, "maxLength": 250 } }
+    }
+  ],
+  "properties": {
+    "sourceEventId": { "type": "string", "format": "uuid" },
+    "orderId": { "type": "string", "format": "uuid" },
+    "type": {
+      "type": "string",
+      "enum": ["InvoicePdf", "DecantPhoto", "PostalReceipt"]
+    },
+    "fileUrl": { "type": ["string", "null"], "format": "uri", "maxLength": 2000 },
+    "externalFileId": { "type": ["string", "null"], "maxLength": 250 },
+    "contentType": { "type": ["string", "null"], "maxLength": 100 }
+  }
+}

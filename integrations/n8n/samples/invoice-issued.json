@@ -1,0 +1,30 @@
+{
+  "eventId": "11111111-1111-1111-1111-111111111111",
+  "eventType": "InvoiceIssued",
+  "occurredAt": "2026-08-03T12:00:00Z",
+  "customerId": "22222222-2222-2222-2222-222222222222",
+  "orderId": "33333333-3333-3333-3333-333333333333",
+  "data": {
+    "OrderId": "33333333-3333-3333-3333-333333333333",
+    "OrderNumber": "ORD-20260803-1001",
+    "InvoiceId": "44444444-4444-4444-4444-444444444444",
+    "InvoiceNumber": "INV-20260803120000-1001",
+    "IssuedAt": "2026-08-03T12:00:00Z",
+    "PerfumeTotal": 1500000,
+    "BottleTotal": 150000,
+    "TotalAmount": 1650000,
+    "Customer": {
+      "Id": "22222222-2222-2222-2222-222222222222",
+      "FullName": "مشتری آزمایشی",
+      "Mobile": "989120000000",
+      "TelegramId": "123456789"
+    },
+    "Items": [],
+    "Delivery": {
+      "Channel": "TelegramGroup",
+      "ChatId": "-1001234567890",
+      "Title": "گروه آزمایشی زیباشه",
+      "Username": null
+    }
+  }
+}

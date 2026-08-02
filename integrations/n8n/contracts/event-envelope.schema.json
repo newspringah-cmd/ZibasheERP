@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zibashe.local/schemas/n8n/event-envelope.schema.json",
+  "title": "Zibashe n8n event envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventType", "occurredAt", "customerId", "orderId", "data"],
+  "properties": {
+    "eventId": { "type": "string", "format": "uuid" },
+    "eventType": {
+      "type": "string",
+      "enum": ["InvoiceIssued", "OrderDecanted", "OrderShipped"]
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "orderId": { "type": "string", "format": "uuid" },
+    "data": {
+      "type": "object",
+      "required": ["Delivery"],
+      "properties": {
+        "Delivery": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["Channel", "ChatId", "Title"],
+              "properties": {
+                "Channel": { "const": "TelegramGroup" },
+                "ChatId": { "type": "string", "pattern": "^-[1-9][0-9]*$" },
+                "Title": { "type": "string", "minLength": 1 },
+                "Username": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
