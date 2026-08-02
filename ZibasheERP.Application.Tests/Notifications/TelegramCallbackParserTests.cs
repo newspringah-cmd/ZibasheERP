@@ -43,4 +43,26 @@ public sealed class TelegramCallbackParserTests
         Assert.Equal(TelegramCallbackType.ConfirmOrder, result.Type);
         Assert.Equal(draftId, result.SalesListId);
     }
+
+    [Fact]
+    public void Parse_OrderDetails_RoundTripsCompactGuid()
+    {
+        var orderId = Guid.NewGuid();
+        var result = TelegramCallbackParser.Parse(
+            $"order:{TelegramCallbackParser.EncodeGuid(orderId)}");
+
+        Assert.Equal(TelegramCallbackType.ViewOrder, result.Type);
+        Assert.Equal(orderId, result.SalesListId);
+    }
+
+    [Fact]
+    public void Parse_StartPayment_RoundTripsCompactGuid()
+    {
+        var orderId = Guid.NewGuid();
+        var result = TelegramCallbackParser.Parse(
+            $"pay:{TelegramCallbackParser.EncodeGuid(orderId)}");
+
+        Assert.Equal(TelegramCallbackType.StartPayment, result.Type);
+        Assert.Equal(orderId, result.SalesListId);
+    }
 }

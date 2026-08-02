@@ -1,5 +1,6 @@
 using ZibasheERP.Application.Features.Payments.ConfirmPayment;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
+using ZibasheERP.Application.Features.Payments.RejectPayment;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Domain.Enums;
@@ -90,6 +91,33 @@ public sealed class PaymentWorkflowTests
         Assert.True(payments.SaveChangesCalled);
     }
 
+    [Fact]
+    public async Task RejectPayment_MarksPaymentRejectedAndQueuesNotification()
+    {
+        var order = CreateOrder(1_000_000);
+        var payment = new Payment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            Amount = 1_000_000,
+            Status = PaymentStatus.Pending
+        };
+        order.Payments.Add(payment);
+        var payments = new PaymentRepositoryStub(payment);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new RejectPaymentCommandHandler(payments, outbox);
+
+        var result = await handler.Handle(
+            new RejectPaymentCommand(payment.Id, "Bank reference not found"),
+            CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Rejected, payment.Status);
+        Assert.Equal("Rejected", result.Status);
+        Assert.Equal("PaymentRejected", outbox.AddedNotification?.EventType);
+        Assert.True(payments.SaveChangesCalled);
+    }
+
     private static Order CreateOrder(decimal finalAmount)
     {
         var customer = new Customer
@@ -139,6 +167,10 @@ public sealed class PaymentWorkflowTests
         public Task<Payment?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult(payment?.Id == id ? payment : null);
 
+        public Task<IReadOnlyCollection<Payment>> GetPendingAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Payment>>(
+                payment is null ? Array.Empty<Payment>() : new[] { payment });
+
         public Task<bool> TransactionIdExistsAsync(string transactionId, CancellationToken cancellationToken = default) =>
             Task.FromResult(false);
 
@@ -160,6 +192,8 @@ public sealed class PaymentWorkflowTests
         public Task<Order?> GetByExternalReferenceAsync(string externalReference, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<Order>>(Array.Empty<Order>());
+        public Task<IReadOnlyCollection<Order>> GetForAdminAsync(ZibasheERP.Domain.Entities.OrderStatus? status, int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Order>>(new[] { order });
         public Task<bool> OrderNumberExistsAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task UpdateAsync(Order value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

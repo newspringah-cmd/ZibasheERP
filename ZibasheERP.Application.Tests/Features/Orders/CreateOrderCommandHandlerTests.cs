@@ -207,6 +207,8 @@ public sealed class CreateOrderCommandHandlerTests
             Task.FromResult<Order?>(AddedOrder?.ExternalReference == externalReference ? AddedOrder : null);
         public Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<Order>>(Array.Empty<Order>());
+        public Task<IReadOnlyCollection<Order>> GetForAdminAsync(OrderStatus? status, int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Order>>(AddedOrder is null ? Array.Empty<Order>() : new[] { AddedOrder });
         public Task<bool> OrderNumberExistsAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task UpdateAsync(Order order, CancellationToken cancellationToken = default) => Task.CompletedTask;
 

@@ -7,6 +7,7 @@ using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
 using ZibasheERP.Application.Features.Orders.GetOrder;
+using ZibasheERP.Application.Features.Orders.GetAdminOrders;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -81,6 +82,16 @@ public class OrdersController : ControllerBase
             ? NotFound(new { Message = "سفارش پیدا نشد." })
             : Ok(order);
     }
+
+    [HttpGet]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetForAdmin(
+        [FromQuery] ZibasheERP.Domain.Entities.OrderStatus? status,
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default) =>
+        Ok(await _mediator.Send(
+            new GetAdminOrdersQuery(status, limit),
+            cancellationToken));
 
     [HttpGet("by-telegram/{telegramId}")]
     public async Task<IActionResult> GetByTelegramId(

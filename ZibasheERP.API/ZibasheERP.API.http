@@ -39,6 +39,11 @@ GET {{ZibasheERP.API_HostAddress}}/api/orders/{{OrderId}}
 Accept: application/json
 X-Api-Key: {{AdminApiKey}}
 
+### List invoiced orders for admin operations
+GET {{ZibasheERP.API_HostAddress}}/api/orders?status=Invoiced&limit=50
+Accept: application/json
+X-Api-Key: {{AdminApiKey}}
+
 ### Get Telegram customer's orders
 GET {{ZibasheERP.API_HostAddress}}/api/orders/by-telegram/123456789
 Accept: application/json
@@ -60,6 +65,20 @@ X-Api-Key: {{TelegramApiKey}}
 ### Confirm payment by admin
 POST {{ZibasheERP.API_HostAddress}}/api/payments/00000000-0000-0000-0000-000000000000/confirm
 X-Api-Key: {{AdminApiKey}}
+
+### List pending payments for admin
+GET {{ZibasheERP.API_HostAddress}}/api/payments/pending?limit=50
+Accept: application/json
+X-Api-Key: {{AdminApiKey}}
+
+### Reject payment by admin
+POST {{ZibasheERP.API_HostAddress}}/api/payments/00000000-0000-0000-0000-000000000000/reject
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "reason": "شناسه تراکنش در بانک پیدا نشد."
+}
 
 ### Issue invoice by admin
 POST {{ZibasheERP.API_HostAddress}}/api/invoices/order/{{OrderId}}

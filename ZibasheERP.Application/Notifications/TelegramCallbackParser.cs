@@ -7,7 +7,9 @@ public enum TelegramCallbackType
     SelectVolume = 2,
     SelectBottle = 3,
     ConfirmOrder = 4,
-    Cancel = 5
+    Cancel = 5,
+    ViewOrder = 6,
+    StartPayment = 7
 }
 
 public sealed record TelegramCallback(
@@ -43,6 +45,12 @@ public static class TelegramCallbackParser
 
         if (parts[0] == "confirm" && parts.Length == 2)
             return new(TelegramCallbackType.ConfirmOrder, salesListId);
+
+        if (parts[0] == "order" && parts.Length == 2)
+            return new(TelegramCallbackType.ViewOrder, salesListId);
+
+        if (parts[0] == "pay" && parts.Length == 2)
+            return new(TelegramCallbackType.StartPayment, salesListId);
 
         if (parts[0] == "b" &&
             parts.Length == 4 &&

@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Features.Payments.ConfirmPayment;
+using ZibasheERP.Application.Features.Payments.GetPendingPayments;
 using ZibasheERP.Application.Features.Payments.SubmitPayment;
+using ZibasheERP.Application.Features.Payments.RejectPayment;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -18,6 +20,15 @@ public sealed class PaymentsController : ControllerBase
     {
         _mediator = mediator;
     }
+
+    [HttpGet("pending")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetPending(
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default) =>
+        Ok(await _mediator.Send(
+            new GetPendingPaymentsQuery(limit),
+            cancellationToken));
 
     [HttpPost]
     [Authorize(Roles = "Admin,TelegramBot")]
@@ -70,6 +81,25 @@ public sealed class PaymentsController : ControllerBase
         }
     }
 
+    [HttpPost("{paymentId:guid}/reject")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Reject(
+        Guid paymentId,
+        RejectPaymentRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _mediator.Send(
+                new RejectPaymentCommand(paymentId, request.Reason),
+                cancellationToken));
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { Message = exception.Message });
+        }
+    }
+
     private static ValidationProblemDetails ToErrors(ValidationException exception)
     {
         var errors = exception.Errors
@@ -79,4 +109,6 @@ public sealed class PaymentsController : ControllerBase
                 group => group.Select(error => error.ErrorMessage).ToArray());
         return new ValidationProblemDetails(errors);
     }
+
+    public sealed record RejectPaymentRequest(string Reason);
 }

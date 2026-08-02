@@ -91,6 +91,25 @@ public class OrderRepository : IOrderRepository
             .ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<Order>> GetForAdminAsync(
+        OrderStatus? status,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _dbContext.Orders
+            .AsNoTracking()
+            .Include(order => order.Customer)
+            .Include(order => order.Items)
+            .Where(order => !order.IsDeleted);
+        if (status.HasValue)
+            query = query.Where(order => order.Status == status.Value);
+
+        return await query
+            .OrderByDescending(order => order.RegisteredAt)
+            .Take(Math.Clamp(limit, 1, 200))
+            .ToArrayAsync(cancellationToken);
+    }
+
     public async Task<bool> OrderNumberExistsAsync(
         string orderNumber,
         CancellationToken cancellationToken = default)

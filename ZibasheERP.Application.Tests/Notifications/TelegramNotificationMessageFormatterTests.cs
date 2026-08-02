@@ -37,4 +37,15 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.Contains("ZS-1003", message);
         Assert.Contains("تحویل", message);
     }
+
+    [Fact]
+    public void Format_PaymentRejected_IncludesReason()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "PaymentRejected",
+            "{\"OrderNumber\":\"ZS-1004\",\"Reason\":\"Bank reference not found\"}");
+
+        Assert.Contains("ZS-1004", message);
+        Assert.Contains("Bank reference not found", message);
+    }
 }

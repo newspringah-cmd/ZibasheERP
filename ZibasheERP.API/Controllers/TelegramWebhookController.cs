@@ -7,9 +7,12 @@ using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
+using ZibasheERP.Application.Features.Invoices.GetOrderInvoice;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Features.Orders.GetOrder;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
+using ZibasheERP.Application.Features.Payments.GetPaymentBalance;
+using ZibasheERP.Application.Features.Payments.SubmitPayment;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
 using ZibasheERP.Domain.Entities;
@@ -94,6 +97,17 @@ public sealed class TelegramWebhookController : ControllerBase
         if (string.IsNullOrWhiteSpace(message.Text))
             return Ok();
 
+        var paymentCommand = TelegramPaymentCommandParser.Parse(message.Text);
+        if (paymentCommand is not null)
+        {
+            await SubmitTelegramPaymentAsync(
+                message.Chat.Id,
+                message.From.Id.ToString(),
+                paymentCommand,
+                cancellationToken);
+            return Ok();
+        }
+
         var command = TelegramCommandParser.Parse(message.Text);
         if (command == TelegramCommand.Lists)
         {
@@ -126,13 +140,19 @@ public sealed class TelegramWebhookController : ControllerBase
                     cancellationToken);
                 return Ok();
             }
+
+            if (command == TelegramCommand.Orders)
+            {
+                await SendOrdersAsync(
+                    message.Chat.Id,
+                    message.From.Id.ToString(),
+                    cancellationToken);
+                return Ok();
+            }
         }
 
         var response = command switch
         {
-            TelegramCommand.Orders => await BuildOrdersMessageAsync(
-                message.From.Id.ToString(),
-                cancellationToken),
             _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من"
         };
 
@@ -203,6 +223,18 @@ public sealed class TelegramWebhookController : ControllerBase
         if (selection.Type == TelegramCallbackType.ConfirmOrder)
         {
             await ConfirmDraftAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.ViewOrder)
+        {
+            await SendOrderDetailsAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.StartPayment)
+        {
+            await SendPaymentInstructionsAsync(callback, selection.SalesListId, cancellationToken);
             return;
         }
 
@@ -429,7 +461,8 @@ public sealed class TelegramWebhookController : ControllerBase
             _logger.LogWarning("Telegram contact request failed: {Error}", result.Error);
     }
 
-    private async Task<string> BuildOrdersMessageAsync(
+    private async Task SendOrdersAsync(
+        long chatId,
         string telegramId,
         CancellationToken cancellationToken)
     {
@@ -438,14 +471,157 @@ public sealed class TelegramWebhookController : ControllerBase
             cancellationToken);
 
         if (orders.Count == 0)
-            return "سفارشی برای حساب تلگرام شما پیدا نشد. اگر قبلاً سفارش داشته‌اید، با پشتیبانی تماس بگیرید.";
+        {
+            await ReplyAsync(
+                chatId,
+                "سفارشی برای حساب تلگرام شما پیدا نشد. اگر قبلاً سفارش داشته‌اید، با پشتیبانی تماس بگیرید.",
+                cancellationToken);
+            return;
+        }
 
-        var lines = orders
+        var recentOrders = orders
             .OrderByDescending(order => order.RegisteredAt)
             .Take(10)
-            .Select(order =>
-                $"• {order.OrderNumber} — {TranslateStatus(order.Status)} — {order.FinalAmount:N0} تومان");
-        return "آخرین سفارش‌های شما:\n\n" + string.Join("\n", lines);
+            .ToArray();
+        var lines = recentOrders.Select(order =>
+            $"• {order.OrderNumber} — {TranslateStatus(order.Status)} — {order.FinalAmount:N0} تومان");
+        var rows = recentOrders.Select(order =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"جزئیات {order.OrderNumber}",
+                    $"order:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+            }).ToArray();
+        var result = await _sender.SendInlineKeyboardAsync(
+            chatId.ToString(),
+            "آخرین سفارش‌های شما:\n\n" + string.Join("\n", lines),
+            rows,
+            cancellationToken);
+        if (!result.IsSuccessful)
+            _logger.LogWarning("Telegram orders keyboard failed: {Error}", result.Error);
+    }
+
+    private async Task SendOrderDetailsAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var order = await _mediator.Send(new GetOrderQuery(orderId), cancellationToken);
+        if (order is null || order.Customer.TelegramId != callback.From.Id.ToString())
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "سفارش پیدا نشد یا متعلق به این حساب نیست.",
+                cancellationToken);
+            return;
+        }
+
+        var invoice = await _mediator.Send(
+            new GetOrderInvoiceQuery(order.Id),
+            cancellationToken);
+        var items = order.Items.Select(item =>
+            $"• {item.PerfumeName} — {item.RequestedVolumeMl} میل — {item.LineTotal:N0} تومان");
+        var invoiceLine = invoice is null
+            ? "فاکتور: هنوز صادر نشده"
+            : $"فاکتور: {invoice.InvoiceNumber} — {invoice.Status}";
+        var details = $"سفارش {order.OrderNumber}\nوضعیت: {TranslateStatus(order.Status)}\n" +
+            $"{string.Join("\n", items)}\n\n{invoiceLine}\nمبلغ نهایی: {order.FinalAmount:N0} تومان";
+        if (invoice is not null && order.Status != "Paid" && order.Status != "Cancelled")
+        {
+            await _sender.SendInlineKeyboardAsync(
+                callback.Message!.Chat.Id.ToString(),
+                details,
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[]
+                    {
+                        new TelegramInlineButton(
+                            "ثبت پرداخت",
+                            $"pay:{TelegramCallbackParser.EncodeGuid(order.Id)}")
+                    }
+                },
+                cancellationToken);
+        }
+        else
+        {
+            await ReplyAsync(callback.Message!.Chat.Id, details, cancellationToken);
+        }
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SendPaymentInstructionsAsync(
+        TelegramCallbackQuery callback,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var order = await _mediator.Send(new GetOrderQuery(orderId), cancellationToken);
+        var invoice = await _mediator.Send(new GetOrderInvoiceQuery(orderId), cancellationToken);
+        if (order is null ||
+            invoice is null ||
+            order.Customer.TelegramId != callback.From.Id.ToString())
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "امکان ثبت پرداخت برای این سفارش وجود ندارد.",
+                cancellationToken);
+            return;
+        }
+
+        await ReplyAsync(
+            callback.Message!.Chat.Id,
+            $"پس از واریز مبلغ، شناسه تراکنش را با قالب زیر ارسال کنید:\n\n" +
+            $"/pay {order.OrderNumber} شناسه_تراکنش\n\n" +
+            $"مبلغ فاکتور: {invoice.TotalAmount:N0} تومان",
+            cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SubmitTelegramPaymentAsync(
+        long chatId,
+        string telegramId,
+        TelegramPaymentCommand command,
+        CancellationToken cancellationToken)
+    {
+        var balance = await _mediator.Send(
+            new GetPaymentBalanceQuery(command.OrderNumber),
+            cancellationToken);
+        if (balance is null || balance.TelegramId != telegramId)
+        {
+            await ReplyAsync(chatId, "سفارش پیدا نشد یا متعلق به حساب شما نیست.", cancellationToken);
+            return;
+        }
+
+        if (balance.OrderStatus is "Paid" or "Cancelled" || balance.RemainingAmount <= 0)
+        {
+            await ReplyAsync(chatId, "این سفارش مانده قابل پرداخت ندارد.", cancellationToken);
+            return;
+        }
+
+        if (balance.OrderStatus != "Invoiced")
+        {
+            await ReplyAsync(chatId, "ابتدا باید فاکتور سفارش توسط ادمین صادر شود.", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            var result = await _mediator.Send(
+                new SubmitPaymentCommand(
+                    balance.OrderId,
+                    balance.RemainingAmount,
+                    "Telegram",
+                    command.TransactionId,
+                    "ثبت‌شده توسط مشتری در ربات تلگرام"),
+                cancellationToken);
+            await ReplyAsync(
+                chatId,
+                $"پرداخت {result.Amount:N0} تومانی ثبت شد و در انتظار تأیید ادمین است.",
+                cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await ReplyAsync(chatId, exception.Message, cancellationToken);
+        }
     }
 
     private async Task ReplyAsync(

@@ -31,6 +31,22 @@ public sealed class PaymentRepository : IPaymentRepository
                 cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<Payment>> GetPendingAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Payments
+            .AsNoTracking()
+            .Include(payment => payment.Order)
+                .ThenInclude(order => order!.Customer)
+            .Where(payment =>
+                payment.Status == ZibasheERP.Domain.Enums.PaymentStatus.Pending &&
+                !payment.IsDeleted)
+            .OrderBy(payment => payment.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 100))
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task<bool> TransactionIdExistsAsync(string transactionId, CancellationToken cancellationToken = default)
     {
         return _dbContext.Payments.AnyAsync(
