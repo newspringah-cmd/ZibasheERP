@@ -227,6 +227,12 @@ public sealed class CreateOrderCommandHandlerTests
         public Task<SalesList?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<SalesList?>(salesList.Id == id ? salesList : null);
 
+        public Task<IReadOnlyCollection<SalesList>> GetForAdminAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<SalesList>>(new[] { salesList });
+        public Task<bool> HasActiveForBatchAsync(Guid batchId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(salesList.BatchId == batchId);
+        public Task AddAsync(SalesList value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
         public Task UpdateAsync(SalesList value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

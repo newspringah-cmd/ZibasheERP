@@ -10,6 +10,16 @@ public interface ISalesListRepository
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<SalesList>> GetForAdminAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> HasActiveForBatchAsync(
+        Guid batchId,
+        CancellationToken cancellationToken = default);
+
+    Task AddAsync(SalesList salesList, CancellationToken cancellationToken = default);
+
     Task UpdateAsync(SalesList salesList, CancellationToken cancellationToken = default);
 
     Task SaveChangesAsync(CancellationToken cancellationToken = default);

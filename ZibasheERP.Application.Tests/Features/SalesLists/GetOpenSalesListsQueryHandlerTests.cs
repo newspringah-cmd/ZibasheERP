@@ -43,6 +43,11 @@ public sealed class GetOpenSalesListsQueryHandlerTests
             Task.FromResult<IReadOnlyCollection<SalesList>>(lists.Take(limit).ToArray());
         public Task<SalesList?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<SalesList?>(lists.FirstOrDefault(value => value.Id == id));
+        public Task<IReadOnlyCollection<SalesList>> GetForAdminAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<SalesList>>(lists.Take(limit).ToArray());
+        public Task<bool> HasActiveForBatchAsync(Guid batchId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(lists.Any(value => value.BatchId == batchId));
+        public Task AddAsync(SalesList salesList, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task UpdateAsync(SalesList salesList, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

@@ -308,3 +308,23 @@ X-Api-Key: {{AdminApiKey}}
   "purchaseDate": "2026-08-02T00:00:00Z",
   "status": "Open"
 }
+### Get admin sales lists
+GET {{ZibasheERP.API_HostAddress}}/api/sales-lists?limit=100
+X-Api-Key: {{AdminApiKey}}
+
+### Open sales list from a purchase batch
+POST {{ZibasheERP.API_HostAddress}}/api/sales-lists
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "batchId": "22222222-2222-2222-2222-222222222222",
+  "pricePerMl": 450000,
+  "totalVolume": 100,
+  "telegramChannelId": null,
+  "notes": null
+}
+
+### Close sales list
+POST {{ZibasheERP.API_HostAddress}}/api/sales-lists/00000000-0000-0000-0000-000000000000/close
+X-Api-Key: {{AdminApiKey}}
