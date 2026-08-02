@@ -91,14 +91,28 @@ public sealed class TelegramWebhookController : ControllerBase
 
         if (message.Contact is not null)
         {
-            var contactResponse = message.Contact.UserId != message.From.Id
-                ? "برای امنیت حساب، فقط شماره متعلق به خودتان را با دکمه ربات ارسال کنید."
-                : FormatLinkResult(await _mediator.Send(
+            var contactResponse = "برای امنیت حساب، فقط شماره متعلق به خودتان را با دکمه ربات ارسال کنید.";
+            if (message.Contact.UserId == message.From.Id)
+            {
+                var linkResult = await _mediator.Send(
                     new LinkTelegramCustomerCommand(
                         message.From.Id.ToString(),
                         message.Contact.PhoneNumber,
                         message.From.Username),
-                    cancellationToken));
+                    cancellationToken);
+                contactResponse = FormatLinkResult(linkResult);
+                if (IsLinked(linkResult))
+                {
+                    var pendingDraft = await _draftRepository.GetLatestPendingAsync(
+                        message.From.Id.ToString(),
+                        cancellationToken);
+                    if (pendingDraft is not null && pendingDraft.ExpiresAt > DateTime.UtcNow)
+                    {
+                        contactResponse +=
+                            "\n\nپیش‌نویس سفارش شما محفوظ است؛ اکنون دکمه «تأیید و ثبت سفارش» قبلی را دوباره بزنید.";
+                    }
+                }
+            }
 
             await ReplyAsync(message.Chat.Id, contactResponse, cancellationToken);
             return Ok();
@@ -623,7 +637,18 @@ public sealed class TelegramWebhookController : ControllerBase
             cancellationToken);
         if (!IsLinked(link))
         {
-            await _sender.AnswerCallbackAsync(callback.Id, "ابتدا حساب خود را با /start متصل کنید.", cancellationToken);
+            if (link.Status == LinkTelegramCustomerStatus.UsernameNotFound)
+                await RequestContactAsync(callback.Message!.Chat.Id, cancellationToken);
+            else
+                await ReplyAsync(
+                    callback.Message!.Chat.Id,
+                    FormatLinkResult(link),
+                    cancellationToken);
+
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "ابتدا حساب خود را متصل کنید؛ سفارش شما محفوظ است.",
+                cancellationToken);
             return;
         }
 
