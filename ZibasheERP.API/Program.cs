@@ -10,6 +10,7 @@ using ZibasheERP.API.Data;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.API.Health;
 using ZibasheERP.API.Diagnostics;
+using ZibasheERP.API.N8n;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -74,10 +75,23 @@ builder.Services.AddOptions<ApiKeyOptions>()
     .Validate(options => builder.Environment.IsDevelopment() || options.IsValid(),
         "Production API keys must be distinct and at least 32 characters long.")
     .ValidateOnStart();
+builder.Services.AddOptions<N8nOptions>()
+    .Bind(builder.Configuration.GetSection(N8nOptions.SectionName))
+    .Validate(options => !options.Enabled ||
+        (Uri.TryCreate(options.WebhookUrl, UriKind.Absolute, out var webhookUri) &&
+         (builder.Environment.IsDevelopment() || webhookUri.Scheme == Uri.UriSchemeHttps) &&
+         options.WebhookSecret.Length >= 32 &&
+         options.PollIntervalSeconds is >= 1 and <= 300 &&
+         options.BatchSize is >= 1 and <= 100 &&
+         options.MaxAttempts is >= 1 and <= 20),
+        "Enabled n8n integration has invalid or missing settings.")
+    .ValidateOnStart();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddHostedService<TelegramOutboxWorker>();
+builder.Services.AddSingleton<IN8nWebhookSender, N8nWebhookSender>();
+builder.Services.AddHostedService<N8nOutboxWorker>();
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database", tags: new[] { "ready" });
 builder.Services.AddRateLimiter(options =>

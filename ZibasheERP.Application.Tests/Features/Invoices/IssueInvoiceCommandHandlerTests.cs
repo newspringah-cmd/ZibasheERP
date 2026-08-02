@@ -78,7 +78,7 @@ public sealed class IssueInvoiceCommandHandlerTests
             AddedNotification = value;
             return Task.CompletedTask;
         }
-        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(int limit, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(string channel, int limit, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
         public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<NotificationOutbox?>(null);

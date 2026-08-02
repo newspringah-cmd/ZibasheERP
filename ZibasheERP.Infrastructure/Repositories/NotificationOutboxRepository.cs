@@ -20,9 +20,13 @@ public sealed class NotificationOutboxRepository : INotificationOutboxRepository
     }
 
     public async Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(
+        string channel,
         int limit,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(channel))
+            throw new ArgumentException("Outbox channel is required.", nameof(channel));
+        channel = channel.Trim();
         var batchSize = Math.Clamp(limit, 1, 100);
         var now = DateTime.UtcNow;
         var lockedUntil = now.AddMinutes(5);
@@ -32,6 +36,7 @@ public sealed class NotificationOutboxRepository : INotificationOutboxRepository
                 SELECT TOP ({{batchSize}}) *
                 FROM [NotificationOutbox] WITH (UPDLOCK, READPAST, ROWLOCK)
                 WHERE [IsDeleted] = 0
+                  AND [Channel] = {{channel}}
                   AND (([Status] = {{NotificationOutboxStatus.Pending}}
                     AND ([NextAttemptAt] IS NULL OR [NextAttemptAt] <= {{now}}))
                     OR ([Status] = {{NotificationOutboxStatus.Processing}} AND [LockedUntil] < {{now}}))

@@ -386,7 +386,7 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Status", "NextAttemptAt", "LockedUntil", "CreatedAt");
+                    b.HasIndex("Channel", "Status", "NextAttemptAt", "LockedUntil", "CreatedAt");
 
                     b.ToTable("NotificationOutbox");
                 });

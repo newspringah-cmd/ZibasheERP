@@ -349,6 +349,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<NotificationOutbox>()
             .HasIndex(notification => new
             {
+                notification.Channel,
                 notification.Status,
                 notification.NextAttemptAt,
                 notification.LockedUntil,

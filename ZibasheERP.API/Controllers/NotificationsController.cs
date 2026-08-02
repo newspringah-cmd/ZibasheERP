@@ -4,6 +4,7 @@ using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using MediatR;
 using ZibasheERP.Application.Features.Notifications.ManageFailedNotifications;
+using ZibasheERP.Application.Notifications;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -27,7 +28,7 @@ public sealed class NotificationsController : ControllerBase
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
     {
-        var notifications = await _repository.GetPendingAsync(limit, cancellationToken);
+        var notifications = await _repository.GetPendingAsync("Telegram", limit, cancellationToken);
         return Ok(notifications.Select(value => new NotificationResponse(
             value.Id,
             value.EventType,
@@ -54,6 +55,8 @@ public sealed class NotificationsController : ControllerBase
         notification.Attempts++;
         notification.ProcessedAt = DateTime.UtcNow;
         notification.LastError = null;
+        notification.LockedUntil = null;
+        notification.NextAttemptAt = null;
         notification.UpdatedAt = DateTime.UtcNow;
         await _repository.SaveChangesAsync(cancellationToken);
         return NoContent();
@@ -77,6 +80,10 @@ public sealed class NotificationsController : ControllerBase
         notification.LastError = string.IsNullOrWhiteSpace(request.Error)
             ? "Telegram delivery failed."
             : request.Error.Trim()[..Math.Min(request.Error.Trim().Length, 1000)];
+        notification.LockedUntil = null;
+        notification.NextAttemptAt = notification.Status == NotificationOutboxStatus.Pending
+            ? DateTime.UtcNow + NotificationRetryPolicy.DelayAfter(notification.Attempts)
+            : null;
         notification.UpdatedAt = DateTime.UtcNow;
         await _repository.SaveChangesAsync(cancellationToken);
         return NoContent();

@@ -66,7 +66,7 @@ public sealed class SendDebtReminderCommandHandlerTests
             Added = notification;
             return Task.CompletedTask;
         }
-        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(int limit, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(string channel, int limit, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<NotificationOutbox>>([]);
         public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<NotificationOutbox?>(null);
         public Task SaveChangesAsync(CancellationToken cancellationToken = default)
