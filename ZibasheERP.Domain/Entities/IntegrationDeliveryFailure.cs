@@ -23,4 +23,8 @@ public sealed class IntegrationDeliveryFailure : BaseEntity
 
     public DateTime ReportedAt { get; set; }
     public Guid? AdminNotificationId { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+
+    [MaxLength(500)]
+    public string? ResolutionNotes { get; set; }
 }

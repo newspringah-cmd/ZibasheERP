@@ -401,5 +401,7 @@ public class AppDbContext : DbContext
             .IsUnique();
         modelBuilder.Entity<IntegrationDeliveryFailure>()
             .HasIndex(failure => new { failure.CustomerId, failure.ReportedAt });
+        modelBuilder.Entity<IntegrationDeliveryFailure>()
+            .HasIndex(failure => new { failure.ResolvedAt, failure.ReportedAt });
     }
 }

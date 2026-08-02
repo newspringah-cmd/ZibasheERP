@@ -70,6 +70,9 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
         var activeGroups = groups.Count(group => group.IsActive);
         var mappingPercent = Percentage(mappedCustomers, totalCustomers);
         var deliveryReadyPercent = Percentage(activeGroups, totalCustomers);
+        var unresolvedFailures = await context.IntegrationDeliveryFailures
+            .AsNoTracking()
+            .CountAsync(failure => !failure.IsDeleted && failure.ResolvedAt == null, cancellationToken);
 
         return Ok(new TelegramGroupReadinessResponse(
             totalCustomers,
@@ -79,9 +82,96 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
             activeGroups,
             groups.Length - activeGroups,
             groups.Count(group => group.LastSeenAt is null),
+            unresolvedFailures,
             mappingPercent,
             deliveryReadyPercent,
-            totalCustomers > 0 && activeGroups == totalCustomers));
+            totalCustomers > 0 && activeGroups == totalCustomers && unresolvedFailures == 0));
+    }
+
+    [HttpGet("delivery-failures")]
+    public async Task<ActionResult<IReadOnlyCollection<TelegramGroupDeliveryFailureResponse>>> GetDeliveryFailures(
+        [FromQuery] bool unresolvedOnly = true,
+        [FromQuery] int limit = 100,
+        CancellationToken cancellationToken = default)
+    {
+        var query = context.IntegrationDeliveryFailures
+            .AsNoTracking()
+            .Where(failure => !failure.IsDeleted);
+        if (unresolvedOnly)
+            query = query.Where(failure => failure.ResolvedAt == null);
+
+        var failures = await (
+                from failure in query
+                join telegramGroup in context.CustomerTelegramGroups.AsNoTracking()
+                    on failure.CustomerTelegramGroupId equals telegramGroup.Id
+                join customer in context.Customers.AsNoTracking()
+                    on failure.CustomerId equals customer.Id
+                orderby failure.ReportedAt descending
+                select new TelegramGroupDeliveryFailureResponse(
+                    failure.Id,
+                    failure.SourceEventId,
+                    failure.CustomerId,
+                    customer.FullName,
+                    failure.OrderId,
+                    telegramGroup.Id,
+                    telegramGroup.Title,
+                    failure.Recipient,
+                    failure.Error,
+                    failure.ReportedAt,
+                    failure.ResolvedAt,
+                    failure.ResolutionNotes,
+                    failure.AdminNotificationId))
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToArrayAsync(cancellationToken);
+        return Ok(failures);
+    }
+
+    [HttpPost("delivery-failures/{id:guid}/resolve")]
+    public async Task<ActionResult<TelegramGroupDeliveryFailureResponse>> ResolveDeliveryFailure(
+        Guid id,
+        ResolveTelegramGroupDeliveryFailureRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var failure = await context.IntegrationDeliveryFailures.FirstOrDefaultAsync(
+            value => value.Id == id && !value.IsDeleted,
+            cancellationToken);
+        if (failure is null)
+            return NotFound(new { Message = "گزارش خطا پیدا نشد." });
+
+        var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+        if (notes?.Length > 500)
+            return BadRequest(new { Message = "یادداشت پیگیری حداکثر ۵۰۰ کاراکتر است." });
+        if (failure.ResolvedAt is null)
+        {
+            failure.ResolvedAt = DateTime.UtcNow;
+            failure.ResolutionNotes = notes;
+            failure.UpdatedAt = failure.ResolvedAt;
+            await context.SaveChangesAsync(cancellationToken);
+        }
+
+        var response = await (
+                from value in context.IntegrationDeliveryFailures.AsNoTracking()
+                join telegramGroup in context.CustomerTelegramGroups.AsNoTracking()
+                    on value.CustomerTelegramGroupId equals telegramGroup.Id
+                join customer in context.Customers.AsNoTracking()
+                    on value.CustomerId equals customer.Id
+                where value.Id == failure.Id
+                select new TelegramGroupDeliveryFailureResponse(
+                    value.Id,
+                    value.SourceEventId,
+                    value.CustomerId,
+                    customer.FullName,
+                    value.OrderId,
+                    telegramGroup.Id,
+                    telegramGroup.Title,
+                    value.Recipient,
+                    value.Error,
+                    value.ReportedAt,
+                    value.ResolvedAt,
+                    value.ResolutionNotes,
+                    value.AdminNotificationId))
+            .SingleAsync(cancellationToken);
+        return Ok(response);
     }
 
     [HttpPut("customers/{customerId:guid}")]

@@ -43,6 +43,7 @@ public sealed record TelegramGroupReadinessResponse(
     int ActiveGroups,
     int InactiveGroups,
     int GroupsNeverSeenByBot,
+    int UnresolvedDeliveryFailures,
     decimal MappingPercent,
     decimal DeliveryReadyPercent,
     bool IsReadyForAutomatedDelivery);
@@ -52,3 +53,20 @@ public sealed record TelegramGroupDeliveryTestResponse(
     Guid CustomerId,
     string ChatId,
     string Status);
+
+public sealed record TelegramGroupDeliveryFailureResponse(
+    Guid Id,
+    Guid SourceEventId,
+    Guid CustomerId,
+    string CustomerName,
+    Guid? OrderId,
+    Guid GroupId,
+    string GroupTitle,
+    string ChatId,
+    string Error,
+    DateTime ReportedAt,
+    DateTime? ResolvedAt,
+    string? ResolutionNotes,
+    Guid? AdminNotificationId);
+
+public sealed record ResolveTelegramGroupDeliveryFailureRequest(string? Notes);

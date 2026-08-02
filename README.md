@@ -202,6 +202,8 @@ Content-Type: multipart/form-data
 
 اگر `Telegram:AdminChatId` تنظیم شده باشد، همان خطای قطعی یک هشدار عملیاتی شامل شناسه مشتری، گروه، اعلان و علت خطا را از طریق Outbox برای ادمین می‌فرستد. نبود این تنظیم در log هشدار ثبت می‌شود و هیچ اطلاعات محرمانه‌ای در تنظیمات مخزن قرار نمی‌گیرد.
 
+ادمین خطاهای حل‌نشده n8n را با `GET /api/telegram-groups/delivery-failures` مشاهده و پس از پیگیری با `POST /api/telegram-groups/delivery-failures/{id}/resolve` همراه یادداشت مختصر حل می‌کند. حل گزارش به‌تنهایی گروه را فعال نمی‌کند؛ عضویت ربات باید دوباره توسط Telegram تأیید شود.
+
 ## تست
 
 ```powershell

@@ -457,6 +457,19 @@ X-Api-Key: {{AdminApiKey}}
 POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/00000000-0000-0000-0000-000000000000/test-delivery
 X-Api-Key: {{AdminApiKey}}
 
+### Get unresolved n8n Telegram group delivery failures
+GET {{ZibasheERP.API_HostAddress}}/api/telegram-groups/delivery-failures?unresolvedOnly=true&limit=100
+X-Api-Key: {{AdminApiKey}}
+
+### Resolve an investigated delivery failure (does not reactivate group)
+POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/delivery-failures/00000000-0000-0000-0000-000000000000/resolve
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "notes": "Bot membership restored and test delivery verified."
+}
+
 ### Apply Telegram group CSV import (run only after reviewing dry run)
 POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/import-csv?dryRun=false
 X-Api-Key: {{AdminApiKey}}
