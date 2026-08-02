@@ -245,6 +245,9 @@ public sealed class CreateOrderCommandHandlerTests
 
     private sealed class FakeBatchRepository(Batch batch) : IBatchRepository
     {
+        public Task<IReadOnlyCollection<Batch>> GetForInventoryAsync(int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Batch>>(new[] { batch });
+
         public Task<Batch?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<Batch?>(batch.Id == id ? batch : null);
 

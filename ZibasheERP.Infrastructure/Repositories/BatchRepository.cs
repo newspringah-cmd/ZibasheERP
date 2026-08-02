@@ -26,6 +26,19 @@ public class BatchRepository : IBatchRepository
                 cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<Batch>> GetForInventoryAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Batches
+            .AsNoTracking()
+            .Include(batch => batch.Perfume)
+            .Where(batch => !batch.IsDeleted && !batch.Perfume.IsDeleted)
+            .OrderByDescending(batch => batch.PurchaseDate)
+            .Take(Math.Clamp(limit, 1, 200))
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task UpdateAsync(
         Batch batch,
         CancellationToken cancellationToken = default)

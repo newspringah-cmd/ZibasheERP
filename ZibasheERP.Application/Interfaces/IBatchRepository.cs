@@ -4,6 +4,10 @@ namespace ZibasheERP.Application.Interfaces;
 
 public interface IBatchRepository
 {
+    Task<IReadOnlyCollection<Batch>> GetForInventoryAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+
     Task<Batch?> GetByIdAsync(
         Guid id,
         CancellationToken cancellationToken = default);

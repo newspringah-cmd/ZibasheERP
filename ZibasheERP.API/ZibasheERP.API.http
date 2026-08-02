@@ -271,3 +271,6 @@ X-Api-Key: {{TelegramApiKey}}
 }
 
 ###
+### Get admin inventory overview
+GET {{ZibasheERP.API_HostAddress}}/api/inventory?limit=100
+X-Api-Key: {{AdminApiKey}}
