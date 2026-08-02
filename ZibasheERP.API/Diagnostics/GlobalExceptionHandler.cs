@@ -1,6 +1,7 @@
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace ZibasheERP.API.Diagnostics;
@@ -29,6 +30,10 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
                 StatusCodes.Status409Conflict,
                 "Concurrent update",
                 "The data changed at the same time. Please retry the operation."),
+            DbUpdateException { InnerException: SqlException { Number: 2601 or 2627 } } => (
+                StatusCodes.Status409Conflict,
+                "Duplicate data",
+                "Another active record already uses one of the unique identifiers."),
             InvalidOperationException => (
                 StatusCodes.Status400BadRequest,
                 "Operation rejected",

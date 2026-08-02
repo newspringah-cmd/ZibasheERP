@@ -242,9 +242,17 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Mobile");
+                    b.HasIndex("Mobile")
+                        .IsUnique()
+                        .HasFilter("[IsDeleted] = 0");
 
-                    b.HasIndex("TelegramId");
+                    b.HasIndex("TelegramId")
+                        .IsUnique()
+                        .HasFilter("[TelegramId] IS NOT NULL AND [IsDeleted] = 0");
+
+                    b.HasIndex("Username")
+                        .IsUnique()
+                        .HasFilter("[Username] IS NOT NULL AND [IsDeleted] = 0");
 
                     b.ToTable("Customers");
                 });

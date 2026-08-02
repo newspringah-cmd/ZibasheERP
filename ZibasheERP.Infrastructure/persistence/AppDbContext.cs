@@ -68,10 +68,19 @@ public class AppDbContext : DbContext
             .IsRowVersion();
 
         modelBuilder.Entity<Customer>()
-            .HasIndex(x => x.Mobile);
+            .HasIndex(x => x.Mobile)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
 
         modelBuilder.Entity<Customer>()
-            .HasIndex(x => x.TelegramId);
+            .HasIndex(x => x.TelegramId)
+            .IsUnique()
+            .HasFilter("[TelegramId] IS NOT NULL AND [IsDeleted] = 0");
+
+        modelBuilder.Entity<Customer>()
+            .HasIndex(x => x.Username)
+            .IsUnique()
+            .HasFilter("[Username] IS NOT NULL AND [IsDeleted] = 0");
     }
 
     private static void ConfigureAddress(ModelBuilder modelBuilder)
