@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import getpass
 import os
 import re
 from datetime import datetime, timezone
@@ -72,12 +73,17 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
 def classify_status(row: dict[str, object], previous: dict[str, str] | None) -> str:
     if previous is None:
         return "new"
-    comparable = ("title", "username", "group_type")
-    return (
-        "changed"
-        if any(str(row[key] or "") != previous.get(key, "") for key in comparable)
-        else "existing"
-    )
+
+    current_title = str(row["title"] or "").lstrip("'").strip()
+    previous_title = (previous.get("title") or previous.get("group_name") or "").lstrip("'").strip()
+    if current_title != previous_title:
+        return "changed"
+
+    optional_fields = ("username", "group_type", "customer_username")
+    for key in optional_fields:
+        if key in previous and previous[key].strip() != str(row[key] or "").strip():
+            return "changed"
+    return "existing"
 
 
 def extract_customer_username(title: str) -> str:
@@ -89,17 +95,29 @@ async def export() -> None:
     args = parse_args()
     api_id_text = os.environ.get("TELEGRAM_API_ID", "").strip()
     api_hash = os.environ.get("TELEGRAM_API_HASH", "").strip()
-    phone = os.environ.get("TELEGRAM_PHONE", "").strip() or None
-    if not api_id_text or not api_hash:
-        raise SystemExit("Set TELEGRAM_API_ID and TELEGRAM_API_HASH first.")
+    phone = os.environ.get("TELEGRAM_PHONE", "").strip()
+    if not api_id_text:
+        api_id_text = input("Telegram API ID: ").strip()
+    if not api_hash:
+        api_hash = getpass.getpass("Telegram API Hash (hidden): ").strip()
+    if not phone:
+        phone = input("Telegram phone (example +98912...): ").strip()
+    if not api_id_text.isdigit() or not api_hash or not phone:
+        raise SystemExit("API ID, API Hash, and phone are required.")
 
     previous = read_previous(args.previous)
     exported_at = datetime.now(timezone.utc).isoformat()
     rows: list[dict[str, object]] = []
 
-    async with TelegramClient(args.session, int(api_id_text), api_hash) as client:
+    print("Connecting to Telegram...", flush=True)
+    client = TelegramClient(args.session, int(api_id_text), api_hash)
+    await client.connect()
+    try:
         if not await client.is_user_authorized():
+            print("Login is required. Enter the Telegram code when prompted.", flush=True)
             await client.start(phone=phone)
+        else:
+            print("Existing Telegram session loaded.", flush=True)
 
         async for dialog in client.iter_dialogs():
             entity = dialog.entity
@@ -124,6 +142,10 @@ async def export() -> None:
             }
             row["status"] = classify_status(row, previous.get(chat_id))
             rows.append(row)
+            if len(rows) % 250 == 0:
+                print(f"Scanned {len(rows)} groups...", flush=True)
+    finally:
+        await client.disconnect()
 
     rows.sort(key=lambda row: (str(row["title"]).casefold(), str(row["chat_id"])))
     output_path = Path(args.output)

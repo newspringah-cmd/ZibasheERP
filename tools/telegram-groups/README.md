@@ -11,10 +11,9 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-$env:TELEGRAM_API_ID="YOUR_API_ID"
-$env:TELEGRAM_API_HASH="YOUR_API_HASH"
-$env:TELEGRAM_PHONE="+98..."
 ```
+
+اگر متغیرهای محیطی تنظیم نشده باشند، خود ابزار هنگام اجرا `api_id`، `api_hash` و شماره موبایل را می‌پرسد. مقدار `api_hash` هنگام تایپ روی صفحه نمایش داده نمی‌شود.
 
 `api_hash`، کد ورود، رمز دومرحله‌ای و فایل session را برای هیچ فردی ارسال نکنید. این موارد نباید در Git یا Google Sheet قرار گیرند.
 
