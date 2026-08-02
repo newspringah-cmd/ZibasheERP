@@ -161,6 +161,22 @@ dotnet ef database update --project ZibasheERP.Infrastructure\ZibasheERP.Infrast
 
 قبل از اجرای migrationهای یکتایی روی دیتابیس قدیمی، از دیتابیس backup بگیرید. وجود هویت تکراری باعث توقف migration می‌شود تا ادغام مشتری‌ها آگاهانه انجام شود.
 
+## اتصال گروه‌های مشتریان تلگرام
+
+فهرست گروه‌ها با ابزار `tools/telegram-groups` و حساب ادمین استخراج می‌شود. شناسه گروه در `CustomerTelegramGroup` نگهداری می‌شود و با TelegramId شخصی مشتری متفاوت است.
+
+ورود CSV همیشه ابتدا در حالت پیش‌نمایش انجام می‌شود:
+
+```http
+POST /api/telegram-groups/import-csv?dryRun=true
+X-Api-Key: ADMIN_API_KEY
+Content-Type: multipart/form-data
+```
+
+فایل باید ستون‌های `chat_id`، `customer_username` و یکی از `title` یا `group_name` را داشته باشد. ستون‌های `username` و `group_type` اختیاری‌اند. در صورت وجود چند گروه برای یک مشتری، فقط وقتی دقیقاً یک Supergroup وجود داشته باشد همان گروه انتخاب می‌شود؛ موارد مبهم، username خالی، مشتری پیدا‌نشده و اتصال تکراری فقط در گزارش خطا می‌آیند.
+
+پس از بررسی کامل نتیجه Dry Run، همان درخواست با `dryRun=false` اطلاعات معتبر را به‌صورت idempotent ایجاد یا به‌روزرسانی می‌کند. فایل حداکثر ۱۰ مگابایت و ۱۰ هزار ردیف می‌تواند داشته باشد و endpoint فقط برای نقش `Admin` قابل استفاده است.
+
 ## تست
 
 ```powershell

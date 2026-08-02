@@ -17,3 +17,20 @@ public sealed record CustomerTelegramGroupResponse(
     bool IsActive,
     DateTime LinkedAt,
     DateTime? LastSeenAt);
+
+public sealed record TelegramGroupCsvImportResponse(
+    bool DryRun,
+    int TotalRows,
+    int SelectedRows,
+    int Created,
+    int Updated,
+    int Unchanged,
+    int IssueCount,
+    IReadOnlyCollection<TelegramGroupCsvImportIssueResponse> Issues);
+
+public sealed record TelegramGroupCsvImportIssueResponse(
+    int? RowNumber,
+    string Code,
+    string Message,
+    string? CustomerUsername,
+    string? ChatId);

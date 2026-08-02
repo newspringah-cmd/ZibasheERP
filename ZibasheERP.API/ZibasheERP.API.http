@@ -424,3 +424,27 @@ X-Api-Key: {{AdminApiKey}}
 ### Get shipment tracking for Telegram customer
 GET {{ZibasheERP.API_HostAddress}}/api/orders/tracking/ZS-ORDER-NUMBER/by-telegram/123456789
 X-Api-Key: {{TelegramApiKey}}
+
+### Preview Telegram group CSV import (does not write)
+POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/import-csv?dryRun=true
+X-Api-Key: {{AdminApiKey}}
+Content-Type: multipart/form-data; boundary=ZibasheTelegramGroups
+
+--ZibasheTelegramGroups
+Content-Disposition: form-data; name="file"; filename="telegram-groups-current.csv"
+Content-Type: text/csv
+
+< ../tools/telegram-groups/output/telegram-groups-current.csv
+--ZibasheTelegramGroups--
+
+### Apply Telegram group CSV import (run only after reviewing dry run)
+POST {{ZibasheERP.API_HostAddress}}/api/telegram-groups/import-csv?dryRun=false
+X-Api-Key: {{AdminApiKey}}
+Content-Type: multipart/form-data; boundary=ZibasheTelegramGroups
+
+--ZibasheTelegramGroups
+Content-Disposition: form-data; name="file"; filename="telegram-groups-current.csv"
+Content-Type: text/csv
+
+< ../tools/telegram-groups/output/telegram-groups-current.csv
+--ZibasheTelegramGroups--
