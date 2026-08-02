@@ -35,6 +35,7 @@ public sealed class InvoiceRepository : IInvoiceRepository
     {
         return _dbContext.Orders
             .Include(order => order.Customer)
+                .ThenInclude(customer => customer!.TelegramGroup)
             .Include(order => order.Items)
                 .ThenInclude(item => item.Perfume)
             .Include(order => order.Items)
@@ -63,6 +64,7 @@ public sealed class InvoiceRepository : IInvoiceRepository
         .AsNoTracking()
         .Include(invoice => invoice.Order)
             .ThenInclude(order => order!.Customer)
+                .ThenInclude(customer => customer!.TelegramGroup)
         .Include(invoice => invoice.Order)
             .ThenInclude(order => order!.Items)
                 .ThenInclude(item => item.Perfume)

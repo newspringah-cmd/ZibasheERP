@@ -18,6 +18,7 @@ public sealed class ShipmentRepository : IShipmentRepository
     {
         return _dbContext.Orders
             .Include(order => order.Customer)
+                .ThenInclude(customer => customer!.TelegramGroup)
             .Include(order => order.Shipments)
             .FirstOrDefaultAsync(
                 order => order.Id == orderId && !order.IsDeleted,
@@ -38,6 +39,7 @@ public sealed class ShipmentRepository : IShipmentRepository
         return _dbContext.Shipments
             .Include(shipment => shipment.Order)
                 .ThenInclude(order => order!.Customer)
+                    .ThenInclude(customer => customer!.TelegramGroup)
             .FirstOrDefaultAsync(
                 shipment => shipment.Id == shipmentId && !shipment.IsDeleted,
                 cancellationToken);

@@ -88,6 +88,19 @@ dotnet user-secrets set "ApiKeys:N8n" "A_DIFFERENT_RANDOM_KEY_WITH_AT_LEAST_32_C
 
 امضا برابر `HMAC-SHA256(secret, timestamp + "." + rawBody)` است. workflow باید قبل از هر پردازش، timestamp، امضا و تکراری‌نبودن EventId را بررسی کند. بدنه شامل `eventId`، `eventType`، `occurredAt`، `customerId`، `orderId` و `data` است.
 
+برای eventهای عملیاتی مانند `InvoiceIssued`، `OrderDecanted` و `OrderShipped`، بخش `data.Delivery` مقصد مجاز ارسال را مشخص می‌کند:
+
+```json
+{
+  "Channel": "TelegramGroup",
+  "ChatId": "-1001234567890",
+  "Title": "Customer group",
+  "Username": null
+}
+```
+
+اگر گروه فعال و متصل وجود نداشته باشد، `data.Delivery` برابر `null` است و workflow نباید فایل را به TelegramId شخصی یا مقصد دیگری ارسال کند. مانده‌حساب، آدرس‌ها و عملیات تعاملی مشتری همچنان فقط در گفت‌وگوی خصوصی ربات انجام می‌شوند.
+
 پس از تولید و ارسال فایل، workflow نتیجه را با هدر `X-Api-Key` مربوط به نقش N8n به `POST /api/integrations/n8n/order-artifacts` برمی‌گرداند. نوع فایل یکی از `InvoicePdf`، `DecantPhoto` یا `PostalReceipt` است و `SourceEventId` باید همان EventId دریافتی باشد.
 
 تنظیمات worker تلگرام:

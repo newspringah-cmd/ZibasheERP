@@ -28,6 +28,7 @@ public class OrderRepository : IOrderRepository
         return await _dbContext.Orders
             .AsNoTracking()
             .Include(x => x.Customer)
+                .ThenInclude(customer => customer!.TelegramGroup)
             .Include(x => x.Items)
                 .ThenInclude(x => x.Perfume)
             .Include(x => x.Items)
@@ -45,6 +46,7 @@ public class OrderRepository : IOrderRepository
     {
         return _dbContext.Orders
             .Include(order => order.Customer)
+                .ThenInclude(customer => customer!.TelegramGroup)
             .Include(order => order.Items)
             .Include(order => order.Payments)
             .Include(order => order.SalesList)
@@ -60,6 +62,7 @@ public class OrderRepository : IOrderRepository
         return await _dbContext.Orders
             .AsNoTracking()
             .Include(x => x.Customer)
+                .ThenInclude(customer => customer!.TelegramGroup)
             .Include(x => x.Items)
                 .ThenInclude(x => x.Perfume)
             .Include(x => x.Items)
