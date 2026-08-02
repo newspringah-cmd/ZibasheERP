@@ -5,7 +5,7 @@ using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.Infrastructure.Repositories;
 
-public sealed class NotificationOutboxRepository : INotificationOutboxRepository
+public sealed class NotificationOutboxRepository : INotificationOutboxRepository, IAdminNotificationRepository
 {
     private readonly AppDbContext _dbContext;
 
@@ -39,6 +39,18 @@ public sealed class NotificationOutboxRepository : INotificationOutboxRepository
             notification => notification.Id == id && !notification.IsDeleted,
             cancellationToken);
     }
+
+    public async Task<IReadOnlyCollection<NotificationOutbox>> GetFailedAsync(
+        int limit,
+        CancellationToken cancellationToken = default) =>
+        await _dbContext.NotificationOutbox
+            .AsNoTracking()
+            .Where(notification =>
+                notification.Status == NotificationOutboxStatus.Failed &&
+                !notification.IsDeleted)
+            .OrderByDescending(notification => notification.UpdatedAt ?? notification.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 100))
+            .ToArrayAsync(cancellationToken);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {

@@ -414,3 +414,10 @@ GET {{ZibasheERP.API_HostAddress}}/health/ready
 ### Get shared customer account summary
 GET {{ZibasheERP.API_HostAddress}}/api/customers/00000000-0000-0000-0000-000000000000/account
 X-Api-Key: {{AdminApiKey}}
+### Get failed Telegram notifications
+GET {{ZibasheERP.API_HostAddress}}/api/notifications/failed?limit=50
+X-Api-Key: {{AdminApiKey}}
+
+### Retry failed Telegram notification
+POST {{ZibasheERP.API_HostAddress}}/api/notifications/00000000-0000-0000-0000-000000000000/retry
+X-Api-Key: {{AdminApiKey}}
