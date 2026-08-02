@@ -176,7 +176,7 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
                     ChatId = row.ChatId,
                     Title = row.Title,
                     Username = NormalizeUsername(row.GroupUsername),
-                    IsActive = true,
+                    IsActive = false,
                     LinkedAt = now,
                     CreatedAt = now
                 };
@@ -189,8 +189,7 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
             var groupUsername = NormalizeUsername(row.GroupUsername);
             var hasChanges = group.ChatId != row.ChatId ||
                 group.Title != row.Title ||
-                group.Username != groupUsername ||
-                !group.IsActive;
+                group.Username != groupUsername;
             if (!hasChanges)
             {
                 unchanged++;
@@ -205,7 +204,6 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
             group.ChatId = row.ChatId;
             group.Title = row.Title;
             group.Username = groupUsername;
-            group.IsActive = true;
             group.UpdatedAt = now;
         }
 

@@ -91,6 +91,7 @@ builder.Services.AddOptions<N8nOptions>()
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
+builder.Services.AddScoped<ITelegramGroupMembershipTracker, TelegramGroupMembershipTracker>();
 builder.Services.AddHostedService<TelegramOutboxWorker>();
 builder.Services.AddSingleton<IN8nWebhookSender, N8nWebhookSender>();
 builder.Services.AddHostedService<N8nOutboxWorker>();

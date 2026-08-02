@@ -42,18 +42,21 @@ public sealed class TelegramWebhookController : ControllerBase
     private readonly TelegramOptions _options;
     private readonly ILogger<TelegramWebhookController> _logger;
     private readonly ITelegramOrderDraftRepository _draftRepository;
+    private readonly ITelegramGroupMembershipTracker _groupMembershipTracker;
 
     public TelegramWebhookController(
         IMediator mediator,
         ITelegramMessageSender sender,
         IOptions<TelegramOptions> options,
         ITelegramOrderDraftRepository draftRepository,
+        ITelegramGroupMembershipTracker groupMembershipTracker,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
         _sender = sender;
         _options = options.Value;
         _draftRepository = draftRepository;
+        _groupMembershipTracker = groupMembershipTracker;
         _logger = logger;
     }
 
@@ -71,6 +74,12 @@ public sealed class TelegramWebhookController : ControllerBase
             return Unauthorized();
         }
 
+        if (update.MyChatMember is not null)
+        {
+            await _groupMembershipTracker.TrackAsync(update.MyChatMember, cancellationToken);
+            return Ok();
+        }
+
         if (update.CallbackQuery is not null)
         {
             await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
@@ -82,13 +91,7 @@ public sealed class TelegramWebhookController : ControllerBase
             return Ok();
 
         if (!string.Equals(message.Chat.Type, "private", StringComparison.OrdinalIgnoreCase))
-        {
-            await ReplyAsync(
-                message.Chat.Id,
-                "برای حفظ حریم خصوصی، لطفاً این فرمان را در گفت‌وگوی خصوصی با ربات ارسال کنید.",
-                cancellationToken);
             return Ok();
-        }
 
         if (message.Contact is not null)
         {

@@ -124,11 +124,12 @@ POST https://api.telegram.org/bot<BOT_TOKEN>/setWebhook
 ```json
 {
   "url": "https://YOUR_DOMAIN/api/telegram/webhook",
-  "secret_token": "THE_SAME_TELEGRAM_WEBHOOK_SECRET"
+  "secret_token": "THE_SAME_TELEGRAM_WEBHOOK_SECRET",
+  "allowed_updates": ["message", "callback_query", "my_chat_member"]
 }
 ```
 
-تلگرام secret را در هدر `X-Telegram-Bot-Api-Secret-Token` ارسال می‌کند. webhook بدون secret معتبر پردازش نمی‌شود.
+تلگرام secret را در هدر `X-Telegram-Bot-Api-Secret-Token` ارسال می‌کند. webhook بدون secret معتبر پردازش نمی‌شود. `my_chat_member` برای فعال یا غیرفعال‌کردن امن مقصد گروه‌ها الزامی است.
 
 ## فرمان‌های مشتری در تلگرام
 
@@ -188,7 +189,7 @@ Content-Type: multipart/form-data
 
 فایل باید ستون‌های `chat_id`، `customer_username` و یکی از `title` یا `group_name` را داشته باشد. ستون‌های `username` و `group_type` اختیاری‌اند. در صورت وجود چند گروه برای یک مشتری، فقط وقتی دقیقاً یک Supergroup وجود داشته باشد همان گروه انتخاب می‌شود؛ موارد مبهم، username خالی، مشتری پیدا‌نشده و اتصال تکراری فقط در گزارش خطا می‌آیند.
 
-پس از بررسی کامل نتیجه Dry Run، همان درخواست با `dryRun=false` اطلاعات معتبر را به‌صورت idempotent ایجاد یا به‌روزرسانی می‌کند. فایل حداکثر ۱۰ مگابایت و ۱۰ هزار ردیف می‌تواند داشته باشد و endpoint فقط برای نقش `Admin` قابل استفاده است.
+پس از بررسی کامل نتیجه Dry Run، همان درخواست با `dryRun=false` اطلاعات معتبر را به‌صورت idempotent ایجاد یا به‌روزرسانی می‌کند. گروه جدید ابتدا غیرفعال است و فقط پس از دریافت رویداد `my_chat_member` و تأیید عضویت و امکان ارسال ربات فعال می‌شود. حذف یا مسدودشدن ربات نیز گروه را دوباره غیرفعال می‌کند. فایل حداکثر ۱۰ مگابایت و ۱۰ هزار ردیف می‌تواند داشته باشد و endpoint فقط برای نقش `Admin` قابل استفاده است.
 
 ## تست
 
