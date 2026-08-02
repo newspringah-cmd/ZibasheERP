@@ -60,4 +60,13 @@ X-Api-Key: {{TelegramApiKey}}
 POST {{ZibasheERP.API_HostAddress}}/api/payments/00000000-0000-0000-0000-000000000000/confirm
 X-Api-Key: {{AdminApiKey}}
 
+### Issue invoice by admin
+POST {{ZibasheERP.API_HostAddress}}/api/invoices/order/{{OrderId}}
+X-Api-Key: {{AdminApiKey}}
+
+### Get invoice for Telegram delivery
+GET {{ZibasheERP.API_HostAddress}}/api/invoices/00000000-0000-0000-0000-000000000000
+Accept: application/json
+X-Api-Key: {{TelegramApiKey}}
+
 ###

@@ -247,5 +247,13 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Invoice>()
             .Property(x => x.TotalAmount)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Invoice>()
+            .HasIndex(x => x.OrderId)
+            .IsUnique();
+
+        modelBuilder.Entity<Invoice>()
+            .HasIndex(x => x.InvoiceNumber)
+            .IsUnique();
     }
 }

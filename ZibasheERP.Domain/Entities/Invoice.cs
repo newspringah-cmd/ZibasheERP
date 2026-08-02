@@ -6,7 +6,11 @@ public class Invoice : BaseEntity
 
     public Order? Order { get; set; }
 
+    [System.ComponentModel.DataAnnotations.MaxLength(50)]
     public string InvoiceNumber { get; set; } = string.Empty;
+
+    public ZibasheERP.Domain.Enums.InvoiceStatus Status { get; set; }
+        = ZibasheERP.Domain.Enums.InvoiceStatus.Draft;
 
     public decimal PerfumeTotal { get; set; }
 

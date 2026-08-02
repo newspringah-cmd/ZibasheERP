@@ -41,6 +41,7 @@ builder.Services.AddScoped<ISalesListRepository, SalesListRepository>();
 builder.Services.AddScoped<IBottleRepository, BottleRepository>();
 builder.Services.AddScoped<IBatchRepository, BatchRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 
 builder.Services
     .AddAuthentication(ApiKeyAuthenticationDefaults.Scheme)
