@@ -49,6 +49,27 @@ GET {{ZibasheERP.API_HostAddress}}/api/orders/by-telegram/123456789
 Accept: application/json
 X-Api-Key: {{TelegramApiKey}}
 
+### Create customer address by admin
+POST {{ZibasheERP.API_HostAddress}}/api/addresses/customer/{{CustomerId}}
+Content-Type: application/json
+X-Api-Key: {{AdminApiKey}}
+
+{
+  "receiverName": "نام گیرنده",
+  "mobile": "09120000000",
+  "province": "تهران",
+  "city": "تهران",
+  "postalCode": "1234567890",
+  "fullAddress": "نشانی کامل مشتری",
+  "description": "منزل",
+  "isDefault": true
+}
+
+### Get customer addresses by admin
+GET {{ZibasheERP.API_HostAddress}}/api/addresses/customer/{{CustomerId}}
+Accept: application/json
+X-Api-Key: {{AdminApiKey}}
+
 ### Submit payment receipt from Telegram
 POST {{ZibasheERP.API_HostAddress}}/api/payments
 Content-Type: application/json

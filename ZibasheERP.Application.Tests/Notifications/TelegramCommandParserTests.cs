@@ -28,4 +28,10 @@ public sealed class TelegramCommandParserTests
     {
         Assert.Equal(TelegramCommand.Lists, TelegramCommandParser.Parse("/lists"));
     }
+
+    [Fact]
+    public void Parse_Addresses_ReturnsAddresses()
+    {
+        Assert.Equal(TelegramCommand.Addresses, TelegramCommandParser.Parse("/addresses"));
+    }
 }

@@ -45,6 +45,7 @@ builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IShipmentRepository, ShipmentRepository>();
 builder.Services.AddScoped<INotificationOutboxRepository, NotificationOutboxRepository>();
+builder.Services.AddScoped<IAddressRepository, AddressRepository>();
 builder.Services.AddScoped<ITelegramOrderDraftRepository, TelegramOrderDraftRepository>();
 
 builder.Services.Configure<TelegramOptions>(

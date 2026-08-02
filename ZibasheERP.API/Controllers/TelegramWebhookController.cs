@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Features.Invoices.GetOrderInvoice;
@@ -115,7 +116,7 @@ public sealed class TelegramWebhookController : ControllerBase
             return Ok();
         }
 
-        if (command is TelegramCommand.Start or TelegramCommand.Orders)
+        if (command is TelegramCommand.Start or TelegramCommand.Orders or TelegramCommand.Addresses)
         {
             var usernameLink = await _mediator.Send(
                 new LinkTelegramByUsernameCommand(
@@ -149,11 +150,20 @@ public sealed class TelegramWebhookController : ControllerBase
                     cancellationToken);
                 return Ok();
             }
+
+            if (command == TelegramCommand.Addresses)
+            {
+                await SendAddressesAsync(
+                    message.Chat.Id,
+                    message.From.Id.ToString(),
+                    cancellationToken);
+                return Ok();
+            }
         }
 
         var response = command switch
         {
-            _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من"
+            _ => "فرمان را متوجه نشدم.\n/lists لیست‌های فروش فعال\n/orders سفارش‌های من\n/addresses آدرس‌های من"
         };
 
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
@@ -499,6 +509,33 @@ public sealed class TelegramWebhookController : ControllerBase
             cancellationToken);
         if (!result.IsSuccessful)
             _logger.LogWarning("Telegram orders keyboard failed: {Error}", result.Error);
+    }
+
+    private async Task SendAddressesAsync(
+        long chatId,
+        string telegramId,
+        CancellationToken cancellationToken)
+    {
+        var addresses = await _mediator.Send(
+            new GetCustomerAddressesQuery(null, telegramId),
+            cancellationToken);
+        if (addresses.Count == 0)
+        {
+            await ReplyAsync(
+                chatId,
+                "هنوز آدرسی برای حساب شما ثبت نشده است. برای ثبت آدرس با پشتیبانی تماس بگیرید.",
+                cancellationToken);
+            return;
+        }
+
+        var lines = addresses.Select((address, index) =>
+            $"{index + 1}. {(address.IsDefault ? "⭐ " : string.Empty)}{address.Description ?? "آدرس"}\n" +
+            $"{address.Province}، {address.City}، {address.FullAddress}\n" +
+            $"گیرنده: {address.ReceiverName} — {address.Mobile}\nکدپستی: {address.PostalCode}");
+        await ReplyAsync(
+            chatId,
+            "آدرس‌های ثبت‌شده شما:\n\n" + string.Join("\n\n", lines),
+            cancellationToken);
     }
 
     private async Task SendOrderDetailsAsync(
