@@ -23,14 +23,30 @@ public sealed class NotificationOutboxRepository : INotificationOutboxRepository
         int limit,
         CancellationToken cancellationToken = default)
     {
-        return await _dbContext.NotificationOutbox
-            .AsNoTracking()
-            .Where(notification =>
-                notification.Status == NotificationOutboxStatus.Pending &&
-                !notification.IsDeleted)
-            .OrderBy(notification => notification.CreatedAt)
-            .Take(Math.Clamp(limit, 1, 100))
+        var batchSize = Math.Clamp(limit, 1, 100);
+        var now = DateTime.UtcNow;
+        var lockedUntil = now.AddMinutes(5);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var notifications = await _dbContext.NotificationOutbox
+            .FromSqlInterpolated($$"""
+                SELECT TOP ({{batchSize}}) *
+                FROM [NotificationOutbox] WITH (UPDLOCK, READPAST, ROWLOCK)
+                WHERE [IsDeleted] = 0
+                  AND ([Status] = {{NotificationOutboxStatus.Pending}}
+                    OR ([Status] = {{NotificationOutboxStatus.Processing}} AND [LockedUntil] < {{now}}))
+                ORDER BY [CreatedAt]
+                """)
             .ToArrayAsync(cancellationToken);
+
+        foreach (var notification in notifications)
+        {
+            notification.Status = NotificationOutboxStatus.Processing;
+            notification.LockedUntil = lockedUntil;
+            notification.UpdatedAt = now;
+        }
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return notifications;
     }
 
     public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)

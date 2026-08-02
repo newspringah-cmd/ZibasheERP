@@ -347,6 +347,11 @@ public class AppDbContext : DbContext
             .Property(notification => notification.LastError)
             .HasMaxLength(1000);
         modelBuilder.Entity<NotificationOutbox>()
-            .HasIndex(notification => new { notification.Status, notification.CreatedAt });
+            .HasIndex(notification => new
+            {
+                notification.Status,
+                notification.LockedUntil,
+                notification.CreatedAt
+            });
     }
 }

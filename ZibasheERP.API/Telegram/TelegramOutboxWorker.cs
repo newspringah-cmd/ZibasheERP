@@ -60,7 +60,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
         foreach (var item in pending)
         {
             var notification = await repository.GetByIdAsync(item.Id, cancellationToken);
-            if (notification is null || notification.Status != NotificationOutboxStatus.Pending)
+            if (notification is null || notification.Status != NotificationOutboxStatus.Processing)
                 continue;
 
             TelegramSendResult result;
@@ -82,6 +82,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
             var now = DateTime.UtcNow;
             notification.Attempts++;
             notification.UpdatedAt = now;
+            notification.LockedUntil = null;
             if (result.IsSuccessful)
             {
                 notification.Status = NotificationOutboxStatus.Processed;

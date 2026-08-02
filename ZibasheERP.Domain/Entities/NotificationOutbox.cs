@@ -4,7 +4,8 @@ public enum NotificationOutboxStatus
 {
     Pending = 1,
     Processed = 2,
-    Failed = 3
+    Failed = 3,
+    Processing = 4
 }
 
 public sealed class NotificationOutbox : BaseEntity
@@ -19,4 +20,5 @@ public sealed class NotificationOutbox : BaseEntity
     public int Attempts { get; set; }
     public DateTime? ProcessedAt { get; set; }
     public string? LastError { get; set; }
+    public DateTime? LockedUntil { get; set; }
 }
