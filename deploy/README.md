@@ -10,6 +10,7 @@
 cd deploy
 cp .env.production.example .env.production
 chmod 600 .env.production
+chmod 700 preflight.sh
 ```
 
 همه مقادیر `REPLACE_...` و `CHANGE_ME` را با Secretهای تصادفی جایگزین کنید. فایل واقعی `.env.production` نباید وارد Git، پیام‌رسان یا backup بدون رمز شود.
@@ -17,7 +18,7 @@ chmod 600 .env.production
 ## Build و اجرا
 
 ```bash
-docker compose -f docker-compose.production.yml config
+./preflight.sh
 docker compose -f docker-compose.production.yml build --pull
 docker compose -f docker-compose.production.yml up -d
 docker compose -f docker-compose.production.yml ps
