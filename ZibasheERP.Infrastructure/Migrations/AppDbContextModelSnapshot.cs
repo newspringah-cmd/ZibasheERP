@@ -397,6 +397,10 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("ExternalReference")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<DateTime?>("InvoiceIssuedAt")
                         .HasColumnType("datetime2");
 
@@ -438,6 +442,10 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasIndex("OrderNumber")
                         .IsUnique();
+
+                    b.HasIndex("ExternalReference")
+                        .IsUnique()
+                        .HasFilter("[ExternalReference] IS NOT NULL");
 
                     b.HasIndex("SalesListId");
 
@@ -513,6 +521,51 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasIndex("SalesListId");
 
                     b.ToTable("OrderItems");
+                });
+
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.TelegramOrderDraft", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BottleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SalesListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TelegramId")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("VolumeMl")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TelegramId", "Status", "ExpiresAt");
+
+                    b.ToTable("TelegramOrderDrafts");
                 });
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Payment", b =>

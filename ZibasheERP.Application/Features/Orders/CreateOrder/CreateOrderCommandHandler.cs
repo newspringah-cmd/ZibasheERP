@@ -32,6 +32,15 @@ public class CreateOrderCommandHandler
         CancellationToken cancellationToken)
 
     {
+        if (!string.IsNullOrWhiteSpace(request.ExternalReference))
+        {
+            var existingOrder = await _orderRepository.GetByExternalReferenceAsync(
+                request.ExternalReference.Trim(),
+                cancellationToken);
+            if (existingOrder is not null)
+                return existingOrder.Id;
+        }
+
         var customer = request.CustomerId != Guid.Empty
             ? await _customerRepository.GetByIdAsync(
                 request.CustomerId,
@@ -152,6 +161,9 @@ public class CreateOrderCommandHandler
             CustomerId = customer.Id,
             SalesListId = salesList.Id,
             OrderNumber = orderNumber,
+            ExternalReference = string.IsNullOrWhiteSpace(request.ExternalReference)
+                ? null
+                : request.ExternalReference.Trim(),
             Status = OrderStatus.Registered,
             RegisteredAt = now,
             PerfumeTotal = perfumeAmount,

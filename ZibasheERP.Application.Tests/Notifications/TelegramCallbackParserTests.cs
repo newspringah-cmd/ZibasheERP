@@ -32,4 +32,15 @@ public sealed class TelegramCallbackParserTests
 
         Assert.Equal(TelegramCallbackType.Unknown, result.Type);
     }
+
+    [Fact]
+    public void Parse_ConfirmDraft_RoundTripsCompactGuid()
+    {
+        var draftId = Guid.NewGuid();
+        var token = TelegramCallbackParser.EncodeGuid(draftId);
+        var result = TelegramCallbackParser.Parse($"confirm:{token}");
+
+        Assert.Equal(TelegramCallbackType.ConfirmOrder, result.Type);
+        Assert.Equal(draftId, result.SalesListId);
+    }
 }

@@ -6,8 +6,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
+using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
+using ZibasheERP.Application.Features.Orders.CreateOrder;
+using ZibasheERP.Application.Features.Orders.GetOrder;
 using ZibasheERP.Application.Features.Orders.GetCustomerOrders;
+using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
+using ZibasheERP.Domain.Entities;
 using ZibasheERP.Application.Notifications;
 
 namespace ZibasheERP.API.Controllers;
@@ -22,16 +27,19 @@ public sealed class TelegramWebhookController : ControllerBase
     private readonly ITelegramMessageSender _sender;
     private readonly TelegramOptions _options;
     private readonly ILogger<TelegramWebhookController> _logger;
+    private readonly ITelegramOrderDraftRepository _draftRepository;
 
     public TelegramWebhookController(
         IMediator mediator,
         ITelegramMessageSender sender,
         IOptions<TelegramOptions> options,
+        ITelegramOrderDraftRepository draftRepository,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
         _sender = sender;
         _options = options.Value;
+        _draftRepository = draftRepository;
         _logger = logger;
     }
 
@@ -185,6 +193,19 @@ public sealed class TelegramWebhookController : ControllerBase
         }
 
         var selection = TelegramCallbackParser.Parse(callback.Data);
+        if (selection.Type == TelegramCallbackType.Cancel)
+        {
+            await ReplyAsync(callback.Message.Chat.Id, "ثبت سفارش لغو شد.", cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.ConfirmOrder)
+        {
+            await ConfirmDraftAsync(callback, selection.SalesListId, cancellationToken);
+            return;
+        }
+
         var lists = await _mediator.Send(new GetOpenSalesListsQuery(50), cancellationToken);
         var salesList = lists.FirstOrDefault(item => item.Id == selection.SalesListId);
         if (salesList is null)
@@ -231,9 +252,82 @@ public sealed class TelegramWebhookController : ControllerBase
             selection.VolumeMl is { } volume &&
             volume <= salesList.RemainingVolumeMl)
         {
-            await ReplyAsync(
-                callback.Message.Chat.Id,
-                $"{salesList.PerfumeName}، حجم {volume} میل انتخاب شد.\nدر مرحله بعد انتخاب شیشه و تأیید نهایی سفارش اضافه می‌شود.",
+            var bottles = await _mediator.Send(
+                new GetAvailableBottlesQuery(volume),
+                cancellationToken);
+            if (bottles.Count == 0)
+            {
+                await _sender.AnswerCallbackAsync(
+                    callback.Id,
+                    "برای این حجم شیشه فعالی وجود ندارد.",
+                    cancellationToken);
+                return;
+            }
+
+            var listToken = TelegramCallbackParser.EncodeGuid(salesList.Id);
+            var rows = bottles.Select(bottle =>
+                (IReadOnlyCollection<TelegramInlineButton>)new[]
+                {
+                    new TelegramInlineButton(
+                        $"{bottle.Name} — {bottle.Price:N0} تومان",
+                        $"b:{listToken}:{volume}:{TelegramCallbackParser.EncodeGuid(bottle.Id)}")
+                }).ToArray();
+            await _sender.SendInlineKeyboardAsync(
+                callback.Message.Chat.Id.ToString(),
+                $"{salesList.PerfumeName}، حجم {volume} میل انتخاب شد. شیشه را انتخاب کنید:",
+                rows,
+                cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (selection.Type == TelegramCallbackType.SelectBottle &&
+            selection.VolumeMl is { } selectedVolume &&
+            selection.BottleId is { } bottleId &&
+            selectedVolume <= salesList.RemainingVolumeMl)
+        {
+            var bottles = await _mediator.Send(
+                new GetAvailableBottlesQuery(selectedVolume),
+                cancellationToken);
+            var bottle = bottles.FirstOrDefault(item => item.Id == bottleId);
+            if (bottle is null)
+            {
+                await _sender.AnswerCallbackAsync(
+                    callback.Id,
+                    "این شیشه دیگر قابل انتخاب نیست.",
+                    cancellationToken);
+                return;
+            }
+
+            var draft = new TelegramOrderDraft
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTime.UtcNow,
+                TelegramId = callback.From.Id.ToString(),
+                SalesListId = salesList.Id,
+                VolumeMl = selectedVolume,
+                BottleId = bottle.Id,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+            };
+            await _draftRepository.AddAsync(draft, cancellationToken);
+            await _draftRepository.SaveChangesAsync(cancellationToken);
+
+            var total = salesList.PricePerMl * selectedVolume + bottle.Price;
+            var rows = new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[]
+                {
+                    new TelegramInlineButton(
+                        "تأیید و ثبت سفارش",
+                        $"confirm:{TelegramCallbackParser.EncodeGuid(draft.Id)}")
+                },
+                new[] { new TelegramInlineButton("انصراف", "cancel") }
+            };
+            await _sender.SendInlineKeyboardAsync(
+                callback.Message.Chat.Id.ToString(),
+                $"خلاصه سفارش:\n{salesList.PerfumeName} — {selectedVolume} میل\n" +
+                $"شیشه: {bottle.Name}\nمبلغ نهایی: {total:N0} تومان\n\nآیا سفارش ثبت شود؟",
+                rows,
                 cancellationToken);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
             return;
@@ -243,6 +337,86 @@ public sealed class TelegramWebhookController : ControllerBase
             callback.Id,
             "انتخاب نامعتبر است.",
             cancellationToken);
+    }
+
+    private async Task ConfirmDraftAsync(
+        TelegramCallbackQuery callback,
+        Guid draftId,
+        CancellationToken cancellationToken)
+    {
+        var draft = await _draftRepository.GetByIdAsync(draftId, cancellationToken);
+        if (draft is null || draft.TelegramId != callback.From.Id.ToString())
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "درخواست سفارش معتبر نیست.", cancellationToken);
+            return;
+        }
+
+        if (draft.Status == TelegramOrderDraftStatus.Completed && draft.OrderId.HasValue)
+        {
+            await SendOrderRegisteredAsync(
+                callback.Message!.Chat.Id,
+                draft.OrderId.Value,
+                cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, "این سفارش قبلاً ثبت شده است.", cancellationToken);
+            return;
+        }
+
+        if (draft.ExpiresAt <= DateTime.UtcNow)
+        {
+            draft.Status = TelegramOrderDraftStatus.Expired;
+            draft.UpdatedAt = DateTime.UtcNow;
+            await _draftRepository.SaveChangesAsync(cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, "زمان تأیید سفارش به پایان رسیده است.", cancellationToken);
+            return;
+        }
+
+        var link = await _mediator.Send(
+            new LinkTelegramByUsernameCommand(
+                callback.From.Id.ToString(),
+                callback.From.Username),
+            cancellationToken);
+        if (!IsLinked(link))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "ابتدا حساب خود را با /start متصل کنید.", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            var orderId = await _mediator.Send(
+                new CreateOrderCommand
+                {
+                    TelegramId = callback.From.Id.ToString(),
+                    SalesListId = draft.SalesListId,
+                    RequestedVolumeMl = draft.VolumeMl,
+                    IsBottleOwner = false,
+                    BottleId = draft.BottleId,
+                    ExternalReference = $"telegram-draft:{draft.Id:N}"
+                },
+                cancellationToken);
+            draft.Status = TelegramOrderDraftStatus.Completed;
+            draft.OrderId = orderId;
+            draft.UpdatedAt = DateTime.UtcNow;
+            await _draftRepository.SaveChangesAsync(cancellationToken);
+            await SendOrderRegisteredAsync(callback.Message!.Chat.Id, orderId, cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, "سفارش ثبت شد.", cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken);
+        }
+    }
+
+    private async Task SendOrderRegisteredAsync(
+        long chatId,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var order = await _mediator.Send(new GetOrderQuery(orderId), cancellationToken);
+        var message = order is null
+            ? "سفارش با موفقیت ثبت شد."
+            : $"سفارش {order.OrderNumber} با مبلغ {order.FinalAmount:N0} تومان ثبت شد.";
+        await ReplyAsync(chatId, message, cancellationToken);
     }
 
     private async Task RequestContactAsync(long chatId, CancellationToken cancellationToken)

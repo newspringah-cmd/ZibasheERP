@@ -87,6 +87,21 @@ public sealed class CreateOrderCommandHandlerTests
         Assert.Null(fixture.Orders.AddedOrder);
     }
 
+    [Fact]
+    public async Task Handle_WithSameExternalReference_ReturnsExistingOrderWithoutDoubleReservation()
+    {
+        var fixture = new Fixture();
+        var command = fixture.ValidTelegramCommand();
+        command.ExternalReference = "telegram-draft:test";
+
+        var firstOrderId = await fixture.Handler.Handle(command, CancellationToken.None);
+        var secondOrderId = await fixture.Handler.Handle(command, CancellationToken.None);
+
+        Assert.Equal(firstOrderId, secondOrderId);
+        Assert.Equal(10, fixture.SalesList.ReservedVolume);
+        Assert.Equal(4_500_000m, fixture.Customer.CurrentDebt);
+    }
+
     private sealed class Fixture
     {
         public Customer Customer { get; } = new()
@@ -188,6 +203,8 @@ public sealed class CreateOrderCommandHandlerTests
         public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<Order?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<Order?> GetByOrderNumberAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<Order?> GetByExternalReferenceAsync(string externalReference, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Order?>(AddedOrder?.ExternalReference == externalReference ? AddedOrder : null);
         public Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<Order>>(Array.Empty<Order>());
         public Task<bool> OrderNumberExistsAsync(string orderNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);

@@ -66,6 +66,17 @@ public class OrderRepository : IOrderRepository
                 cancellationToken);
     }
 
+    public Task<Order?> GetByExternalReferenceAsync(
+        string externalReference,
+        CancellationToken cancellationToken = default)
+    {
+        return _dbContext.Orders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                order => order.ExternalReference == externalReference && !order.IsDeleted,
+                cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(
         Guid customerId,
         CancellationToken cancellationToken = default)

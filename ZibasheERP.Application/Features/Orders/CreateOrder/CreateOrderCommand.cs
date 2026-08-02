@@ -1,5 +1,7 @@
 ﻿using MediatR;
 
+using System.Text.Json.Serialization;
+
 namespace ZibasheERP.Application.Features.Orders.CreateOrder;
 
 public class CreateOrderCommand : IRequest<Guid>
@@ -26,4 +28,7 @@ public class CreateOrderCommand : IRequest<Guid>
 
     // توضیحات سفارش
     public string? Notes { get; set; }
+
+    [JsonIgnore]
+    public string? ExternalReference { get; set; }
 }

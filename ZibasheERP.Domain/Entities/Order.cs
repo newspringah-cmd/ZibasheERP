@@ -22,6 +22,8 @@ public class Order : BaseEntity
 
     public string OrderNumber { get; set; } = string.Empty;
 
+    public string? ExternalReference { get; set; }
+
     // وضعیت فعلی سفارش
     public OrderStatus Status { get; set; } = OrderStatus.Registered;
 

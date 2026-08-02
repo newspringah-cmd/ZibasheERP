@@ -4,13 +4,17 @@ public enum TelegramCallbackType
 {
     Unknown = 0,
     SelectSalesList = 1,
-    SelectVolume = 2
+    SelectVolume = 2,
+    SelectBottle = 3,
+    ConfirmOrder = 4,
+    Cancel = 5
 }
 
 public sealed record TelegramCallback(
     TelegramCallbackType Type,
     Guid SalesListId,
-    int? VolumeMl = null);
+    int? VolumeMl = null,
+    Guid? BottleId = null);
 
 public static class TelegramCallbackParser
 {
@@ -19,8 +23,11 @@ public static class TelegramCallbackParser
         if (string.IsNullOrWhiteSpace(data))
             return new(TelegramCallbackType.Unknown, Guid.Empty);
 
+        if (data == "cancel")
+            return new(TelegramCallbackType.Cancel, Guid.Empty);
+
         var parts = data.Split(':');
-        if (parts.Length < 2 || !Guid.TryParseExact(parts[1], "N", out var salesListId))
+        if (parts.Length < 2 || !TryDecodeGuid(parts[1], out var salesListId))
             return new(TelegramCallbackType.Unknown, Guid.Empty);
 
         if (parts[0] == "list" && parts.Length == 2)
@@ -34,6 +41,52 @@ public static class TelegramCallbackParser
             return new(TelegramCallbackType.SelectVolume, salesListId, volume);
         }
 
+        if (parts[0] == "confirm" && parts.Length == 2)
+            return new(TelegramCallbackType.ConfirmOrder, salesListId);
+
+        if (parts[0] == "b" &&
+            parts.Length == 4 &&
+            int.TryParse(parts[2], out volume) &&
+            volume > 0 &&
+            TryDecodeGuid(parts[3], out var bottleId))
+        {
+            return new(
+                TelegramCallbackType.SelectBottle,
+                salesListId,
+                volume,
+                bottleId);
+        }
+
         return new(TelegramCallbackType.Unknown, Guid.Empty);
+    }
+
+    public static string EncodeGuid(Guid value) =>
+        Convert.ToBase64String(value.ToByteArray())
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
+    private static bool TryDecodeGuid(string value, out Guid result)
+    {
+        if (Guid.TryParseExact(value, "N", out result))
+            return true;
+
+        try
+        {
+            var base64 = value.Replace('-', '+').Replace('_', '/');
+            base64 = base64.PadRight((base64.Length + 3) / 4 * 4, '=');
+            var bytes = Convert.FromBase64String(base64);
+            if (bytes.Length == 16)
+            {
+                result = new Guid(bytes);
+                return true;
+            }
+        }
+        catch (FormatException)
+        {
+        }
+
+        result = Guid.Empty;
+        return false;
     }
 }

@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<SalesList> SalesLists => Set<SalesList>();
 
     public DbSet<Order> Orders => Set<Order>();
+    public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     public DbSet<Payment> Payments => Set<Payment>();
@@ -38,6 +39,7 @@ public class AppDbContext : DbContext
         ConfigureBatch(modelBuilder);
         ConfigureSalesList(modelBuilder);
         ConfigureOrder(modelBuilder);
+        ConfigureTelegramOrderDraft(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
         ConfigureShipment(modelBuilder);
@@ -154,6 +156,24 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Order>()
             .HasIndex(x => x.OrderNumber)
             .IsUnique();
+
+        modelBuilder.Entity<Order>()
+            .Property(x => x.ExternalReference)
+            .HasMaxLength(100);
+
+        modelBuilder.Entity<Order>()
+            .HasIndex(x => x.ExternalReference)
+            .IsUnique()
+            .HasFilter("[ExternalReference] IS NOT NULL");
+    }
+
+    private static void ConfigureTelegramOrderDraft(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TelegramOrderDraft>()
+            .Property(draft => draft.TelegramId)
+            .HasMaxLength(50);
+        modelBuilder.Entity<TelegramOrderDraft>()
+            .HasIndex(draft => new { draft.TelegramId, draft.Status, draft.ExpiresAt });
     }
 
     private static void ConfigureOrderItem(ModelBuilder modelBuilder)

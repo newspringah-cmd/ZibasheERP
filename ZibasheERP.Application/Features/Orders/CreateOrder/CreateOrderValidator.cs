@@ -40,5 +40,9 @@ public class CreateOrderValidator : AbstractValidator<CreateOrderCommand>
         RuleFor(x => x.Notes)
             .MaximumLength(500)
             .WithMessage("توضیحات سفارش نمی‌تواند بیشتر از ۵۰۰ کاراکتر باشد.");
+
+        RuleFor(x => x.ExternalReference)
+            .MaximumLength(100)
+            .When(x => !string.IsNullOrWhiteSpace(x.ExternalReference));
     }
 }

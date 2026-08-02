@@ -17,6 +17,10 @@ public interface IOrderRepository
         string orderNumber,
         CancellationToken cancellationToken = default);
 
+    Task<Order?> GetByExternalReferenceAsync(
+        string externalReference,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyCollection<Order>> GetByCustomerIdAsync(
         Guid customerId,
         CancellationToken cancellationToken = default);
