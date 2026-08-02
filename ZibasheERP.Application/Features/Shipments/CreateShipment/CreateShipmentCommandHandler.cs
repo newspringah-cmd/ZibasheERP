@@ -89,6 +89,31 @@ public sealed class CreateShipmentCommandHandler
             now);
         if (notification is not null)
             await _notificationOutboxRepository.AddAsync(notification, cancellationToken);
+        var integrationEvent = N8nIntegrationEventFactory.Create(
+            order,
+            "OrderShipped",
+            new
+            {
+                OrderId = order.Id,
+                order.OrderNumber,
+                ShipmentId = shipment.Id,
+                shipment.ShippingCompany,
+                shipment.TrackingCode,
+                shipment.SentAt,
+                shipment.ShippingCost,
+                Recipient = new
+                {
+                    shipment.ReceiverName,
+                    shipment.Mobile,
+                    shipment.Province,
+                    shipment.City,
+                    shipment.PostalCode,
+                    shipment.FullAddress,
+                    order.Customer?.TelegramId
+                }
+            },
+            now);
+        await _notificationOutboxRepository.AddAsync(integrationEvent, cancellationToken);
         await _shipmentRepository.SaveChangesAsync(cancellationToken);
 
         return new CreateShipmentResponse(

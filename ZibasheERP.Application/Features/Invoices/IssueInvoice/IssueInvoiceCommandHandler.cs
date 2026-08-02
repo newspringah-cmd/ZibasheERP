@@ -76,6 +76,42 @@ public sealed class IssueInvoiceCommandHandler
             now);
         if (notification is not null)
             await _outboxRepository.AddAsync(notification, cancellationToken);
+        var integrationEvent = N8nIntegrationEventFactory.Create(
+            order,
+            "InvoiceIssued",
+            new
+            {
+                OrderId = order.Id,
+                order.OrderNumber,
+                InvoiceId = invoice.Id,
+                invoice.InvoiceNumber,
+                invoice.IssuedAt,
+                invoice.PerfumeTotal,
+                invoice.BottleTotal,
+                invoice.TotalAmount,
+                Customer = new
+                {
+                    order.Customer.Id,
+                    order.Customer.FullName,
+                    order.Customer.Mobile,
+                    order.Customer.TelegramId
+                },
+                Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
+                {
+                    item.RowNumber,
+                    PerfumeName = item.Perfume?.Name,
+                    PerfumeBrand = item.Perfume?.Brand,
+                    item.RequestedVolumeMl,
+                    item.PerfumePricePerMl,
+                    item.PerfumeAmount,
+                    item.IsBottleOwner,
+                    BottleName = item.Bottle?.Name,
+                    item.BottlePrice,
+                    item.LineTotal
+                })
+            },
+            now);
+        await _outboxRepository.AddAsync(integrationEvent, cancellationToken);
         await _invoiceRepository.SaveChangesAsync(cancellationToken);
 
         return InvoiceResponse.FromEntity(invoice);

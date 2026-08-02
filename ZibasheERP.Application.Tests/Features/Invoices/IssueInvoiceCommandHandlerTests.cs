@@ -41,7 +41,10 @@ public sealed class IssueInvoiceCommandHandlerTests
         Assert.Equal(InvoiceStatus.Issued, repository.AddedInvoice!.Status);
         Assert.Equal(1_000_000m, result.TotalAmount);
         Assert.Equal(ZibasheERP.Domain.Entities.OrderStatus.Invoiced, order.Status);
-        Assert.Equal("InvoiceIssued", outbox.AddedNotification?.EventType);
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "Telegram" && value.EventType == "InvoiceIssued");
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "N8n" && value.EventType == "InvoiceIssued");
         Assert.True(repository.SaveChangesCalled);
     }
 
@@ -72,10 +75,10 @@ public sealed class IssueInvoiceCommandHandlerTests
 
     private sealed class NotificationOutboxRepositoryStub : INotificationOutboxRepository
     {
-        public NotificationOutbox? AddedNotification { get; private set; }
+        public List<NotificationOutbox> AddedNotifications { get; } = [];
         public Task AddAsync(NotificationOutbox value, CancellationToken cancellationToken = default)
         {
-            AddedNotification = value;
+            AddedNotifications.Add(value);
             return Task.CompletedTask;
         }
         public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(string channel, int limit, CancellationToken cancellationToken = default) =>

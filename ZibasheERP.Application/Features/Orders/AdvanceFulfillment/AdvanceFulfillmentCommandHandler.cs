@@ -76,6 +76,36 @@ public sealed class AdvanceFulfillmentCommandHandler
                 now);
             if (notification is not null)
                 await _outboxRepository.AddAsync(notification, cancellationToken);
+            if (request.TargetStatus == OrderStatus.Decanted)
+            {
+                var integrationEvent = N8nIntegrationEventFactory.Create(
+                    order,
+                    "OrderDecanted",
+                    new
+                    {
+                        order.Id,
+                        order.OrderNumber,
+                        Customer = new
+                        {
+                            order.CustomerId,
+                            order.Customer?.FullName,
+                            order.Customer?.TelegramId
+                        },
+                        Items = order.Items
+                            .Where(item => !item.IsDeleted)
+                            .Select(item => new
+                            {
+                                item.Id,
+                                item.PerfumeId,
+                                PerfumeName = item.Perfume?.Name,
+                                item.RequestedVolumeMl,
+                                item.BottleId,
+                                BottleName = item.Bottle?.Name
+                            })
+                    },
+                    now);
+                await _outboxRepository.AddAsync(integrationEvent, cancellationToken);
+            }
         }
         await _orderRepository.SaveChangesAsync(cancellationToken);
 

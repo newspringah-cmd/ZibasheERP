@@ -43,7 +43,10 @@ public sealed class FulfillmentAndShipmentTests
 
         Assert.Equal(OrderStatus.Decanted, order.Status);
         Assert.Equal("Paid", result.PreviousStatus);
-        Assert.Equal("OrderDecanted", outbox.AddedNotification?.EventType);
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "Telegram" && value.EventType == "OrderDecanted");
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "N8n" && value.EventType == "OrderDecanted");
         Assert.Equal(80m, batch.RemainingVolumeMl);
         Assert.True(repository.SaveChangesCalled);
     }
@@ -115,7 +118,10 @@ public sealed class FulfillmentAndShipmentTests
         Assert.Equal(address.FullAddress, repository.AddedShipment!.FullAddress);
         Assert.Equal(OrderStatus.Shipped, order.Status);
         Assert.Equal("TRACK-001", result.TrackingCode);
-        Assert.Equal("OrderShipped", outbox.AddedNotification?.EventType);
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "Telegram" && value.EventType == "OrderShipped");
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "N8n" && value.EventType == "OrderShipped");
         Assert.True(repository.SaveChangesCalled);
     }
 
@@ -149,16 +155,17 @@ public sealed class FulfillmentAndShipmentTests
         Assert.True(shipment.IsDelivered);
         Assert.Equal(OrderStatus.Delivered, order.Status);
         Assert.Equal("Delivered", result.OrderStatus);
-        Assert.Equal("OrderDelivered", outbox.AddedNotification?.EventType);
+        Assert.Contains(outbox.AddedNotifications, value =>
+            value.Channel == "Telegram" && value.EventType == "OrderDelivered");
         Assert.True(repository.SaveChangesCalled);
     }
 
     private sealed class NotificationOutboxRepositoryStub : INotificationOutboxRepository
     {
-        public NotificationOutbox? AddedNotification { get; private set; }
+        public List<NotificationOutbox> AddedNotifications { get; } = [];
         public Task AddAsync(NotificationOutbox value, CancellationToken cancellationToken = default)
         {
-            AddedNotification = value;
+            AddedNotifications.Add(value);
             return Task.CompletedTask;
         }
         public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(string channel, int limit, CancellationToken cancellationToken = default) =>
