@@ -391,6 +391,66 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.ToTable("NotificationOutbox");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.OrderArtifact", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("DeliveredAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ExternalFileId")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<string>("FileUrl")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SourceEventId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId", "Type", "CreatedAt");
+
+                    b.HasIndex("SourceEventId")
+                        .IsUnique();
+
+                    b.ToTable("OrderArtifacts");
+                });
+
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.OrderArtifact", b =>
+                {
+                    b.HasOne("ZibasheERP.Domain.Entities.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Order", b =>
                 {
                     b.Property<Guid>("Id")

@@ -77,6 +77,7 @@ dotnet user-secrets set "Telegram:WebhookSecret" "A_LONG_RANDOM_WEBHOOK_SECRET" 
 dotnet user-secrets set "N8n:Enabled" "true" --project ZibasheERP.API\ZibasheERP.API.csproj
 dotnet user-secrets set "N8n:WebhookUrl" "https://N8N_DOMAIN/webhook/zibashe-events" --project ZibasheERP.API\ZibasheERP.API.csproj
 dotnet user-secrets set "N8n:WebhookSecret" "A_RANDOM_SECRET_WITH_AT_LEAST_32_CHARACTERS" --project ZibasheERP.API\ZibasheERP.API.csproj
+dotnet user-secrets set "ApiKeys:N8n" "A_DIFFERENT_RANDOM_KEY_WITH_AT_LEAST_32_CHARACTERS" --project ZibasheERP.API\ZibasheERP.API.csproj
 ```
 
 هر event ارسالی به n8n این هدرها را دارد:
@@ -86,6 +87,8 @@ dotnet user-secrets set "N8n:WebhookSecret" "A_RANDOM_SECRET_WITH_AT_LEAST_32_CH
 - `X-Zibashe-Signature`: امضای `sha256=<hex>`
 
 امضا برابر `HMAC-SHA256(secret, timestamp + "." + rawBody)` است. workflow باید قبل از هر پردازش، timestamp، امضا و تکراری‌نبودن EventId را بررسی کند. بدنه شامل `eventId`، `eventType`، `occurredAt`، `customerId`، `orderId` و `data` است.
+
+پس از تولید و ارسال فایل، workflow نتیجه را با هدر `X-Api-Key` مربوط به نقش N8n به `POST /api/integrations/n8n/order-artifacts` برمی‌گرداند. نوع فایل یکی از `InvoicePdf`، `DecantPhoto` یا `PostalReceipt` است و `SourceEventId` باید همان EventId دریافتی باشد.
 
 تنظیمات worker تلگرام:
 

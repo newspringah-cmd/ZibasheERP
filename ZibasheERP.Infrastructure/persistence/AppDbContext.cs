@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<SalesList> SalesLists => Set<SalesList>();
 
     public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderArtifact> OrderArtifacts => Set<OrderArtifact>();
     public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
     public DbSet<TelegramProcessedUpdate> TelegramProcessedUpdates => Set<TelegramProcessedUpdate>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
@@ -40,6 +41,7 @@ public class AppDbContext : DbContext
         ConfigureBatch(modelBuilder);
         ConfigureSalesList(modelBuilder);
         ConfigureOrder(modelBuilder);
+        ConfigureOrderArtifact(modelBuilder);
         ConfigureTelegramOrderDraft(modelBuilder);
         ConfigureTelegramProcessedUpdate(modelBuilder);
         ConfigureOrderItem(modelBuilder);
@@ -195,6 +197,20 @@ public class AppDbContext : DbContext
             .HasIndex(x => x.ExternalReference)
             .IsUnique()
             .HasFilter("[ExternalReference] IS NOT NULL");
+    }
+
+    private static void ConfigureOrderArtifact(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<OrderArtifact>()
+            .HasOne(artifact => artifact.Order)
+            .WithMany()
+            .HasForeignKey(artifact => artifact.OrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OrderArtifact>()
+            .HasIndex(artifact => artifact.SourceEventId)
+            .IsUnique();
+        modelBuilder.Entity<OrderArtifact>()
+            .HasIndex(artifact => new { artifact.OrderId, artifact.Type, artifact.CreatedAt });
     }
 
     private static void ConfigureTelegramOrderDraft(ModelBuilder modelBuilder)

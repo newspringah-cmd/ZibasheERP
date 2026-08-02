@@ -59,6 +59,7 @@ builder.Services.AddScoped<INotificationOutboxRepository, NotificationOutboxRepo
 builder.Services.AddScoped<IAdminNotificationRepository, NotificationOutboxRepository>();
 builder.Services.AddScoped<IAddressRepository, AddressRepository>();
 builder.Services.AddScoped<ITelegramOrderDraftRepository, TelegramOrderDraftRepository>();
+builder.Services.AddScoped<IOrderArtifactRepository, OrderArtifactRepository>();
 
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
@@ -72,7 +73,8 @@ builder.Services.AddOptions<TelegramOptions>()
     .ValidateOnStart();
 builder.Services.AddOptions<ApiKeyOptions>()
     .Bind(builder.Configuration.GetSection(ApiKeyOptions.SectionName))
-    .Validate(options => builder.Environment.IsDevelopment() || options.IsValid(),
+    .Validate(options => builder.Environment.IsDevelopment() ||
+        options.IsValid(builder.Configuration.GetValue<bool>("N8n:Enabled")),
         "Production API keys must be distinct and at least 32 characters long.")
     .ValidateOnStart();
 builder.Services.AddOptions<N8nOptions>()

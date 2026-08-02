@@ -34,12 +34,15 @@ public sealed class ApiKeyAuthenticationHandler
         var suppliedKey = suppliedValues.ToString();
         var telegramKey = _configuration["ApiKeys:TelegramBot"];
         var adminKey = _configuration["ApiKeys:Admin"];
+        var n8nKey = _configuration["ApiKeys:N8n"];
 
         var role = Matches(suppliedKey, adminKey)
             ? "Admin"
             : Matches(suppliedKey, telegramKey)
                 ? "TelegramBot"
-                : null;
+                : Matches(suppliedKey, n8nKey)
+                    ? "N8n"
+                    : null;
 
         if (role is null)
         {
