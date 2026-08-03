@@ -29,6 +29,8 @@ trap cleanup EXIT
 container_id="$(docker compose --env-file "$env_file" -f "$compose_file" ps -q sqlserver)"
 [[ -n "$container_id" ]] || fail 'SQL Server container is not running.'
 docker cp "$source_backup" "$container_id:$container_backup" >/dev/null
+docker exec --user root "$container_id" chown 10001:0 "$container_backup"
+docker exec --user root "$container_id" chmod 600 "$container_backup"
 
 docker exec "$container_id" bash -lc \
   "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"\$MSSQL_SA_PASSWORD\" -C -b -r1 -Q \"
