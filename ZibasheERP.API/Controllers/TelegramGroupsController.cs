@@ -384,7 +384,7 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
             Recipient = group.ChatId,
             Payload = JsonSerializer.Serialize(new
             {
-                Message = "✅ اتصال گروه به سامانه زیباشه با موفقیت آزمایش شد.",
+                Message = "✅ اتصال گروه به سامانه زیباشی با موفقیت آزمایش شد.",
                 GroupId = group.Id,
                 TestedAt = now
             })

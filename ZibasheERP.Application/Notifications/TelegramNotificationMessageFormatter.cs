@@ -11,16 +11,16 @@ public static class TelegramNotificationMessageFormatter
         if (eventType == "DebtReminder")
         {
             var message = ReadString(root, "Message") ?? "لطفاً برای تسویه اقدام کنید.";
-            return $"یادآوری زیباشه: مانده بدهی شما {ReadDecimal(root, "Amount"):N0} تومان است. {message}";
+            return $"یادآوری زیباشی: مانده بدهی شما {ReadDecimal(root, "Amount"):N0} تومان است. {message}";
         }
         if (eventType == "TelegramGroupDeliveryTest")
         {
             return ReadString(root, "Message") ??
-                "✅ اتصال گروه به سامانه زیباشه با موفقیت آزمایش شد.";
+                "✅ اتصال گروه به سامانه زیباشی با موفقیت آزمایش شد.";
         }
         if (eventType == "TelegramGroupDeliveryFailed")
         {
-            return $"⚠️ هشدار ارسال گروه زیباشه\n" +
+            return $"⚠️ هشدار ارسال گروه زیباشی\n" +
                    $"شناسه مشتری: {ReadString(root, "CustomerId") ?? "نامشخص"}\n" +
                    $"شناسه گروه: {ReadString(root, "GroupChatId") ?? "نامشخص"}\n" +
                    $"شناسه اعلان: {ReadString(root, "NotificationId") ?? "نامشخص"}\n" +

@@ -196,7 +196,7 @@ public sealed class TelegramWebhookController : ControllerBase
             {
                 await SendMainMenuAsync(
                     message.Chat.Id,
-                    $"{usernameLink.CustomerName} عزیز، به زیباشه خوش آمدید 🌿\nبرای مشاهده لیست‌ها /lists و سفارش‌های خود /orders را ارسال کنید.",
+                    $"{usernameLink.CustomerName} عزیز، به زیباشی خوش آمدید 🌿\nبرای مشاهده لیست‌ها /lists و سفارش‌های خود /orders را ارسال کنید.",
                     cancellationToken);
                 return Ok();
             }
@@ -704,7 +704,7 @@ public sealed class TelegramWebhookController : ControllerBase
     {
         var result = await _sender.RequestContactAsync(
             chatId.ToString(),
-            "به زیباشه خوش آمدید 🌿\nبرای اتصال امن حساب و مشاهده سفارش‌ها، شماره موبایل خود را با دکمه زیر ارسال کنید.",
+            "به زیباشی خوش آمدید 🌿\nبرای اتصال امن حساب و مشاهده سفارش‌ها، شماره موبایل خود را با دکمه زیر ارسال کنید.",
             cancellationToken);
         if (!result.IsSuccessful)
             _logger.LogWarning("Telegram contact request failed: {Error}", result.Error);
@@ -991,7 +991,7 @@ public sealed class TelegramWebhookController : ControllerBase
     }
 
     private static string CommandHelp() =>
-        "راهنمای ربات زیباشه:\n" +
+        "راهنمای ربات زیباشی:\n" +
         "/lists — مشاهده لیست‌های فروش فعال\n" +
         "/orders — سفارش‌های من\n" +
         "/balance — وضعیت بدهی و اعتبار من\n" +
@@ -1368,7 +1368,7 @@ public sealed class TelegramWebhookController : ControllerBase
         LinkTelegramCustomerStatus.InvalidMobile =>
             "شماره موبایل معتبر نیست. لطفاً از دکمه «ارسال شماره موبایل» استفاده کنید.",
         LinkTelegramCustomerStatus.CustomerNotFound =>
-            "این شماره در زیباشه ثبت نشده است. لطفاً با پشتیبانی تماس بگیرید.",
+            "این شماره در زیباشی ثبت نشده است. لطفاً با پشتیبانی تماس بگیرید.",
         LinkTelegramCustomerStatus.TelegramAlreadyLinked =>
             "این حساب تلگرام قبلاً به شماره دیگری متصل شده است. لطفاً با پشتیبانی تماس بگیرید.",
         LinkTelegramCustomerStatus.CustomerLinkedToAnotherTelegram =>
