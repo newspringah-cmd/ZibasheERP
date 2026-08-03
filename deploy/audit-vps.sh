@@ -49,7 +49,7 @@ else
 fi
 
 swap_kb="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)"
-if [[ "$swap_kb" =~ ^[0-9]+$ ]] && (( swap_kb >= 2097152 )); then
+if [[ "$swap_kb" =~ ^[0-9]+$ ]] && (( swap_kb >= 2000000 )); then
   pass 'at least 2 GiB swap is configured'
 else
   fail 'less than 2 GiB swap is configured'
@@ -74,9 +74,11 @@ else
 fi
 
 if command -v caddy >/dev/null 2>&1; then
-  pass 'Caddy is installed'
+  pass 'Caddy reverse proxy is installed'
+elif command -v nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx; then
+  pass 'nginx reverse proxy is installed and active'
 else
-  fail 'Caddy is not installed'
+  fail 'neither Caddy nor an active nginx reverse proxy is available'
 fi
 
 if command -v getent >/dev/null 2>&1; then
@@ -121,8 +123,33 @@ if [[ -f "$script_dir/Caddyfile" ]] && command -v caddy >/dev/null 2>&1; then
   else
     fail 'generated Caddyfile is invalid'
   fi
+elif command -v nginx >/dev/null 2>&1; then
+  nginx_command=(nginx)
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    nginx_command=(sudo -n nginx)
+  fi
+
+  if "${nginx_command[@]}" -t >/dev/null 2>&1; then
+    pass 'nginx configuration syntax is valid'
+  else
+    fail 'nginx configuration syntax is invalid'
+  fi
+
+  nginx_configuration="$("${nginx_command[@]}" -T 2>/dev/null || true)"
+  if grep -Fq "server_name $api_domain" <<<"$nginx_configuration" &&
+     grep -Fq 'proxy_pass http://127.0.0.1:8080;' <<<"$nginx_configuration"; then
+    pass "nginx routes $api_domain to the loopback API"
+  else
+    fail "nginx does not route $api_domain to http://127.0.0.1:8080"
+  fi
+  if grep -Fq "server_name $n8n_domain" <<<"$nginx_configuration" &&
+     grep -Fq 'proxy_pass http://127.0.0.1:5678;' <<<"$nginx_configuration"; then
+    pass "nginx routes $n8n_domain to the loopback n8n service"
+  else
+    fail "nginx does not route $n8n_domain to http://127.0.0.1:5678"
+  fi
 else
-  fail 'deploy/Caddyfile has not been generated yet'
+  fail 'reverse proxy configuration has not been generated yet'
 fi
 
 printf '\n'

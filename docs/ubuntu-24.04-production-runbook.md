@@ -65,7 +65,11 @@ sudo docker compose version
 
 معماری VPS باید پیش از استفاده از `amd64` با `dpkg --print-architecture` کنترل شود. دسترسی بدون sudo به Docker معادل دسترسی سطح root است؛ افزودن کاربر عمومی به گروه `docker` تصمیم پیش‌فرض این Runbook نیست.
 
-## ۴. نصب Caddy از repository رسمی
+## ۴. Reverse proxy موجود یا نصب Caddy
+
+اگر nginx و Certbot از قبل روی پورت‌های 80 و 443 فعال و گواهی‌ها معتبرند، آن‌ها را متوقف نکنید و Caddy را هم‌زمان نصب نکنید. nginx باید API را فقط به `127.0.0.1:8080` و n8n را فقط به `127.0.0.1:5678` هدایت کند. پنل Portainer تا زمان فعال‌شدن کنترل هویتی مستقل، پاسخ عمومی `403` می‌دهد و از طریق SSH tunnel به `127.0.0.1:9000` قابل مدیریت است.
+
+روی سرور تازه‌ای که reverse proxy ندارد، Caddy را از repository رسمی نصب کنید:
 
 ```bash
 sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
