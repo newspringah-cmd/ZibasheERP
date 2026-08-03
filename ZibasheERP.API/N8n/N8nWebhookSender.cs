@@ -43,16 +43,20 @@ public sealed class N8nWebhookSender : IN8nWebhookSender, IDisposable
                 data = payloadDocument.RootElement
             };
             var body = JsonSerializer.Serialize(envelope);
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
-            var signature = WebhookSignature.Create(_options.WebhookSecret, timestamp, body);
+            var headers = N8nWebhookHeaders.Create(
+                notification.Id,
+                _options.WebhookSecret,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                body);
 
             using var request = new HttpRequestMessage(HttpMethod.Post, _options.WebhookUrl)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
-            request.Headers.Add("X-Zibashe-Event-Id", notification.Id.ToString());
-            request.Headers.Add("X-Zibashe-Timestamp", timestamp);
-            request.Headers.Add("X-Zibashe-Signature", $"sha256={signature}");
+            request.Headers.Add("X-Zibashe-Event-Id", headers.EventId);
+            request.Headers.Add("X-Zibashe-Timestamp", headers.Timestamp);
+            request.Headers.Add("X-Zibashe-Signature", headers.Signature);
+            request.Headers.Add("X-Zibashe-Webhook-Token", headers.AuthenticationToken);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
             using var response = await _httpClient.SendAsync(request, cancellationToken);

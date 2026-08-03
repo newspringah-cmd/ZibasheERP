@@ -1,0 +1,8 @@
+{
+  "sourceEventId": "11111111-1111-1111-1111-111111111111",
+  "orderId": "33333333-3333-3333-3333-333333333333",
+  "type": "InvoicePdf",
+  "fileUrl": null,
+  "externalFileId": "BQACAgQAAxkBAAIBExampleTelegramFileId",
+  "contentType": "application/pdf"
+}

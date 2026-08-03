@@ -30,15 +30,41 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Verify repository secret safety
+        run: bash deploy/verify-no-secrets.sh
+
       - name: Validate deployment scripts
-        run: bash -n deploy/preflight.sh deploy/smoke-test.sh
+        run: >-
+          bash -n deploy/preflight.sh deploy/smoke-test.sh
+          deploy/register-telegram-webhook.sh deploy/preflight-n8n.sh
+          deploy/backup-n8n.sh deploy/import-telegram-groups.sh
+          deploy/initialize-production-env.sh deploy/smoke-test-n8n.sh
+          deploy/verify-no-secrets.sh deploy/verify-release.sh
+
+      - name: Validate production Compose files
+        run: |
+          cp deploy/.env.production.example deploy/.env.production
+          cp deploy/.env.n8n.example deploy/.env.n8n
+          docker compose --env-file deploy/.env.production -f deploy/docker-compose.production.yml config --quiet
+          docker compose --env-file deploy/.env.n8n -f deploy/docker-compose.n8n.production.yml config --quiet
+          rm deploy/.env.production deploy/.env.n8n
 
       - name: Validate integration JSON contracts
         run: >-
           python3 -m json.tool integrations/n8n/contracts/event-envelope.schema.json >/dev/null &&
           python3 -m json.tool integrations/n8n/contracts/artifact-callback.schema.json >/dev/null &&
           python3 -m json.tool integrations/n8n/contracts/delivery-failure.schema.json >/dev/null &&
-          python3 -m json.tool integrations/n8n/samples/invoice-issued.json >/dev/null
+          python3 -m json.tool integrations/n8n/samples/invoice-issued.json >/dev/null &&
+          python3 -m json.tool integrations/n8n/samples/artifact-callback.json >/dev/null &&
+          python3 -m json.tool integrations/n8n/samples/delivery-failure.json >/dev/null &&
+          python3 integrations/n8n/tests/contracts.test.py
+
+      - name: Validate n8n Code nodes
+        run: |
+          node --check integrations/n8n/code/build-invoice-html.js
+          node --check integrations/n8n/code/validate-event-metadata.js
+          node integrations/n8n/tests/build-invoice-html.test.js
+          node integrations/n8n/tests/validate-event-metadata.test.js
 
       - name: Restore
         run: dotnet restore ZibasheERP.slnx

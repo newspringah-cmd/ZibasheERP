@@ -22,6 +22,27 @@ public sealed class NotificationsController : ControllerBase
         _mediator = mediator;
     }
 
+    [HttpGet("{notificationId:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetStatus(
+        Guid notificationId,
+        CancellationToken cancellationToken)
+    {
+        var notification = await _repository.GetByIdAsync(notificationId, cancellationToken);
+        if (notification is null)
+            return NotFound();
+
+        return Ok(new NotificationStatusResponse(
+            notification.Id,
+            notification.Channel,
+            notification.EventType,
+            notification.Status.ToString(),
+            notification.Attempts,
+            notification.LastError,
+            notification.CreatedAt,
+            notification.ProcessedAt));
+    }
+
     [HttpGet("pending")]
     [Authorize(Roles = "TelegramBot")]
     public async Task<IActionResult> GetPending(
@@ -123,4 +144,14 @@ public sealed class NotificationsController : ControllerBase
         string Payload,
         int Attempts,
         DateTime CreatedAt);
+
+    public sealed record NotificationStatusResponse(
+        Guid Id,
+        string Channel,
+        string EventType,
+        string Status,
+        int Attempts,
+        string? LastError,
+        DateTime CreatedAt,
+        DateTime? ProcessedAt);
 }

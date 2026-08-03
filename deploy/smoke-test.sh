@@ -50,6 +50,24 @@ request 200 'Database and API are ready' "$base_url/health/ready"
 request 401 'Admin endpoint rejects an invalid API key' \
   --header 'X-Api-Key: invalid-smoke-test-key' \
   "$base_url/api/telegram-groups/readiness"
+request 200 'Production readiness report is available' \
+  --header "@$admin_header_file" \
+  "$base_url/api/system/readiness"
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$response_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as source:
+    report = json.load(source)
+required = ('environment', 'databaseReachable', 'telegramConfigured',
+            'n8nConfigured', 'apiKeysConfigured', 'readyForPilot')
+missing = [name for name in required if name not in report]
+if missing:
+    raise SystemExit('Smoke test failed: readiness fields missing: ' + ', '.join(missing))
+print('INFO  Ready for pilot:', report['readyForPilot'])
+PY
+fi
 request 200 'Admin API key is accepted' \
   --header "@$admin_header_file" \
   "$base_url/api/telegram-groups/readiness"
@@ -68,7 +86,44 @@ if [[ -n "$test_group_id" ]]; then
     --request POST \
     --header "@$admin_header_file" \
     "$base_url/api/telegram-groups/$test_group_id/test-delivery"
-  printf 'Check the selected Telegram group for the confirmation message.\n'
+  command -v python3 >/dev/null 2>&1 || fail 'python3 is required to verify real Telegram delivery.'
+  notification_id="$(python3 - "$response_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as source:
+    value = json.load(source).get('notificationId', '')
+if not value:
+    raise SystemExit('Smoke test failed: delivery response has no notificationId.')
+print(value)
+PY
+)"
+
+  delivered='false'
+  for _ in $(seq 1 30); do
+    request 200 'Delivery status is queryable' \
+      --header "@$admin_header_file" \
+      "$base_url/api/notifications/$notification_id"
+    status="$(python3 - "$response_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as source:
+    print(json.load(source).get('status', ''))
+PY
+)"
+    if [[ "$status" == 'Processed' ]]; then
+      delivered='true'
+      break
+    fi
+    if [[ "$status" == 'Failed' ]]; then
+      fail "Telegram delivery reached terminal status Failed (notification $notification_id)."
+    fi
+    sleep 1
+  done
+  [[ "$delivered" == 'true' ]] || fail "Telegram delivery was not processed within 30 seconds (notification $notification_id)."
+  printf 'PASS  Telegram worker processed notification %s.\n' "$notification_id"
+  printf 'Visually confirm the non-sensitive test message in the selected Telegram group.\n'
 else
   printf '\nSafe checks passed. No Telegram message was sent.\n'
   printf 'For a real delivery test, run: ./smoke-test.sh %s TELEGRAM_GROUP_UUID\n' "$base_url"

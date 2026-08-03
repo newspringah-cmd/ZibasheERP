@@ -21,3 +21,5 @@ TestResults/
 *.session-journal
 tools/telegram-groups/output/
 deploy/.env.production
+deploy/.env.n8n
+deploy/backups/

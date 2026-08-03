@@ -66,6 +66,10 @@ builder.Services.AddOptions<TelegramOptions>()
     .Validate(options => !options.Enabled ||
         (!string.IsNullOrWhiteSpace(options.BotToken) &&
          !string.IsNullOrWhiteSpace(options.WebhookSecret) &&
+         (builder.Environment.IsDevelopment() || options.WebhookSecret.Length >= 32) &&
+         (builder.Environment.IsDevelopment() ||
+          (options.WebhookSecret.Length <= 256 && options.WebhookSecret.All(character =>
+              char.IsAsciiLetterOrDigit(character) || character is '_' or '-'))) &&
          (builder.Environment.IsDevelopment() ||
           (long.TryParse(options.AdminChatId, out var adminChatId) && adminChatId != 0)) &&
          options.PollIntervalSeconds is >= 1 and <= 300 &&
