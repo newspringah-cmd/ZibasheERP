@@ -1,0 +1,31 @@
+{
+	admin 127.0.0.1:2019
+	email REPLACE_TLS_EMAIL
+}
+
+(zibashe_security_headers) {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+}
+
+REPLACE_API_DOMAIN {
+	import zibashe_security_headers
+	encode zstd gzip
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy 127.0.0.1:8080
+	log
+}
+
+REPLACE_N8N_DOMAIN {
+	import zibashe_security_headers
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:5678
+	log
+}

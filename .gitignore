@@ -22,4 +22,5 @@ TestResults/
 tools/telegram-groups/output/
 deploy/.env.production
 deploy/.env.n8n
+deploy/Caddyfile
 deploy/backups/

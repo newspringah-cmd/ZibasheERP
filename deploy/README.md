@@ -63,6 +63,18 @@ docker compose -f docker-compose.production.yml ps
 
 دامنه HTTPS باید در reverse proxy به `http://127.0.0.1:8080` متصل شود. فقط پورت‌های `22`، `80` و `443` در Firewall عمومی باز می‌شوند؛ پورت API و دیتابیس نباید مستقیماً روی اینترنت منتشر شوند.
 
+قالب Caddy آماده است و TLS را به‌صورت خودکار مدیریت می‌کند. پس از آنکه DNS هر دو دامنه به IP سرور اشاره کرد، فایل نهایی را بدون واردکردن scheme یا مسیر بسازید:
+
+```bash
+chmod 700 render-caddyfile.sh
+./render-caddyfile.sh api.your-domain.example n8n.your-domain.example ops@your-domain.example
+sudo caddy validate --config "$PWD/Caddyfile" --adapter caddyfile
+sudo install -o root -g root -m 600 Caddyfile /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+فایل تولیدی `deploy/Caddyfile` وارد Git نمی‌شود. Caddy فقط به پورت‌های loopback سرویس‌ها متصل است و WebSocket موردنیاز n8n را نیز از طریق `reverse_proxy` عبور می‌دهد.
+
 پس از تنظیم دامنه، موارد زیر بررسی می‌شوند:
 
 ```text
