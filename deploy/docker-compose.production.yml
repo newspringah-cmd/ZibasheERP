@@ -69,6 +69,8 @@ services:
       - |
         /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "$$MSSQL_SA_PASSWORD" -C -b -r1 -Q "
         IF DB_ID(N'ZibasheERPDb') IS NULL CREATE DATABASE [ZibasheERPDb];
+        "
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "$$MSSQL_SA_PASSWORD" -C -b -r1 -Q "
         IF SUSER_ID(N'zibashe_app') IS NULL
           CREATE LOGIN [zibashe_app] WITH PASSWORD=N'$$MSSQL_APP_PASSWORD', CHECK_POLICY=ON;
         ELSE
