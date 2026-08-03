@@ -76,6 +76,30 @@ public sealed class IssueInvoiceCommandHandler
             now);
         if (notification is not null)
             await _outboxRepository.AddAsync(notification, cancellationToken);
+        var telegramGroup = order.Customer.TelegramGroup;
+        if (telegramGroup is null || telegramGroup.IsDeleted || !telegramGroup.IsActive ||
+            string.IsNullOrWhiteSpace(telegramGroup.ChatId))
+        {
+            await _outboxRepository.AddAsync(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = now,
+                CustomerId = order.CustomerId,
+                OrderId = order.Id,
+                Channel = "Telegram",
+                EventType = "TelegramCustomerGroupRequired",
+                Recipient = "admin",
+                Payload = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    order.Customer.Id,
+                    order.Customer.FullName,
+                    order.Customer.Username,
+                    order.Customer.TelegramId,
+                    order.OrderNumber,
+                    invoice.InvoiceNumber
+                })
+            }, cancellationToken);
+        }
         var integrationEvent = N8nIntegrationEventFactory.Create(
             order,
             "InvoiceIssued",

@@ -45,6 +45,10 @@ public sealed class IssueInvoiceCommandHandlerTests
             value.Channel == "Telegram" && value.EventType == "InvoiceIssued");
         Assert.Contains(outbox.AddedNotifications, value =>
             value.Channel == "N8n" && value.EventType == "InvoiceIssued");
+        var missingGroupAlert = outbox.AddedNotifications.Single(value =>
+            value.Channel == "Telegram" && value.EventType == "TelegramCustomerGroupRequired");
+        Assert.Equal("admin", missingGroupAlert.Recipient);
+        Assert.Contains("ZS-INVOICE-TEST", missingGroupAlert.Payload);
         Assert.True(repository.SaveChangesCalled);
     }
 

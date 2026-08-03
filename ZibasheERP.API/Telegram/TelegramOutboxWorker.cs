@@ -71,10 +71,22 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 var message = TelegramNotificationMessageFormatter.Format(
                     notification.EventType,
                     notification.Payload);
+                var recipient = notification.EventType == "TelegramCustomerGroupRequired"
+                    ? _options.AdminChatId.Trim()
+                    : notification.Recipient;
+                if (string.IsNullOrWhiteSpace(recipient))
+                {
+                    result = new TelegramSendResult(
+                        false,
+                        "Telegram AdminChatId is not configured for the missing-group alert.");
+                }
+                else
+                {
                 result = await _sender.SendAsync(
-                    notification.Recipient,
+                    recipient,
                     message,
                     cancellationToken);
+                }
             }
             catch (JsonException exception)
             {

@@ -6,6 +6,19 @@ namespace ZibasheERP.Application.Tests.Notifications;
 public sealed class TelegramNotificationMessageFormatterTests
 {
     [Fact]
+    public void Format_CustomerGroupRequired_IncludesAccountantInstructions()
+    {
+        var result = TelegramNotificationMessageFormatter.Format(
+            "TelegramCustomerGroupRequired",
+            "{\"FullName\":\"مشتری جدید\",\"Username\":\"new_customer\",\"OrderNumber\":\"ZS-2001\",\"InvoiceNumber\":\"INV-2001\"}");
+
+        Assert.Contains("مشتری جدید", result);
+        Assert.Contains("@new_customer", result);
+        Assert.Contains("ZS-2001", result);
+        Assert.Contains("/connect INV-2001", result);
+    }
+
+    [Fact]
     public void Format_GroupDeliveryTest_ReturnsSafeOperationalMessage()
     {
         var result = TelegramNotificationMessageFormatter.Format(

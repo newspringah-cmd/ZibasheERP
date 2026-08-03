@@ -26,6 +26,21 @@ public static class TelegramNotificationMessageFormatter
                    $"شناسه اعلان: {ReadString(root, "NotificationId") ?? "نامشخص"}\n" +
                    $"خطا: {ReadString(root, "Error") ?? "ثبت نشده"}";
         }
+        if (eventType == "TelegramCustomerGroupRequired")
+        {
+            var username = ReadString(root, "Username");
+            var usernameText = string.IsNullOrWhiteSpace(username)
+                ? "ثبت نشده"
+                : $"@{username.Trim().TrimStart('@')}";
+            var invoiceNumber = ReadString(root, "InvoiceNumber") ?? "نامشخص";
+            return $"🆕 مشتری جدید بدون گروه حسابداری\n" +
+                   $"نام مشتری: {ReadString(root, "FullName") ?? "نامشخص"}\n" +
+                   $"Username: {usernameText}\n" +
+                   $"شماره سفارش: {ReadString(root, "OrderNumber") ?? "نامشخص"}\n" +
+                   $"شماره فاکتور: {invoiceNumber}\n\n" +
+                   $"لطفاً گروه مشتری را بسازید، ربات را اضافه کنید و داخل گروه بفرستید:\n" +
+                   $"/connect {invoiceNumber}";
+        }
         var orderNumber = ReadString(root, "OrderNumber") ?? "نامشخص";
 
         return eventType switch
