@@ -1,4 +1,29 @@
 services:
+  sqlserver-permissions:
+    image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        chown -R 10001:0 /var/opt/mssql/data /var/opt/mssql/log /var/opt/mssql/secrets /var/opt/mssql/backup
+        chmod 770 /var/opt/mssql/data /var/opt/mssql/log /var/opt/mssql/secrets /var/opt/mssql/backup
+    volumes:
+      - sqlserver_data:/var/opt/mssql/data
+      - sqlserver_log:/var/opt/mssql/log
+      - sqlserver_secrets:/var/opt/mssql/secrets
+      - sqlserver_backup:/var/opt/mssql/backup
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
     restart: unless-stopped
@@ -27,6 +52,9 @@ services:
       start_period: 30s
     security_opt:
       - no-new-privileges:true
+    depends_on:
+      sqlserver-permissions:
+        condition: service_completed_successfully
     networks:
       - erp-internal
 
