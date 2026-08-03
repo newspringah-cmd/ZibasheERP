@@ -8,7 +8,24 @@ public interface ITelegramGroupMembershipTracker
 {
     Task TrackAsync(TelegramChatMemberUpdated update, CancellationToken cancellationToken);
     Task MarkUnavailableAsync(string chatId, CancellationToken cancellationToken);
+    Task<TelegramGroupLinkResult> LinkByInvoiceAsync(
+        TelegramChat chat,
+        string invoiceNumber,
+        CancellationToken cancellationToken);
 }
+
+public enum TelegramGroupLinkStatus
+{
+    Linked,
+    AlreadyLinked,
+    InvoiceNotFound,
+    GroupLinkedToAnotherCustomer,
+    CustomerLinkedToAnotherGroup
+}
+
+public sealed record TelegramGroupLinkResult(
+    TelegramGroupLinkStatus Status,
+    string? CustomerName = null);
 
 public sealed class TelegramGroupMembershipTracker(
     AppDbContext context,
@@ -62,6 +79,65 @@ public sealed class TelegramGroupMembershipTracker(
         logger.LogWarning(
             "Telegram group {TelegramGroupChatId} was disabled after a permanent delivery failure.",
             chatId);
+    }
+
+    public async Task<TelegramGroupLinkResult> LinkByInvoiceAsync(
+        TelegramChat chat,
+        string invoiceNumber,
+        CancellationToken cancellationToken)
+    {
+        var normalizedInvoiceNumber = invoiceNumber.Trim();
+        var invoice = await context.Invoices
+            .AsNoTracking()
+            .Include(value => value.Order)
+            .ThenInclude(value => value!.Customer)
+            .FirstOrDefaultAsync(
+                value => value.InvoiceNumber == normalizedInvoiceNumber && !value.IsDeleted,
+                cancellationToken);
+        var customer = invoice?.Order?.Customer;
+        if (customer is null || invoice!.Order!.IsDeleted || customer.IsDeleted)
+            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.InvoiceNotFound);
+
+        var chatId = chat.Id.ToString();
+        var existingByChat = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
+            value => value.ChatId == chatId && !value.IsDeleted,
+            cancellationToken);
+        if (existingByChat is not null && existingByChat.CustomerId != customer.Id)
+            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.GroupLinkedToAnotherCustomer);
+
+        var existingByCustomer = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
+            value => value.CustomerId == customer.Id && !value.IsDeleted,
+            cancellationToken);
+        if (existingByCustomer is not null && existingByCustomer.ChatId != chatId)
+            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup);
+
+        var now = DateTime.UtcNow;
+        var group = existingByChat ?? existingByCustomer;
+        var alreadyLinked = group is not null && group.IsActive && group.ChatId == chatId;
+        if (group is null)
+        {
+            group = new ZibasheERP.Domain.Entities.CustomerTelegramGroup
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = customer.Id,
+                ChatId = chatId,
+                CreatedAt = now,
+                LinkedAt = now
+            };
+            context.CustomerTelegramGroups.Add(group);
+        }
+
+        group.Title = string.IsNullOrWhiteSpace(chat.Title) ? chatId : chat.Title.Trim();
+        group.Username = NormalizeUsername(chat.Username);
+        group.IsActive = true;
+        group.IsDeleted = false;
+        group.LastSeenAt = now;
+        group.UpdatedAt = now;
+        await context.SaveChangesAsync(cancellationToken);
+
+        return new TelegramGroupLinkResult(
+            alreadyLinked ? TelegramGroupLinkStatus.AlreadyLinked : TelegramGroupLinkStatus.Linked,
+            customer.FullName);
     }
 
     private static bool IsGroup(string chatType) =>

@@ -39,6 +39,11 @@ public interface ITelegramMessageSender
         string callbackQueryId,
         string? message = null,
         CancellationToken cancellationToken = default);
+
+    Task<bool> IsChatAdministratorAsync(
+        string chatId,
+        string userId,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record TelegramSendResult(bool IsSuccessful, string? Error = null);
@@ -142,6 +147,36 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             new { callback_query_id = callbackQueryId, text = message },
             cancellationToken);
 
+    public async Task<bool> IsChatAdministratorAsync(
+        string chatId,
+        string userId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_botToken))
+            return false;
+
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync(
+                $"./bot{_botToken}/getChatMember",
+                new { chat_id = chatId, user_id = userId },
+                cancellationToken);
+            var body = await response.Content.ReadFromJsonAsync<TelegramChatMemberApiResponse>(
+                cancellationToken: cancellationToken);
+            return response.IsSuccessStatusCode &&
+                body?.Ok == true &&
+                body.Result?.Status is "creator" or "administrator";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return false;
+        }
+    }
+
     private async Task<TelegramSendResult> SendRequestAsync(
         string method,
         object request,
@@ -178,4 +213,11 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
     private sealed record TelegramApiResponse(
         [property: JsonPropertyName("ok")] bool Ok,
         [property: JsonPropertyName("description")] string? Description);
+
+    private sealed record TelegramChatMemberApiResponse(
+        [property: JsonPropertyName("ok")] bool Ok,
+        [property: JsonPropertyName("result")] TelegramChatMemberApiResult? Result);
+
+    private sealed record TelegramChatMemberApiResult(
+        [property: JsonPropertyName("status")] string Status);
 }

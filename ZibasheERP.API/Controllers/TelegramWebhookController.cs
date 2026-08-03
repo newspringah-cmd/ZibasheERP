@@ -90,6 +90,12 @@ public sealed class TelegramWebhookController : ControllerBase
         if (message?.From is null)
             return Ok();
 
+        if (IsGroup(message.Chat.Type))
+        {
+            await HandleGroupMessageAsync(message, cancellationToken);
+            return Ok();
+        }
+
         if (!string.Equals(message.Chat.Type, "private", StringComparison.OrdinalIgnoreCase))
             return Ok();
 
@@ -702,13 +708,85 @@ public sealed class TelegramWebhookController : ControllerBase
 
     private async Task RequestContactAsync(long chatId, CancellationToken cancellationToken)
     {
-        var result = await _sender.RequestContactAsync(
+        var result = await _sender.SendAsync(
             chatId.ToString(),
-            "به زیباشی خوش آمدید 🌿\nبرای اتصال امن حساب و مشاهده سفارش‌ها، شماره موبایل خود را با دکمه زیر ارسال کنید.",
+            "به زیباشی خوش آمدید 🌿\n" +
+            "حساب شما هنوز به اطلاعات مشتری متصل نشده است. پس از صدور اولین فاکتور، حسابدار گروه اختصاصی شما را می‌سازد و ربات را به آن اضافه می‌کند.\n" +
+            "در حال حاضر نیازی به ارسال شماره موبایل نیست.",
             cancellationToken);
         if (!result.IsSuccessful)
-            _logger.LogWarning("Telegram contact request failed: {Error}", result.Error);
+            _logger.LogWarning("Telegram unlinked-customer guidance failed: {Error}", result.Error);
     }
+
+    private async Task HandleGroupMessageAsync(
+        TelegramMessage message,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseConnectCommand(message.Text, out var invoiceNumber))
+            return;
+
+        if (string.IsNullOrWhiteSpace(invoiceNumber))
+        {
+            await ReplyAsync(
+                message.Chat.Id,
+                "برای اتصال گروه، شماره فاکتور اول را وارد کنید:\n/connect شماره_فاکتور",
+                cancellationToken);
+            return;
+        }
+
+        var isAdministrator = await _sender.IsChatAdministratorAsync(
+            message.Chat.Id.ToString(),
+            message.From!.Id.ToString(),
+            cancellationToken);
+        if (!isAdministrator)
+        {
+            await ReplyAsync(
+                message.Chat.Id,
+                "فقط سازنده یا مدیر این گروه می‌تواند آن را به مشتری متصل کند.",
+                cancellationToken);
+            return;
+        }
+
+        var result = await _groupMembershipTracker.LinkByInvoiceAsync(
+            message.Chat,
+            invoiceNumber,
+            cancellationToken);
+        var response = result.Status switch
+        {
+            TelegramGroupLinkStatus.Linked =>
+                $"گروه با موفقیت به حساب {result.CustomerName} متصل شد ✅\nاز این پس فاکتور و مدارک سفارش در همین گروه ارسال می‌شود.",
+            TelegramGroupLinkStatus.AlreadyLinked =>
+                $"این گروه قبلاً به حساب {result.CustomerName} متصل شده است ✅",
+            TelegramGroupLinkStatus.InvoiceNotFound =>
+                "فاکتوری با این شماره پیدا نشد. شماره فاکتور را دقیقاً مطابق فاکتور وارد کنید.",
+            TelegramGroupLinkStatus.GroupLinkedToAnotherCustomer =>
+                "این گروه قبلاً به مشتری دیگری متصل شده است. برای تغییر اتصال با مدیر سیستم تماس بگیرید.",
+            TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup =>
+                "این مشتری قبلاً گروه دیگری دارد. برای جایگزینی گروه با مدیر سیستم تماس بگیرید.",
+            _ => "اتصال گروه انجام نشد. لطفاً دوباره تلاش کنید."
+        };
+        await ReplyAsync(message.Chat.Id, response, cancellationToken);
+    }
+
+    private static bool TryParseConnectCommand(string? text, out string invoiceNumber)
+    {
+        invoiceNumber = string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var parts = text.Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+        var command = parts[0].Split('@', 2)[0];
+        if (!string.Equals(command, "/connect", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (parts.Length == 2)
+            invoiceNumber = parts[1].Trim();
+        return true;
+    }
+
+    private static bool IsGroup(string chatType) =>
+        string.Equals(chatType, "group", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(chatType, "supergroup", StringComparison.OrdinalIgnoreCase);
 
     private async Task SendOrdersAsync(
         long chatId,
@@ -1374,7 +1452,7 @@ public sealed class TelegramWebhookController : ControllerBase
         LinkTelegramCustomerStatus.CustomerLinkedToAnotherTelegram =>
             "این شماره قبلاً به حساب تلگرام دیگری متصل شده است. لطفاً با پشتیبانی تماس بگیرید.",
         LinkTelegramCustomerStatus.UsernameNotFound =>
-            "Username شما در اطلاعات مشتریان پیدا نشد. لطفاً شماره موبایل خود را با دکمه ربات ارسال کنید.",
+            "Username شما هنوز به اطلاعات مشتری متصل نشده است. پس از اولین فاکتور، حسابدار گروه اختصاصی شما را ایجاد و متصل می‌کند.",
         LinkTelegramCustomerStatus.UsernameLinkedToAnotherTelegram =>
             "این Username قبلاً به حساب تلگرام دیگری متصل شده است. لطفاً با پشتیبانی تماس بگیرید.",
         _ => "اتصال حساب انجام نشد. لطفاً دوباره تلاش کنید."
