@@ -39,6 +39,10 @@ require_min_length() {
 }
 
 require_value 'ConnectionStrings__DefaultConnection'
+require_value 'MSSQL_PID'
+require_min_length 'MSSQL_SA_PASSWORD' 16
+require_min_length 'MSSQL_APP_PASSWORD' 16
+require_value 'MSSQL_MEMORY_LIMIT_MB'
 [[ "$(value_of 'Telegram__Enabled')" == 'true' ]] || fail 'Telegram__Enabled must be true for the production MVP.'
 [[ "$(value_of 'N8n__Enabled')" == 'true' ]] || fail 'N8n__Enabled must be true for the production MVP.'
 require_min_length 'ApiKeys__Admin' 32
@@ -72,6 +76,34 @@ done
 
 n8n_url="$(value_of 'N8n__WebhookUrl')"
 [[ "$n8n_url" == https://* ]] || fail 'N8n__WebhookUrl must use HTTPS.'
+
+mssql_pid="$(value_of 'MSSQL_PID')"
+case "$mssql_pid" in
+  Express|Standard|Enterprise|EnterpriseCore|Web) ;;
+  *) fail 'MSSQL_PID must be Express or an explicitly licensed production edition.' ;;
+esac
+mssql_memory_mb="$(value_of 'MSSQL_MEMORY_LIMIT_MB')"
+[[ "$mssql_memory_mb" =~ ^[0-9]+$ ]] || fail 'MSSQL_MEMORY_LIMIT_MB must be numeric.'
+(( mssql_memory_mb >= 2048 && mssql_memory_mb <= 4096 )) || \
+  fail 'MSSQL_MEMORY_LIMIT_MB must be between 2048 and 4096 on the 8 GiB VPS.'
+mssql_password="$(value_of 'MSSQL_SA_PASSWORD')"
+mssql_app_password="$(value_of 'MSSQL_APP_PASSWORD')"
+[[ "$mssql_password" != "$mssql_app_password" ]] || fail 'SQL Server sa and application passwords must be different.'
+for sql_password in "$mssql_password" "$mssql_app_password"; do
+  [[ "$sql_password" =~ ^[A-Za-z0-9_!@#%^+=-]{16,128}$ ]] || \
+    fail 'SQL Server passwords must be 16-128 characters from the approved shell/SQL-safe character set.'
+  [[ "$sql_password" =~ [A-Z] && "$sql_password" =~ [a-z] &&
+     "$sql_password" =~ [0-9] && "$sql_password" =~ [!@#%^+=_-] ]] || \
+    fail 'SQL Server passwords must contain uppercase, lowercase, number, and symbol characters.'
+done
+connection_string="$(value_of 'ConnectionStrings__DefaultConnection')"
+[[ "$connection_string" == *'Server=sqlserver,1433;'* ]] || \
+  fail 'DefaultConnection must use the private Compose hostname sqlserver.'
+[[ "$connection_string" == *'User Id=zibashe_app;'* ]] || \
+  fail 'DefaultConnection must use the dedicated zibashe_app login.'
+[[ "$connection_string" == *"Password=$mssql_app_password;"* ]] || \
+  fail 'DefaultConnection password must match MSSQL_APP_PASSWORD.'
+[[ "$connection_string" == *'Encrypt=True;'* ]] || fail 'DefaultConnection must enable encryption.'
 
 command -v docker >/dev/null 2>&1 || fail 'Docker is not installed or is not available in PATH.'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is not available.'

@@ -41,11 +41,12 @@ jobs:
           deploy/initialize-production-env.sh deploy/smoke-test-n8n.sh
           deploy/verify-no-secrets.sh deploy/verify-release.sh
           deploy/render-caddyfile.sh deploy/audit-vps.sh
+          deploy/backup-sqlserver.sh deploy/verify-sqlserver-restore.sh
 
       - name: Validate Caddy template rendering
         run: |
-          deploy/render-caddyfile.sh api.zibashe.ir n8n.zibashe.ir ops@zibashe.ir
-          grep -q 'api.zibashe.ir' deploy/Caddyfile
+          deploy/render-caddyfile.sh erp.zibashe.ir n8n.zibashe.ir ops@zibashe.ir
+          grep -q 'erp.zibashe.ir' deploy/Caddyfile
           grep -q 'n8n.zibashe.ir' deploy/Caddyfile
           ! grep -q 'REPLACE_' deploy/Caddyfile
           rm deploy/Caddyfile

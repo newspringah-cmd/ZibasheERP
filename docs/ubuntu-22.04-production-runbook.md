@@ -1,13 +1,13 @@
 # Runbook آماده‌سازی Production روی Ubuntu 22.04
 
-این Runbook برای VPS فرانسه با ۸ GiB RAM و دامنه‌های `api.zibashe.ir` و `n8n.zibashe.ir` است. فرمان‌های این سند باید داخل یک نشست SSH پایدار و مرحله‌به‌مرحله اجرا شوند؛ هیچ Secretی در history شل، Git یا پیام‌رسان قرار نمی‌گیرد.
+این Runbook برای VPS فرانسه با ۸ GiB RAM، ۷۵ GiB دیسک و دامنه‌های `erp.zibashe.ir` و `n8n.zibashe.ir` است. فرمان‌های این سند باید داخل یک نشست SSH پایدار و مرحله‌به‌مرحله اجرا شوند؛ هیچ Secretی در history شل، Git یا پیام‌رسان قرار نمی‌گیرد.
 
 ## وضعیت پیش از شروع
 
 - `n8n.zibashe.ir` در بررسی ۲۰۲۶-۰۸-۰۳ دارای رکورد A و پشت Cloudflare بود.
-- `api.zibashe.ir` در همان بررسی رکورد A نداشت؛ پیش از صدور TLS باید DNS آن ساخته شود.
-- IP عمومی، کاربر SSH، CPU و فضای دیسک هنوز در repository ثبت نشده‌اند.
-- محل SQL Server تا بررسی دیسک و سیاست backup با وضعیت `pending` باقی می‌ماند.
+- `erp.zibashe.ir` و `n8n.zibashe.ir` در Cloudflare ساخته شده‌اند و به یک origin اشاره می‌کنند.
+- IP عمومی، کاربر SSH و CPU عمداً در repository ثبت نشده‌اند.
+- SQL Server 2022 Express روی همین VPS قرار می‌گیرد؛ ۳ GiB سقف RAM دارد، پورت عمومی ندارد و سقف دیتابیس ۱۰ GiB باید پایش شود.
 
 ## ۱. ممیزی اولیه بدون تغییر
 
@@ -16,7 +16,7 @@
 ```bash
 cd ZibasheERP/deploy
 chmod 700 audit-vps.sh
-./audit-vps.sh api.zibashe.ir n8n.zibashe.ir
+./audit-vps.sh erp.zibashe.ir n8n.zibashe.ir
 ```
 
 در سرور خام ممکن است نبود Docker، Caddy یا Caddyfile باعث `NO-GO` شود. خروجی را نگه دارید؛ این فرمان چیزی را تغییر نمی‌دهد.
@@ -82,7 +82,7 @@ sudo systemctl enable --now caddy
 
 ```bash
 cd /PROTECTED_PATH/ZibasheERP/deploy
-./render-caddyfile.sh api.zibashe.ir n8n.zibashe.ir YOUR_TLS_EMAIL
+./render-caddyfile.sh erp.zibashe.ir n8n.zibashe.ir YOUR_TLS_EMAIL
 sudo caddy validate --config "$PWD/Caddyfile" --adapter caddyfile
 sudo install -o root -g root -m 600 Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
@@ -118,12 +118,12 @@ chmod 600 .env.production .env.n8n
 
 ## ۷. ترتیب استقرار و Gateها
 
-1. تعیین محل SQL Server و آزمون backup/restore.
+1. بالا آوردن SQL Server داخلی، ساخت login اختصاصی و آزمون backup/restore واقعی مطابق `deploy/README.md`.
 2. اجرای `./preflight.sh` و ساخت API.
 3. اجرای `./preflight-n8n.sh` و بالا آوردن n8n/PostgreSQL/Gotenberg.
 4. اجرای `./smoke-test-n8n.sh https://n8n.zibashe.ir`.
-5. اجرای `./smoke-test.sh https://api.zibashe.ir` بدون Group UUID.
-6. ثبت Webhook با `./register-telegram-webhook.sh https://api.zibashe.ir`.
+5. اجرای `./smoke-test.sh https://erp.zibashe.ir` بدون Group UUID.
+6. ثبت Webhook با `./register-telegram-webhook.sh https://erp.zibashe.ir`.
 7. Import گروه‌ها ابتدا به‌صورت dry-run.
 8. فعال‌سازی یک گروه داخلی و اجرای smoke test واقعی با UUID همان گروه.
 9. ساخت و آزمایش سه workflow n8n و سپس پایلوت ۲۴ ساعته.
@@ -131,9 +131,9 @@ chmod 600 .env.production .env.n8n
 در پایان:
 
 ```bash
-./audit-vps.sh api.zibashe.ir n8n.zibashe.ir
-curl --fail --silent --show-error https://api.zibashe.ir/health/live
-curl --fail --silent --show-error https://api.zibashe.ir/health/ready
+./audit-vps.sh erp.zibashe.ir n8n.zibashe.ir
+curl --fail --silent --show-error https://erp.zibashe.ir/health/live
+curl --fail --silent --show-error https://erp.zibashe.ir/health/ready
 ```
 
 خروجی `GO` شرط لازم است، اما مشاهده پیام واقعی گروه، PDF فاکتور، عکس دکانت و رسید پستی همچنان بخش اجباری پذیرش End-to-End است.

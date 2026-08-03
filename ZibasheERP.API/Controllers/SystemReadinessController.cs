@@ -17,6 +17,7 @@ namespace ZibasheERP.API.Controllers;
 public sealed class SystemReadinessController(
     AppDbContext context,
     IHostEnvironment environment,
+    IConfiguration configuration,
     IOptions<TelegramOptions> telegramOptions,
     IOptions<N8nOptions> n8nOptions,
     IOptions<ApiKeyOptions> apiKeyOptions) : ControllerBase
@@ -31,6 +32,8 @@ public sealed class SystemReadinessController(
             return Ok(new SystemReadinessResponse(
                 environment.EnvironmentName,
                 false,
+                null,
+                false,
                 Array.Empty<string>(),
                 IsTelegramConfigured(telegramOptions.Value, environment.IsDevelopment()),
                 IsN8nConfigured(n8nOptions.Value, environment.IsDevelopment()),
@@ -44,6 +47,15 @@ public sealed class SystemReadinessController(
         var pendingMigrations = (await context.Database
                 .GetPendingMigrationsAsync(cancellationToken))
             .ToArray();
+        var databaseSizeMiB = await context.Database
+            .SqlQueryRaw<decimal>(
+                "SELECT CAST(SUM(size) * 8.0 / 1024 AS decimal(18,2)) AS [Value] FROM sys.database_files")
+            .SingleAsync(cancellationToken);
+        var databaseCapacityReady = !string.Equals(
+                configuration["MSSQL_PID"],
+                "Express",
+                StringComparison.OrdinalIgnoreCase) ||
+            databaseSizeMiB < 8192m;
         var totalCustomers = await context.Customers
             .AsNoTracking()
             .CountAsync(customer => !customer.IsDeleted, cancellationToken);
@@ -85,6 +97,7 @@ public sealed class SystemReadinessController(
             pendingNotifications);
         var decision = ProductionReadinessEvaluator.Evaluate(new ProductionReadinessFacts(
             true,
+            databaseCapacityReady,
             pendingMigrations.Length,
             telegramConfigured,
             n8nConfigured,
@@ -98,6 +111,8 @@ public sealed class SystemReadinessController(
         return Ok(new SystemReadinessResponse(
             environment.EnvironmentName,
             true,
+            databaseSizeMiB,
+            databaseCapacityReady,
             pendingMigrations,
             telegramConfigured,
             n8nConfigured,
@@ -129,6 +144,8 @@ public sealed class SystemReadinessController(
 public sealed record SystemReadinessResponse(
     string Environment,
     bool DatabaseReachable,
+    decimal? DatabaseSizeMiB,
+    bool DatabaseCapacityReady,
     IReadOnlyCollection<string> PendingMigrations,
     bool TelegramConfigured,
     bool N8nConfigured,

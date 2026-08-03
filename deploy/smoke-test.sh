@@ -60,11 +60,15 @@ import sys
 
 with open(sys.argv[1], encoding='utf-8') as source:
     report = json.load(source)
-required = ('environment', 'databaseReachable', 'telegramConfigured',
+required = ('environment', 'databaseReachable', 'databaseSizeMiB',
+            'databaseCapacityReady', 'telegramConfigured',
             'n8nConfigured', 'apiKeysConfigured', 'readyForPilot')
 missing = [name for name in required if name not in report]
 if missing:
     raise SystemExit('Smoke test failed: readiness fields missing: ' + ', '.join(missing))
+if not report['databaseCapacityReady']:
+    raise SystemExit('Smoke test failed: SQL Server Express database reached the 8 GiB operational threshold.')
+print('INFO  Database size (MiB):', report['databaseSizeMiB'])
 print('INFO  Ready for pilot:', report['readyForPilot'])
 PY
 fi

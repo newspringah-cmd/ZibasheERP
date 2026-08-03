@@ -2,7 +2,9 @@
 
 این پیکربندی API را به‌صورت non-root، فقط روی `127.0.0.1:8080` و پشت reverse proxy اجرا می‌کند. SQL Server و n8n در این Compose ایجاد نمی‌شوند تا پس از مشخص‌شدن منابع VPS، محل دیتابیس و معماری backup آگاهانه انتخاب شوند.
 
-مشخصات عمومی مقصد Production در `production-target.json` ثبت شده است: VPS فرانسه، Ubuntu 22.04 LTS با ۸ GiB RAM، دامنه API برابر `api.zibashe.ir` و دامنه n8n برابر `n8n.zibashe.ir`. این فایل عمداً هیچ IP، نام کاربری، Token، Secret یا Connection String ندارد. محل SQL Server تا مشخص‌شدن فضای دیسک و سیاست backup همچنان `pending` است.
+مشخصات عمومی مقصد Production در `production-target.json` ثبت شده است: VPS فرانسه، Ubuntu 22.04 LTS با ۸ GiB RAM و ۷۵ GiB دیسک، دامنه API برابر `erp.zibashe.ir` و دامنه n8n برابر `n8n.zibashe.ir`. این فایل عمداً هیچ IP، نام کاربری، Token، Secret یا Connection String ندارد. SQL Server 2022 Express روی همان VPS اجرا می‌شود، ۳ GiB سقف حافظه دارد و سقف اندازه هر دیتابیس آن ۱۰ GiB است.
+
+SQL Server با image ثابت `2022-CU26-ubuntu-22.04` و چهار volume مستقل data/log/secrets/backup اجرا می‌شود و هیچ host port ندارد. سرویس init، دیتابیس و login مستقل `zibashe_app` را idempotent می‌سازد؛ API با `sa` متصل نمی‌شود. انتخاب `Express` به معنی پذیرش سقف ۱۰ GiB برای هر دیتابیس است و پیش از رسیدن به ۸ GiB باید برنامه ارتقا به Edition دارای مجوز تصویب شود.
 
 Runbook مرحله‌به‌مرحله نصب و ایمن‌سازی این سرور در `../docs/ubuntu-22.04-production-runbook.md` قرار دارد. فرمان‌های تغییر سیستم داخل آن خودکار اجرا نمی‌شوند و باید پس از snapshot و کنترل دسترسی SSH مرحله‌ای اجرا شوند.
 
@@ -63,6 +65,18 @@ docker compose -f docker-compose.production.yml ps
 
 در Production، API پیش از پذیرش درخواست‌ها migrationهای EF Core را اعمال می‌کند. قبل از اولین اجرا و هر ارتقا از دیتابیس backup بگیرید.
 
+### Backup و restore واقعی SQL Server
+
+مسیر backup روی host باید خارج repository، فقط برای کاربر عملیاتی و با mode برابر `700` ساخته شود:
+
+```bash
+sudo install -d -m 700 -o "$USER" -g "$USER" /var/backups/zibashe/sqlserver
+./backup-sqlserver.sh /var/backups/zibashe/sqlserver
+./verify-sqlserver-restore.sh /var/backups/zibashe/sqlserver/zibashe-YYYYMMDDTHHMMSSZ.bak
+```
+
+فرمان اول backup را با `CHECKSUM` می‌سازد و `RESTORE VERIFYONLY` اجرا می‌کند. فرمان دوم همان فایل را واقعاً با نام `ZibasheERPRestoreVerification` بازیابی، `DBCC CHECKDB` اجرا و سپس فقط دیتابیس موقت را حذف می‌کند. موفقیت هر دو اسکریپت پیش از migration و پایلوت اجباری است. فایل backup نهایی mode `600` دارد؛ نگهداری خارج سرور و رمزگذاری آن همچنان ضروری است.
+
 ## Reverse proxy
 
 دامنه HTTPS باید در reverse proxy به `http://127.0.0.1:8080` متصل شود. فقط پورت‌های `22`، `80` و `443` در Firewall عمومی باز می‌شوند؛ پورت API و دیتابیس نباید مستقیماً روی اینترنت منتشر شوند.
@@ -71,7 +85,7 @@ docker compose -f docker-compose.production.yml ps
 
 ```bash
 chmod 700 render-caddyfile.sh
-./render-caddyfile.sh api.zibashe.ir n8n.zibashe.ir YOUR_TLS_EMAIL
+./render-caddyfile.sh erp.zibashe.ir n8n.zibashe.ir YOUR_TLS_EMAIL
 sudo caddy validate --config "$PWD/Caddyfile" --adapter caddyfile
 sudo install -o root -g root -m 600 Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
@@ -81,9 +95,11 @@ sudo systemctl reload caddy
 
 پس از نصب Docker و Caddy و ساخت Caddyfile، ممیزی فقط‌خواندنی VPS را اجرا کنید. این ابزار هیچ بسته، Firewall یا تنظیم سیستمی را تغییر نمی‌دهد و کمبود فضای دیسک/RAM، عدم همگام‌سازی ساعت، DNS، سرویس‌ها و انتشار ناخواسته پورت‌های `1433`، `5432`، `5678` و `8080` را بررسی می‌کند:
 
+دامنه `portainer.zibashe.ir` جزو endpointهای عمومی ERP نیست. پورت‌های مدیریتی `9000` و `9443` نیز در ممیزی کنترل می‌شوند و نباید روی `0.0.0.0` یا اینترنت bind باشند. اگر پنل لازم است، باید پشت HTTPS و Cloudflare Access/محدودیت هویتی قرار گیرد؛ Orange-cloud به‌تنهایی جایگزین احراز هویت پنل نیست.
+
 ```bash
 chmod 700 audit-vps.sh
-./audit-vps.sh api.zibashe.ir n8n.zibashe.ir
+./audit-vps.sh erp.zibashe.ir n8n.zibashe.ir
 ```
 
 پیش از ادامه استقرار، خروجی نهایی باید `GO` باشد.

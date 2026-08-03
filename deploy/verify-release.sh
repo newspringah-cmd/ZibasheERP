@@ -31,11 +31,12 @@ python3 -m json.tool integrations/n8n/contracts/event-envelope.schema.json >/dev
 python3 -m json.tool integrations/n8n/contracts/artifact-callback.schema.json >/dev/null
 python3 -m json.tool integrations/n8n/contracts/delivery-failure.schema.json >/dev/null
 python3 integrations/n8n/tests/contracts.test.py
+python3 deploy/tests/production-target.test.py
 node --check integrations/n8n/code/build-invoice-html.js
 node --check integrations/n8n/code/validate-event-metadata.js
 node integrations/n8n/tests/build-invoice-html.test.js
 node integrations/n8n/tests/validate-event-metadata.test.js
-pass 'n8n contracts and executable Code nodes'
+pass 'production inventory, n8n contracts, and executable Code nodes'
 
 dotnet restore ZibasheERP.slnx -p:NuGetAudit=false --ignore-failed-sources
 dotnet build ZibasheERP.slnx --configuration Release --no-restore --warnaserror

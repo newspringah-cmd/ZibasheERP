@@ -31,6 +31,19 @@ public sealed class ProductionReadinessEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_WhenDatabaseCapacityThresholdIsExceeded_BlocksPilot()
+    {
+        var decision = ProductionReadinessEvaluator.Evaluate(Facts(
+            totalCustomers: 1,
+            mappedGroups: 1,
+            activeGroups: 1,
+            databaseCapacityReady: false));
+
+        Assert.False(decision.ReadyForPilot);
+        Assert.False(decision.ReadyForFullRollout);
+    }
+
+    [Fact]
     public void Evaluate_WithEveryCustomerActive_AllowsFullRollout()
     {
         var decision = ProductionReadinessEvaluator.Evaluate(Facts(
@@ -46,8 +59,10 @@ public sealed class ProductionReadinessEvaluatorTests
         int totalCustomers,
         int mappedGroups,
         int activeGroups,
-        int unresolvedFailures = 0) => new(
+        int unresolvedFailures = 0,
+        bool databaseCapacityReady = true) => new(
             DatabaseReachable: true,
+            DatabaseCapacityReady: databaseCapacityReady,
             PendingMigrationCount: 0,
             TelegramConfigured: true,
             N8nConfigured: true,

@@ -82,10 +82,10 @@ fi
 
 if command -v ss >/dev/null 2>&1; then
   exposed="$({ ss -H -ltn 2>/dev/null || true; } | awk '
-    $4 ~ /(^|:)(1433|5432|5678|8080)$/ &&
+    $4 ~ /(^|:)(1433|5432|5678|8080|9000|9443)$/ &&
     $4 !~ /^(127\.0\.0\.1|\[::1\]):/ { print $4 }' | sort -u)"
   if [[ -z "$exposed" ]]; then
-    pass 'database, API, and n8n internal ports are not publicly bound'
+    pass 'database, API, n8n, and Portainer internal ports are not publicly bound'
   else
     fail "internal ports have non-loopback listeners: $exposed"
   fi

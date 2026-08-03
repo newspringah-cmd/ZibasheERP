@@ -2,6 +2,7 @@ namespace ZibasheERP.Application.Operations;
 
 public sealed record ProductionReadinessFacts(
     bool DatabaseReachable,
+    bool DatabaseCapacityReady,
     int PendingMigrationCount,
     bool TelegramConfigured,
     bool N8nConfigured,
@@ -36,6 +37,7 @@ public static class ProductionReadinessEvaluator
             throw new ArgumentException("Group readiness counts are inconsistent.", nameof(facts));
 
         var readyForPilot = facts.DatabaseReachable &&
+            facts.DatabaseCapacityReady &&
             facts.PendingMigrationCount == 0 &&
             facts.TelegramConfigured &&
             facts.N8nConfigured &&

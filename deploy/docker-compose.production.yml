@@ -1,4 +1,67 @@
 services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: ${MSSQL_PID:?MSSQL_PID is required}
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD is required}
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-3072}
+      MSSQL_DATA_DIR: /var/opt/mssql/data
+      MSSQL_LOG_DIR: /var/opt/mssql/log
+      MSSQL_BACKUP_DIR: /var/opt/mssql/backup
+      TZ: UTC
+    volumes:
+      - sqlserver_data:/var/opt/mssql/data
+      - sqlserver_log:/var/opt/mssql/log
+      - sqlserver_secrets:/var/opt/mssql/secrets
+      - sqlserver_backup:/var/opt/mssql/backup
+    shm_size: 1gb
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" -b -o /dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - erp-internal
+
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
+    restart: "no"
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD is required}
+      MSSQL_APP_PASSWORD: ${MSSQL_APP_PASSWORD:?MSSQL_APP_PASSWORD is required}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "$$MSSQL_SA_PASSWORD" -C -b -r1 -Q "
+        IF DB_ID(N'ZibasheERPDb') IS NULL CREATE DATABASE [ZibasheERPDb];
+        IF SUSER_ID(N'zibashe_app') IS NULL
+          CREATE LOGIN [zibashe_app] WITH PASSWORD=N'$$MSSQL_APP_PASSWORD', CHECK_POLICY=ON;
+        ELSE
+          ALTER LOGIN [zibashe_app] WITH PASSWORD=N'$$MSSQL_APP_PASSWORD';
+        USE [ZibasheERPDb];
+        IF USER_ID(N'zibashe_app') IS NULL CREATE USER [zibashe_app] FOR LOGIN [zibashe_app];
+        IF NOT EXISTS (
+          SELECT 1 FROM sys.database_role_members value
+          JOIN sys.database_principals role_value ON role_value.principal_id = value.role_principal_id
+          JOIN sys.database_principals member_value ON member_value.principal_id = value.member_principal_id
+          WHERE role_value.name = N'db_owner' AND member_value.name = N'zibashe_app'
+        ) ALTER ROLE [db_owner] ADD MEMBER [zibashe_app];
+        "
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - erp-internal
+
   zibashe-api:
     build:
       context: ..
@@ -22,3 +85,20 @@ services:
     cap_drop:
       - ALL
     stop_grace_period: 30s
+    depends_on:
+      sqlserver-init:
+        condition: service_completed_successfully
+    networks:
+      - erp-internal
+      - erp-egress
+
+volumes:
+  sqlserver_data:
+  sqlserver_log:
+  sqlserver_secrets:
+  sqlserver_backup:
+
+networks:
+  erp-internal:
+    internal: true
+  erp-egress:

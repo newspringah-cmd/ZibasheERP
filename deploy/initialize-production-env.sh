@@ -37,6 +37,8 @@ n8n_webhook_secret="$(secret)"
 n8n_postgres_password="$(secret)"
 n8n_encryption_key="$(secret)"
 n8n_runner_token="$(secret)"
+mssql_password="Zb!$(secret)"
+mssql_app_password="Za!$(secret)"
 
 umask 077
 production_temp="$(mktemp "$script_dir/.env.production.XXXXXX")"
@@ -44,6 +46,9 @@ n8n_temp="$(mktemp "$script_dir/.env.n8n.XXXXXX")"
 
 while IFS= read -r line || [[ -n "$line" ]]; do
   case "$line" in
+    MSSQL_SA_PASSWORD=*) printf 'MSSQL_SA_PASSWORD=%s\n' "$mssql_password" ;;
+    MSSQL_APP_PASSWORD=*) printf 'MSSQL_APP_PASSWORD=%s\n' "$mssql_app_password" ;;
+    ConnectionStrings__DefaultConnection=*) printf 'ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=ZibasheERPDb;User Id=zibashe_app;Password=%s;Encrypt=True;TrustServerCertificate=True\n' "$mssql_app_password" ;;
     ApiKeys__Admin=*) printf 'ApiKeys__Admin=%s\n' "$admin_key" ;;
     ApiKeys__TelegramBot=*) printf 'ApiKeys__TelegramBot=%s\n' "$telegram_api_key" ;;
     ApiKeys__N8n=*) printf 'ApiKeys__N8n=%s\n' "$n8n_api_key" ;;
@@ -69,6 +74,8 @@ mv "$n8n_temp" "$n8n_env"
 n8n_temp=""
 unset admin_key telegram_api_key n8n_api_key telegram_webhook_secret
 unset n8n_webhook_secret n8n_postgres_password n8n_encryption_key n8n_runner_token
+unset mssql_password
+unset mssql_app_password
 
 printf 'Production environment files were created with protected random secrets.\n'
-printf 'Complete the remaining REPLACE/CHANGE_ME values, domains, IDs, and connection string before preflight.\n'
+printf 'Complete the remaining external tokens, domains, and IDs before preflight.\n'

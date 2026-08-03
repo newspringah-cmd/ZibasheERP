@@ -13,6 +13,11 @@ fail() {
 }
 
 command -v git >/dev/null 2>&1 || fail 'git is required.'
+[[ "$(git rev-parse --is-inside-work-tree 2>/dev/null || true)" == 'true' ]] || \
+  fail 'the current directory is not an accessible Git worktree.'
+git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$git_root" && "$(cd -- "$git_root" && pwd -P)" == "$(pwd -P)" ]] || \
+  fail 'the script must run from its own repository root, not a parent worktree.'
 
 forbidden_files="$({
   git ls-files --cached --others --exclude-standard -z |

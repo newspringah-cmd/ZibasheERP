@@ -9,7 +9,7 @@
 | Commit SHA | `RECORD_COMMIT_SHA` |
 | شروع پایلوت (UTC) | `YYYY-MM-DDTHH:mm:ssZ` |
 | پایان پایلوت (UTC) | `YYYY-MM-DDTHH:mm:ssZ` |
-| API | `https://api.zibashe.ir` |
+| API | `https://erp.zibashe.ir` |
 | n8n | `https://n8n.zibashe.ir` |
 | اپراتور | `INTERNAL_OPERATOR_REFERENCE` |
 | گروه آزمایشی ERP UUID | `REDACTED_OR_INTERNAL_REFERENCE` |

@@ -33,15 +33,18 @@
 
 ## Gate 2: زیرساخت Production
 
-مقصد ثبت‌شده برای این Gate، Ubuntu 22.04 LTS با ۸ GiB RAM در فرانسه و دامنه‌های `api.zibashe.ir` و `n8n.zibashe.ir` است. پیش از استقرار، هر دو رکورد DNS باید به مسیر عمومی همان VPS/Proxy برسند.
+مقصد ثبت‌شده برای این Gate، Ubuntu 22.04 LTS با ۸ GiB RAM و ۷۵ GiB دیسک در فرانسه و دامنه‌های `erp.zibashe.ir` و `n8n.zibashe.ir` است. پیش از استقرار، هر دو رکورد DNS باید به مسیر عمومی همان VPS/Proxy برسند.
 
 - `deploy/preflight.sh` موفق است.
 - دیتابیس قبل از migration backup دارد.
 - بازیابی backup روی دیتابیس جداگانه عملاً آزمایش شده است.
+- SQL Server فقط روی شبکه داخلی Docker است، API از login اختصاصی استفاده می‌کند و اندازه دیتابیس Express کمتر از ۸ GiB است.
 - فقط پورت‌های 22، 80 و 443 عمومی‌اند؛ API روی loopback قرار دارد.
+- Portainer روی پورت عمومی مستقیم قرار ندارد و دسترسی وب آن، در صورت فعال بودن، با کنترل هویتی مستقل محافظت می‌شود.
 - HTTPS معتبر، health check و log rotation فعال‌اند.
 - `deploy/smoke-test.sh https://API_DOMAIN` تمام مراحل را PASS می‌کند.
 - گزارش `GET /api/system/readiness` برای پایلوت مقدار `readyForPilot: true` دارد.
+- گزارش آمادگی مقدار `databaseCapacityReady: true` دارد و اندازه SQL Server Express را کمتر از ۸ GiB نشان می‌دهد.
 
 ## Gate 3: اتصال تلگرام
 
