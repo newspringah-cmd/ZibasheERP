@@ -1,10 +1,14 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using ZibasheERP.Infrastructure.Persistence;
 
 #nullable disable
 
 namespace ZibasheERP.Infrastructure.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260803070000_AddNotificationOutboxLeasing")]
     public partial class AddNotificationOutboxLeasing : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

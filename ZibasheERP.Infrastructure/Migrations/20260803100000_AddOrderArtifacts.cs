@@ -1,10 +1,14 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using ZibasheERP.Infrastructure.Persistence;
 
 #nullable disable
 
 namespace ZibasheERP.Infrastructure.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260803100000_AddOrderArtifacts")]
     public partial class AddOrderArtifacts : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

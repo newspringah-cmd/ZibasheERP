@@ -1,10 +1,14 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using ZibasheERP.Infrastructure.Persistence;
 
 #nullable disable
 
 namespace ZibasheERP.Infrastructure.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260803080000_AddNotificationRetryBackoff")]
     public partial class AddNotificationRetryBackoff : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

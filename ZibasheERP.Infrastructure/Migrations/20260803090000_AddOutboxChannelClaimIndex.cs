@@ -1,9 +1,13 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using ZibasheERP.Infrastructure.Persistence;
 
 #nullable disable
 
 namespace ZibasheERP.Infrastructure.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260803090000_AddOutboxChannelClaimIndex")]
     public partial class AddOutboxChannelClaimIndex : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)
