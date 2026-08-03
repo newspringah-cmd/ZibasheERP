@@ -1,12 +1,12 @@
 # استقرار API روی VPS
 
-این پیکربندی API را به‌صورت non-root، فقط روی `127.0.0.1:8080` و پشت reverse proxy اجرا می‌کند. SQL Server و n8n در این Compose ایجاد نمی‌شوند تا پس از مشخص‌شدن منابع VPS، محل دیتابیس و معماری backup آگاهانه انتخاب شوند.
+این پیکربندی API را به‌صورت non-root، فقط روی `127.0.0.1:8080` و پشت reverse proxy اجرا می‌کند. SQL Server داخلی در همین Compose قرار دارد؛ n8n و PostgreSQL آن در Compose جداگانه اجرا می‌شوند تا چرخه ارتقا و backup مستقلی داشته باشند.
 
-مشخصات عمومی مقصد Production در `production-target.json` ثبت شده است: VPS فرانسه، Ubuntu 22.04 LTS با ۸ GiB RAM و ۷۵ GiB دیسک، دامنه API برابر `erp.zibashe.ir` و دامنه n8n برابر `n8n.zibashe.ir`. این فایل عمداً هیچ IP، نام کاربری، Token، Secret یا Connection String ندارد. SQL Server 2022 Express روی همان VPS اجرا می‌شود، ۳ GiB سقف حافظه دارد و سقف اندازه هر دیتابیس آن ۱۰ GiB است.
+مشخصات عمومی مقصد Production در `production-target.json` ثبت شده است: VPS فرانسه، Ubuntu 24.04 LTS با ۸ GiB RAM، ۲ GiB Swap و ۷۵ GiB دیسک، دامنه API برابر `erp.zibashe.ir` و دامنه n8n برابر `n8n.zibashe.ir`. این VPS از قبل Amnezia VPN و Portainer دارد؛ پورت UDP مربوط به VPN عمداً عمومی می‌ماند، اما پنل‌های مدیریتی فقط روی loopback قرار می‌گیرند. این فایل عمداً هیچ IP، نام کاربری، Token، Secret یا Connection String ندارد. SQL Server 2022 Express روی همان VPS اجرا می‌شود، ۳ GiB سقف حافظه دارد و سقف اندازه هر دیتابیس آن ۱۰ GiB است.
 
 SQL Server با image ثابت `2022-CU26-ubuntu-22.04` و چهار volume مستقل data/log/secrets/backup اجرا می‌شود و هیچ host port ندارد. سرویس init، دیتابیس و login مستقل `zibashe_app` را idempotent می‌سازد؛ API با `sa` متصل نمی‌شود. انتخاب `Express` به معنی پذیرش سقف ۱۰ GiB برای هر دیتابیس است و پیش از رسیدن به ۸ GiB باید برنامه ارتقا به Edition دارای مجوز تصویب شود.
 
-Runbook مرحله‌به‌مرحله نصب و ایمن‌سازی این سرور در `../docs/ubuntu-22.04-production-runbook.md` قرار دارد. فرمان‌های تغییر سیستم داخل آن خودکار اجرا نمی‌شوند و باید پس از snapshot و کنترل دسترسی SSH مرحله‌ای اجرا شوند.
+Runbook مرحله‌به‌مرحله نصب، مهاجرت سرویس‌های موجود و ایمن‌سازی این سرور در `../docs/ubuntu-24.04-production-runbook.md` قرار دارد. فرمان‌های تغییر سیستم داخل آن خودکار اجرا نمی‌شوند و باید پس از snapshot، backup معتبر و کنترل دسترسی SSH مرحله‌ای اجرا شوند.
 
 ## آماده‌سازی
 

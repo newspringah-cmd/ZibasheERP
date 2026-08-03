@@ -9,6 +9,7 @@ required = {
     "region",
     "operatingSystem",
     "ramGiB",
+    "swapGiB",
     "diskGiB",
     "apiDomain",
     "apiOrigin",
@@ -20,8 +21,9 @@ required = {
 }
 missing = required.difference(target)
 assert not missing, f"missing production target fields: {sorted(missing)}"
-assert target["operatingSystem"] == "Ubuntu 22.04 LTS"
+assert target["operatingSystem"] == "Ubuntu 24.04 LTS"
 assert target["ramGiB"] >= 8
+assert target["swapGiB"] >= 2
 assert target["diskGiB"] == 75
 assert target["apiDomain"] == "erp.zibashe.ir"
 assert target["n8nDomain"] == "n8n.zibashe.ir"
@@ -29,7 +31,9 @@ assert target["apiDomain"] != target["n8nDomain"]
 assert target["apiOrigin"] == f'https://{target["apiDomain"]}'
 assert target["n8nOrigin"] == f'https://{target["n8nDomain"]}'
 assert set(target["publicPorts"]) == {22, 80, 443}
-assert set(target["internalLoopbackPorts"]) == {5678, 8080}
+assert set(target["internalLoopbackPorts"]) == {5678, 8080, 9443}
+assert set(target["additionalPublicUdpPorts"]) == {49694}
+assert set(target["cohostedServices"]) == {"Amnezia VPN", "Portainer"}
 assert target["databasePlacement"] == "local-vps"
 assert target["databaseEngine"] == "SQL Server 2022 Express"
 assert target["databaseMemoryLimitMiB"] == 3072

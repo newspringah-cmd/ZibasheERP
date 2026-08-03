@@ -33,7 +33,7 @@
 
 ## Gate 2: زیرساخت Production
 
-مقصد ثبت‌شده برای این Gate، Ubuntu 22.04 LTS با ۸ GiB RAM و ۷۵ GiB دیسک در فرانسه و دامنه‌های `erp.zibashe.ir` و `n8n.zibashe.ir` است. پیش از استقرار، هر دو رکورد DNS باید به مسیر عمومی همان VPS/Proxy برسند.
+مقصد ثبت‌شده برای این Gate، Ubuntu 24.04 LTS با ۸ GiB RAM، ۲ GiB Swap و ۷۵ GiB دیسک در فرانسه و دامنه‌های `erp.zibashe.ir` و `n8n.zibashe.ir` است. Amnezia VPN و Portainer از قبل روی همین VPS قرار دارند و مهاجرت نباید داده یا دسترسی VPN را مختل کند. پیش از استقرار، هر دو رکورد DNS باید به مسیر عمومی همان VPS/Proxy برسند.
 
 - `deploy/preflight.sh` موفق است.
 - دیتابیس قبل از migration backup دارد.

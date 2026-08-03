@@ -1,6 +1,6 @@
-# Runbook آماده‌سازی Production روی Ubuntu 22.04
+# Runbook آماده‌سازی Production روی Ubuntu 24.04
 
-این Runbook برای VPS فرانسه با ۸ GiB RAM، ۷۵ GiB دیسک و دامنه‌های `erp.zibashe.ir` و `n8n.zibashe.ir` است. فرمان‌های این سند باید داخل یک نشست SSH پایدار و مرحله‌به‌مرحله اجرا شوند؛ هیچ Secretی در history شل، Git یا پیام‌رسان قرار نمی‌گیرد.
+این Runbook برای VPS فرانسه با ۸ GiB RAM، ۲ GiB Swap، ۷۵ GiB دیسک و دامنه‌های `erp.zibashe.ir` و `n8n.zibashe.ir` است. فرمان‌های این سند باید داخل یک نشست SSH پایدار و مرحله‌به‌مرحله اجرا شوند؛ هیچ Secretی در history شل، Git یا پیام‌رسان قرار نمی‌گیرد.
 
 ## وضعیت پیش از شروع
 
@@ -8,6 +8,8 @@
 - `erp.zibashe.ir` و `n8n.zibashe.ir` در Cloudflare ساخته شده‌اند و به یک origin اشاره می‌کنند.
 - IP عمومی، کاربر SSH و CPU عمداً در repository ثبت نشده‌اند.
 - SQL Server 2022 Express روی همین VPS قرار می‌گیرد؛ ۳ GiB سقف RAM دارد، پورت عمومی ندارد و سقف دیتابیس ۱۰ GiB باید پایش شود.
+- Amnezia VPN، Portainer و یک stack قدیمی n8n از قبل روی VPS وجود دارند. حذف یا جایگزینی آن‌ها بدون backup و آزمون بازیابی ممنوع است.
+- UDP مربوط به VPN عمداً عمومی است؛ `5678`، `8000` و `9443` نباید روی رابط عمومی TCP در دسترس باشند.
 
 ## ۱. ممیزی اولیه بدون تغییر
 
@@ -47,7 +49,7 @@ sudo chmod a+r /etc/apt/keyrings/docker.asc
 sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<'EOF'
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
-Suites: jammy
+Suites: noble
 Components: stable
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/docker.asc
@@ -103,9 +105,23 @@ sudo ufw enable
 sudo ufw status verbose
 ```
 
-Docker ممکن است برای پورت‌های منتشرشده قواعدی خارج از انتظار UFW بسازد؛ به همین دلیل Compose این پروژه `8080` و `5678` را صریحاً فقط روی `127.0.0.1` bind می‌کند و PostgreSQL n8n هیچ پورت host ندارد. پس از بالا آمدن سرویس‌ها `audit-vps.sh` باید این invariant را دوباره بررسی کند.
+Docker ممکن است برای پورت‌های منتشرشده قواعدی خارج از انتظار UFW بسازد؛ به همین دلیل Compose این پروژه `8080` و `5678` را صریحاً فقط روی `127.0.0.1` bind می‌کند و PostgreSQL n8n هیچ پورت host ندارد. بررسی `ss` به‌تنهایی کافی نیست و `audit-vps.sh` علاوه بر listenerهای Host، `docker ps` را نیز برای publish روی `0.0.0.0` و `[::]` کنترل می‌کند.
 
-## ۶. Secretها و فایل‌های محیطی
+Amnezia VPN روی UDP مستقل باقی می‌ماند. هنگام مهاجرت، هیچ قانون Firewall، Compose یا prune نباید شبکه، image یا volume آن را تغییر دهد.
+
+## ۶. حفاظت از سرویس‌های موجود پیش از مهاجرت
+
+پیش از تغییر stack موجود n8n یا Portainer:
+
+1. پورت‌های TCP `5678`، `8000` و `9443` روی رابط عمومی به‌طور موقت در زنجیره `DOCKER-USER` مسدود شوند.
+2. از PostgreSQL n8n با `pg_dump --format=custom` خروجی گرفته و با `pg_restore --list` اعتبار آن کنترل شود.
+3. فایل Compose داخل volume محافظت‌شده Portainer و خود `portainer_data` backup شوند.
+4. checksum فایل‌ها ثبت شود؛ مقدار credential یا environment در خروجی ترمینال و اسکرین‌شات نمایش داده نشود.
+5. stack جدید ابتدا با bindهای loopback و همان encryption key روی داده بازیابی‌شده آزمایش شود.
+
+قانون موقت `DOCKER-USER` جایگزین اصلاح Compose نیست و پس از reboot ماندگار فرض نمی‌شود. وضعیت نهایی باید با `127.0.0.1:5678` برای n8n و در صورت نیاز `127.0.0.1:9443` برای Portainer پیاده شود؛ پورت Edge Agent یعنی `8000` فقط در صورت نیاز مستند و محدود فعال می‌شود.
+
+## ۷. Secretها و فایل‌های محیطی
 
 ```bash
 cd /PROTECTED_PATH/ZibasheERP/deploy
@@ -116,7 +132,7 @@ chmod 600 .env.production .env.n8n
 
 مقادیر `REPLACE_...` فقط داخل همان نشست امن سرور تکمیل می‌شوند. Bot Token، API keyها، رمز دیتابیس و کلید رمزگذاری n8n نباید در command line، Git یا اسکرین‌شات دیده شوند.
 
-## ۷. ترتیب استقرار و Gateها
+## ۸. ترتیب استقرار و Gateها
 
 1. بالا آوردن SQL Server داخلی، ساخت login اختصاصی و آزمون backup/restore واقعی مطابق `deploy/README.md`.
 2. اجرای `./preflight.sh` و ساخت API.

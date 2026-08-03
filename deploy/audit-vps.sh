@@ -25,6 +25,11 @@ if [[ -r /etc/os-release ]]; then
   # shellcheck disable=SC1091
   . /etc/os-release
   info "Operating system: ${PRETTY_NAME:-unknown}"
+  if [[ "${ID:-}" == 'ubuntu' && "${VERSION_ID:-}" == '24.04' ]]; then
+    pass 'host operating system is Ubuntu 24.04 LTS'
+  else
+    fail 'host operating system is not the registered Ubuntu 24.04 LTS target'
+  fi
 else
   fail '/etc/os-release is not readable.'
 fi
@@ -37,10 +42,17 @@ else
 fi
 
 memory_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
-if [[ "$memory_kb" =~ ^[0-9]+$ ]] && (( memory_kb >= 2097152 )); then
-  pass 'at least 2 GiB RAM is installed'
+if [[ "$memory_kb" =~ ^[0-9]+$ ]] && (( memory_kb >= 7340032 )); then
+  pass 'at least 7 GiB usable RAM is installed'
 else
-  fail 'less than 2 GiB RAM is installed'
+  fail 'less than 7 GiB usable RAM is installed'
+fi
+
+swap_kb="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)"
+if [[ "$swap_kb" =~ ^[0-9]+$ ]] && (( swap_kb >= 2097152 )); then
+  pass 'at least 2 GiB swap is configured'
+else
+  fail 'less than 2 GiB swap is configured'
 fi
 
 if command -v timedatectl >/dev/null 2>&1 &&
@@ -82,7 +94,7 @@ fi
 
 if command -v ss >/dev/null 2>&1; then
   exposed="$({ ss -H -ltn 2>/dev/null || true; } | awk '
-    $4 ~ /(^|:)(1433|5432|5678|8080|9000|9443)$/ &&
+    $4 ~ /(^|:)(1433|5432|5678|8000|8080|9000|9443)$/ &&
     $4 !~ /^(127\.0\.0\.1|\[::1\]):/ { print $4 }' | sort -u)"
   if [[ -z "$exposed" ]]; then
     pass 'database, API, n8n, and Portainer internal ports are not publicly bound'
@@ -91,6 +103,16 @@ if command -v ss >/dev/null 2>&1; then
   fi
 else
   fail 'ss is required for listening-port verification'
+fi
+
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  docker_exposed="$(docker ps --format '{{.Ports}}' | tr ',' '\n' | sed 's/^[[:space:]]*//' | \
+    grep -E '(^|[[:space:]])(0\.0\.0\.0|\[::\]):(1433|5432|5678|8080|8000|9000|9443)->' || true)"
+  if [[ -z "$docker_exposed" ]]; then
+    pass 'Docker does not publish database, application, n8n, or management ports publicly'
+  else
+    fail "Docker has public internal-port bindings: $docker_exposed"
+  fi
 fi
 
 if [[ -f "$script_dir/Caddyfile" ]] && command -v caddy >/dev/null 2>&1; then
