@@ -2,6 +2,10 @@
 
 این پیکربندی API را به‌صورت non-root، فقط روی `127.0.0.1:8080` و پشت reverse proxy اجرا می‌کند. SQL Server و n8n در این Compose ایجاد نمی‌شوند تا پس از مشخص‌شدن منابع VPS، محل دیتابیس و معماری backup آگاهانه انتخاب شوند.
 
+مشخصات عمومی مقصد Production در `production-target.json` ثبت شده است: VPS فرانسه، Ubuntu 22.04 LTS با ۸ GiB RAM، دامنه API برابر `api.zibashe.ir` و دامنه n8n برابر `n8n.zibashe.ir`. این فایل عمداً هیچ IP، نام کاربری، Token، Secret یا Connection String ندارد. محل SQL Server تا مشخص‌شدن فضای دیسک و سیاست backup همچنان `pending` است.
+
+Runbook مرحله‌به‌مرحله نصب و ایمن‌سازی این سرور در `../docs/ubuntu-22.04-production-runbook.md` قرار دارد. فرمان‌های تغییر سیستم داخل آن خودکار اجرا نمی‌شوند و باید پس از snapshot و کنترل دسترسی SSH مرحله‌ای اجرا شوند.
+
 ## آماده‌سازی
 
 روی VPS لینوکسی:
@@ -67,13 +71,22 @@ docker compose -f docker-compose.production.yml ps
 
 ```bash
 chmod 700 render-caddyfile.sh
-./render-caddyfile.sh api.your-domain.example n8n.your-domain.example ops@your-domain.example
+./render-caddyfile.sh api.zibashe.ir n8n.zibashe.ir YOUR_TLS_EMAIL
 sudo caddy validate --config "$PWD/Caddyfile" --adapter caddyfile
 sudo install -o root -g root -m 600 Caddyfile /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
 فایل تولیدی `deploy/Caddyfile` وارد Git نمی‌شود. Caddy فقط به پورت‌های loopback سرویس‌ها متصل است و WebSocket موردنیاز n8n را نیز از طریق `reverse_proxy` عبور می‌دهد.
+
+پس از نصب Docker و Caddy و ساخت Caddyfile، ممیزی فقط‌خواندنی VPS را اجرا کنید. این ابزار هیچ بسته، Firewall یا تنظیم سیستمی را تغییر نمی‌دهد و کمبود فضای دیسک/RAM، عدم همگام‌سازی ساعت، DNS، سرویس‌ها و انتشار ناخواسته پورت‌های `1433`، `5432`، `5678` و `8080` را بررسی می‌کند:
+
+```bash
+chmod 700 audit-vps.sh
+./audit-vps.sh api.zibashe.ir n8n.zibashe.ir
+```
+
+پیش از ادامه استقرار، خروجی نهایی باید `GO` باشد.
 
 پس از تنظیم دامنه، موارد زیر بررسی می‌شوند:
 

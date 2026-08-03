@@ -1,0 +1,13 @@
+{
+  "region": "France",
+  "operatingSystem": "Ubuntu 22.04 LTS",
+  "ramGiB": 8,
+  "apiDomain": "api.zibashe.ir",
+  "apiOrigin": "https://api.zibashe.ir",
+  "n8nDomain": "n8n.zibashe.ir",
+  "n8nOrigin": "https://n8n.zibashe.ir",
+  "publicPorts": [22, 80, 443],
+  "internalLoopbackPorts": [5678, 8080],
+  "databasePlacement": "pending",
+  "notes": "This file contains public deployment metadata only. Never add IP addresses, usernames, credentials, tokens, connection strings, or secrets."
+}

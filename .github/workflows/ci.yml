@@ -40,15 +40,21 @@ jobs:
           deploy/backup-n8n.sh deploy/import-telegram-groups.sh
           deploy/initialize-production-env.sh deploy/smoke-test-n8n.sh
           deploy/verify-no-secrets.sh deploy/verify-release.sh
-          deploy/render-caddyfile.sh
+          deploy/render-caddyfile.sh deploy/audit-vps.sh
 
       - name: Validate Caddy template rendering
         run: |
-          deploy/render-caddyfile.sh api.example.com n8n.example.com ops@example.com
-          grep -q 'api.example.com' deploy/Caddyfile
-          grep -q 'n8n.example.com' deploy/Caddyfile
+          deploy/render-caddyfile.sh api.zibashe.ir n8n.zibashe.ir ops@zibashe.ir
+          grep -q 'api.zibashe.ir' deploy/Caddyfile
+          grep -q 'n8n.zibashe.ir' deploy/Caddyfile
           ! grep -q 'REPLACE_' deploy/Caddyfile
           rm deploy/Caddyfile
+
+      - name: Validate public production inventory
+        run: |
+          python3 -m json.tool deploy/production-target.json >/dev/null
+          python3 deploy/tests/production-target.test.py
+          ! grep -Eqi '(password|secret|token|connectionstring|username)[[:space:]]*"?[=:][[:space:]]*[^"[:space:]]+' deploy/production-target.json
 
       - name: Validate production Compose files
         run: |

@@ -33,6 +33,8 @@
 
 ## Gate 2: زیرساخت Production
 
+مقصد ثبت‌شده برای این Gate، Ubuntu 22.04 LTS با ۸ GiB RAM در فرانسه و دامنه‌های `api.zibashe.ir` و `n8n.zibashe.ir` است. پیش از استقرار، هر دو رکورد DNS باید به مسیر عمومی همان VPS/Proxy برسند.
+
 - `deploy/preflight.sh` موفق است.
 - دیتابیس قبل از migration backup دارد.
 - بازیابی backup روی دیتابیس جداگانه عملاً آزمایش شده است.
@@ -83,6 +85,8 @@
 8. اجرای دوباره callbackها یا webhookها داده تکراری ایجاد نمی‌کند.
 
 شواهد باید شامل OrderNumber، EventIdها، زمان ارسال، پاسخ callback و تصویر پیام‌های گروه آزمایشی باشد؛ Token، API key، موبایل، آدرس و اطلاعات مالی در شواهد عمومی پوشانده می‌شوند.
+
+قالب استاندارد و Redaction-safe ثبت این شواهد در `production-pilot-evidence-template.md` قرار دارد. نسخه تکمیل‌شده در repository عمومی Commit نمی‌شود.
 
 ## rollout گروه‌ها
 
