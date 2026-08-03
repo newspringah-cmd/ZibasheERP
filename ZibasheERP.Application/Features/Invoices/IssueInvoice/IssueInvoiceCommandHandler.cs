@@ -71,7 +71,21 @@ public sealed class IssueInvoiceCommandHandler
                 order.Id,
                 order.OrderNumber,
                 invoice.InvoiceNumber,
-                invoice.TotalAmount
+                invoice.PerfumeTotal,
+                invoice.BottleTotal,
+                invoice.TotalAmount,
+                Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
+                {
+                    item.RowNumber,
+                    PerfumeName = item.Perfume?.Name,
+                    PerfumeBrand = item.Perfume?.Brand,
+                    item.RequestedVolumeMl,
+                    item.PerfumeAmount,
+                    item.IsBottleOwner,
+                    BottleName = item.Bottle?.Name,
+                    item.BottlePrice,
+                    item.LineTotal
+                })
             },
             now);
         if (notification is not null)

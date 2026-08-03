@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace ZibasheERP.Application.Notifications;
@@ -46,7 +47,7 @@ public static class TelegramNotificationMessageFormatter
         return eventType switch
         {
             "OrderPaid" => $"پرداخت سفارش {orderNumber} با موفقیت تأیید شد.",
-            "InvoiceIssued" => $"فاکتور {ReadString(root, "InvoiceNumber") ?? string.Empty} برای سفارش {orderNumber} به مبلغ {ReadDecimal(root, "TotalAmount"):N0} تومان صادر شد.",
+            "InvoiceIssued" => FormatInvoice(root, orderNumber),
             "OrderDecanted" => $"دکانت سفارش {orderNumber} انجام شد و سفارش در حال آماده‌سازی است.",
             "OrderReadyToShip" => $"سفارش {orderNumber} آماده ارسال است.",
             "OrderCancelled" => $"سفارش {orderNumber} لغو شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
@@ -56,6 +57,50 @@ public static class TelegramNotificationMessageFormatter
             "PaymentRefunded" => $"مبلغ {ReadDecimal(root, "Amount"):N0} تومان برای سفارش {orderNumber} بازپرداخت شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
             _ => $"وضعیت سفارش {orderNumber} به‌روزرسانی شد."
         };
+    }
+
+    private static string FormatInvoice(JsonElement root, string orderNumber)
+    {
+        var builder = new StringBuilder()
+            .AppendLine("🧾 فاکتور فروش زیباشی")
+            .AppendLine($"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}")
+            .AppendLine($"شماره سفارش: {orderNumber}")
+            .AppendLine();
+
+        if (root.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                var rowNumber = ReadInt(item, "RowNumber");
+                var brand = ReadString(item, "PerfumeBrand");
+                var name = ReadString(item, "PerfumeName");
+                var perfume = string.Join(' ', new[] { brand, name }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+                if (string.IsNullOrWhiteSpace(perfume))
+                    perfume = "عطر";
+
+                builder.AppendLine(
+                    $"{rowNumber}. {perfume} — {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر — " +
+                    $"{ReadDecimal(item, "LineTotal"):N0} تومان");
+
+                if (builder.Length > 3200)
+                {
+                    builder.AppendLine("… ادامه ردیف‌ها در نسخه PDF");
+                    break;
+                }
+            }
+
+            builder.AppendLine();
+        }
+
+        builder
+            .AppendLine($"جمع عطر: {ReadDecimal(root, "PerfumeTotal"):N0} تومان")
+            .AppendLine($"جمع شیشه: {ReadDecimal(root, "BottleTotal"):N0} تومان")
+            .AppendLine($"مبلغ نهایی: {ReadDecimal(root, "TotalAmount"):N0} تومان")
+            .AppendLine()
+            .Append("نسخه PDF همین فاکتور نیز در گروه ارسال می‌شود.");
+
+        return builder.ToString();
     }
 
     private static string FormatShipped(JsonElement root, string orderNumber)
@@ -72,6 +117,11 @@ public static class TelegramNotificationMessageFormatter
 
     private static decimal ReadDecimal(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var value) && value.TryGetDecimal(out var result)
+            ? result
+            : 0;
+
+    private static int ReadInt(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var result)
             ? result
             : 0;
 }
