@@ -153,7 +153,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         try
         {
             using var response = await _httpClient.PostAsJsonAsync(
-                $"bot{_botToken}/{method}",
+                $"./bot{_botToken}/{method}",
                 request,
                 cancellationToken);
             var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
