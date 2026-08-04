@@ -60,6 +60,7 @@ builder.Services.AddScoped<IAdminNotificationRepository, NotificationOutboxRepos
 builder.Services.AddScoped<IAddressRepository, AddressRepository>();
 builder.Services.AddScoped<ITelegramOrderDraftRepository, TelegramOrderDraftRepository>();
 builder.Services.AddScoped<IOrderArtifactRepository, OrderArtifactRepository>();
+builder.Services.AddScoped<IInvoicePaymentAccountRepository, InvoicePaymentAccountRepository>();
 
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))

@@ -61,8 +61,12 @@ public static class TelegramNotificationMessageFormatter
 
     private static string FormatInvoice(JsonElement root, string orderNumber)
     {
+        var username = ReadString(root, "CustomerUsername");
+        var title = string.IsNullOrWhiteSpace(username)
+            ? "فاکتور عطر"
+            : $"فاکتور عطر — @{username.Trim().TrimStart('@')}";
         var builder = new StringBuilder()
-            .AppendLine("🧾 فاکتور فروش زیباشی")
+            .AppendLine($"🧾 {title}")
             .AppendLine($"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}")
             .AppendLine($"شماره سفارش: {orderNumber}")
             .AppendLine();
@@ -96,11 +100,33 @@ public static class TelegramNotificationMessageFormatter
         builder
             .AppendLine($"جمع عطر: {ReadDecimal(root, "PerfumeTotal"):N0} تومان")
             .AppendLine($"جمع شیشه: {ReadDecimal(root, "BottleTotal"):N0} تومان")
-            .AppendLine($"مبلغ نهایی: {ReadDecimal(root, "TotalAmount"):N0} تومان")
-            .AppendLine()
+            .AppendLine($"💰 مبلغ قابل پرداخت: {ReadDecimal(root, "TotalAmount"):N0} تومان")
+            .AppendLine();
+
+        if (root.TryGetProperty("PaymentAccounts", out var accounts) && accounts.ValueKind == JsonValueKind.Array)
+        {
+            builder.AppendLine("شماره کارت جهت واریز:");
+            foreach (var account in accounts.EnumerateArray())
+            {
+                builder.AppendLine(FormatCard(ReadString(account, "CardNumber") ?? string.Empty));
+                builder.AppendLine($"{ReadString(account, "AccountHolder")} — بانک {ReadString(account, "BankName")}");
+            }
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("با تشکر از خرید شما")
+            .AppendLine("مهلت پرداخت فاکتور: ۲۴ ساعت")
             .Append("نسخه PDF همین فاکتور نیز در گروه ارسال می‌شود.");
 
         return builder.ToString();
+    }
+
+    private static string FormatCard(string value)
+    {
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+        return digits.Length == 16
+            ? string.Join('-', Enumerable.Range(0, 4).Select(i => digits.Substring(i * 4, 4)))
+            : value;
     }
 
     private static string FormatShipped(JsonElement root, string orderNumber)

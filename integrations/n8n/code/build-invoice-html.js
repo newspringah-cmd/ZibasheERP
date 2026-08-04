@@ -28,6 +28,9 @@ if (!event.data.Delivery?.ChatId) {
 const invoice = event.data;
 const customer = invoice.Customer ?? {};
 const items = Array.isArray(invoice.Items) ? invoice.Items : [];
+const paymentAccounts = Array.isArray(invoice.PaymentAccounts) ? invoice.PaymentAccounts.slice(0, 4) : [];
+const username = String(customer.Username ?? '').trim().replace(/^@/, '');
+const invoiceTitle = username ? `فاکتور عطر — @${username}` : `فاکتور عطر — ${customer.FullName ?? ''}`;
 if (items.length === 0) {
   throw new Error('Invoice has no items.');
 }
@@ -41,6 +44,12 @@ const rows = items.map((item) => `
     <td>${item.IsBottleOwner ? escapeHtml(item.BottleName || 'شیشه') : '—'}</td>
     <td>${money(item.LineTotal)}</td>
   </tr>`).join('');
+
+const accountRows = paymentAccounts.map((account) => `
+  <div class="account">
+    <strong>${escapeHtml(account.CardNumber)}</strong>
+    <span>${escapeHtml(account.AccountHolder)} — بانک ${escapeHtml(account.BankName)}</span>
+  </div>`).join('');
 
 const invoiceHtml = `<!doctype html>
 <html lang="fa" dir="rtl">
@@ -62,12 +71,14 @@ const invoiceHtml = `<!doctype html>
     .totals { width: 48%; margin: 18px 0 0 auto; }
     .totals div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #ddd; }
     .totals .final { color: #8b5e3c; font-size: 15px; font-weight: 700; border-bottom: 0; }
+    .payment { margin-top: 22px; padding: 14px; background: #faf6f1; border-radius: 8px; }
+    .account { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #ddd; }
     footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #ddd; color: #666; text-align: center; }
   </style>
 </head>
 <body>
   <header>
-    <div><div class="brand">زیباشه</div><div>فاکتور فروش</div></div>
+    <div><div class="brand">زیباشی</div><div>${escapeHtml(invoiceTitle)}</div></div>
     <div><h1>${escapeHtml(invoice.InvoiceNumber)}</h1><div>سفارش: ${escapeHtml(invoice.OrderNumber)}</div></div>
   </header>
   <section class="meta">
@@ -85,7 +96,8 @@ const invoiceHtml = `<!doctype html>
     <div><span>جمع شیشه</span><span>${money(invoice.BottleTotal)}</span></div>
     <div class="final"><span>مبلغ نهایی</span><span>${money(invoice.TotalAmount)}</span></div>
   </section>
-  <footer>این فاکتور به‌صورت خودکار توسط سامانه زیباشه صادر شده است.</footer>
+  ${accountRows ? `<section class="payment"><h3>شماره کارت جهت واریز</h3>${accountRows}<p><strong>مهلت پرداخت فاکتور: ۲۴ ساعت</strong></p></section>` : ''}
+  <footer>این فاکتور به‌صورت خودکار توسط سامانه زیباشی صادر شده است.</footer>
 </body>
 </html>`;
 

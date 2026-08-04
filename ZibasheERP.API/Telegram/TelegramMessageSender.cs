@@ -47,7 +47,10 @@ public interface ITelegramMessageSender
 }
 
 public sealed record TelegramSendResult(bool IsSuccessful, string? Error = null);
-public sealed record TelegramInlineButton(string Text, string CallbackData);
+public sealed record TelegramInlineButton(
+    string Text,
+    string? CallbackData = null,
+    string? CopyText = null);
 
 public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
@@ -109,14 +112,20 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 reply_markup = new
                 {
                     inline_keyboard = rows.Select(row =>
-                        row.Select(button => new
-                        {
-                            text = button.Text,
-                            callback_data = button.CallbackData
-                        }).ToArray()).ToArray()
+                        row.Select(BuildInlineButton).ToArray()).ToArray()
                 }
             },
             cancellationToken);
+
+    private static Dictionary<string, object> BuildInlineButton(TelegramInlineButton button)
+    {
+        var value = new Dictionary<string, object> { ["text"] = button.Text };
+        if (!string.IsNullOrWhiteSpace(button.CallbackData))
+            value["callback_data"] = button.CallbackData;
+        if (!string.IsNullOrWhiteSpace(button.CopyText))
+            value["copy_text"] = new { text = button.CopyText };
+        return value;
+    }
 
     public async Task<TelegramSendResult> SendPhotoAsync(
         string chatId,

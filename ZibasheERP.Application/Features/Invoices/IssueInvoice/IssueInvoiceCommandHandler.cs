@@ -12,13 +12,16 @@ public sealed class IssueInvoiceCommandHandler
 {
     private readonly IInvoiceRepository _invoiceRepository;
     private readonly INotificationOutboxRepository _outboxRepository;
+    private readonly IInvoicePaymentAccountRepository _paymentAccountRepository;
 
     public IssueInvoiceCommandHandler(
         IInvoiceRepository invoiceRepository,
-        INotificationOutboxRepository outboxRepository)
+        INotificationOutboxRepository outboxRepository,
+        IInvoicePaymentAccountRepository paymentAccountRepository)
     {
         _invoiceRepository = invoiceRepository;
         _outboxRepository = outboxRepository;
+        _paymentAccountRepository = paymentAccountRepository;
     }
 
     public async Task<InvoiceResponse> Handle(
@@ -43,6 +46,7 @@ public sealed class IssueInvoiceCommandHandler
             throw new InvalidOperationException("اطلاعات سفارش برای صدور فاکتور کامل نیست.");
 
         var now = DateTime.UtcNow;
+        var paymentAccounts = await _paymentAccountRepository.GetActiveAsync(cancellationToken);
         var invoice = new Invoice
         {
             Id = Guid.NewGuid(),
@@ -74,6 +78,12 @@ public sealed class IssueInvoiceCommandHandler
                 invoice.PerfumeTotal,
                 invoice.BottleTotal,
                 invoice.TotalAmount,
+                CustomerUsername = order.Customer.Username,
+                PaymentDeadlineHours = 24,
+                PaymentAccounts = paymentAccounts.Select(value => new
+                {
+                    value.CardNumber, value.AccountHolder, value.BankName
+                }),
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
@@ -133,7 +143,13 @@ public sealed class IssueInvoiceCommandHandler
                     order.Customer.FullName,
                     order.Customer.Mobile,
                     order.Customer.TelegramId
+                    ,order.Customer.Username
                 },
+                PaymentDeadlineHours = 24,
+                PaymentAccounts = paymentAccounts.Select(value => new
+                {
+                    value.CardNumber, value.AccountHolder, value.BankName
+                }),
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,

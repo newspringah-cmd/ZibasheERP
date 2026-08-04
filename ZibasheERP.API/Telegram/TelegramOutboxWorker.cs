@@ -82,10 +82,12 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 }
                 else
                 {
-                result = await _sender.SendAsync(
-                    recipient,
-                    message,
-                    cancellationToken);
+                var copyButtons = notification.EventType == "InvoiceIssued"
+                    ? BuildCardCopyButtons(notification.Payload)
+                    : Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
+                result = copyButtons.Length == 0
+                    ? await _sender.SendAsync(recipient, message, cancellationToken)
+                    : await _sender.SendInlineKeyboardAsync(recipient, message, copyButtons, cancellationToken);
                 }
             }
             catch (JsonException exception)
@@ -137,6 +139,23 @@ public sealed class TelegramOutboxWorker : BackgroundService
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
+
+    private static IReadOnlyCollection<TelegramInlineButton>[] BuildCardCopyButtons(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        if (!document.RootElement.TryGetProperty("PaymentAccounts", out var accounts) ||
+            accounts.ValueKind != JsonValueKind.Array)
+            return Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
+        return accounts.EnumerateArray().Select(account =>
+        {
+            var card = account.TryGetProperty("CardNumber", out var value) ? value.GetString() : null;
+            var bank = account.TryGetProperty("BankName", out var bankValue) ? bankValue.GetString() : null;
+            return (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton($"📋 کپی شماره کارت {bank}", CopyText: card)
+            };
+        }).Where(row => row.First().CopyText is not null).ToArray();
+    }
 
     private async Task QueueAdminFailureAlertAsync(
         INotificationOutboxRepository repository,

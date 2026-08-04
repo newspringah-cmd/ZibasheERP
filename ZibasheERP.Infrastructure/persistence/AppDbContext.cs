@@ -31,6 +31,7 @@ public class AppDbContext : DbContext
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
     public DbSet<IntegrationDeliveryFailure> IntegrationDeliveryFailures => Set<IntegrationDeliveryFailure>();
+    public DbSet<InvoicePaymentAccount> InvoicePaymentAccounts => Set<InvoicePaymentAccount>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -53,6 +54,7 @@ public class AppDbContext : DbContext
         ConfigureInvoice(modelBuilder);
         ConfigureNotificationOutbox(modelBuilder);
         ConfigureIntegrationDeliveryFailure(modelBuilder);
+        ConfigureInvoicePaymentAccount(modelBuilder);
     }
 
     private static void ConfigureCustomer(ModelBuilder modelBuilder)
@@ -403,5 +405,18 @@ public class AppDbContext : DbContext
             .HasIndex(failure => new { failure.CustomerId, failure.ReportedAt });
         modelBuilder.Entity<IntegrationDeliveryFailure>()
             .HasIndex(failure => new { failure.ResolvedAt, failure.ReportedAt });
+    }
+
+    private static void ConfigureInvoicePaymentAccount(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<InvoicePaymentAccount>().Property(value => value.CardNumber).HasMaxLength(19);
+        modelBuilder.Entity<InvoicePaymentAccount>().Property(value => value.AccountHolder).HasMaxLength(150);
+        modelBuilder.Entity<InvoicePaymentAccount>().Property(value => value.BankName).HasMaxLength(100);
+        modelBuilder.Entity<InvoicePaymentAccount>()
+            .HasIndex(value => value.CardNumber)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+        modelBuilder.Entity<InvoicePaymentAccount>()
+            .HasIndex(value => new { value.IsActive, value.DisplayOrder });
     }
 }

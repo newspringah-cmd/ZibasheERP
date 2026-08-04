@@ -34,7 +34,7 @@ namespace ZibasheERP.API.Controllers;
 [AllowAnonymous]
 [EnableRateLimiting("telegram-webhook")]
 [ServiceFilter<TelegramUpdateDeduplicationFilter>]
-public sealed class TelegramWebhookController : ControllerBase
+public sealed partial class TelegramWebhookController : ControllerBase
 {
     private const string SecretHeader = "X-Telegram-Bot-Api-Secret-Token";
     private readonly IMediator _mediator;
@@ -43,6 +43,7 @@ public sealed class TelegramWebhookController : ControllerBase
     private readonly ILogger<TelegramWebhookController> _logger;
     private readonly ITelegramOrderDraftRepository _draftRepository;
     private readonly ITelegramGroupMembershipTracker _groupMembershipTracker;
+    private readonly IInvoicePaymentAccountRepository _paymentAccountRepository;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -50,6 +51,7 @@ public sealed class TelegramWebhookController : ControllerBase
         IOptions<TelegramOptions> options,
         ITelegramOrderDraftRepository draftRepository,
         ITelegramGroupMembershipTracker groupMembershipTracker,
+        IInvoicePaymentAccountRepository paymentAccountRepository,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
@@ -57,6 +59,7 @@ public sealed class TelegramWebhookController : ControllerBase
         _options = options.Value;
         _draftRepository = draftRepository;
         _groupMembershipTracker = groupMembershipTracker;
+        _paymentAccountRepository = paymentAccountRepository;
         _logger = logger;
     }
 
@@ -323,6 +326,9 @@ public sealed class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleAdminCallbackAsync(callback, cancellationToken))
+            return;
+
         if (callback.Message is null ||
             !string.Equals(callback.Message.Chat.Type, "private", StringComparison.OrdinalIgnoreCase))
         {
@@ -722,6 +728,9 @@ public sealed class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleAdminCommandAsync(message, cancellationToken))
+            return;
+
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))
             return;
 

@@ -31,7 +31,7 @@ public sealed class IssueInvoiceCommandHandlerTests
         };
         var repository = new InvoiceRepositoryStub(order);
         var outbox = new NotificationOutboxRepositoryStub();
-        var handler = new IssueInvoiceCommandHandler(repository, outbox);
+        var handler = new IssueInvoiceCommandHandler(repository, outbox, new PaymentAccountRepositoryStub());
 
         var result = await handler.Handle(
             new IssueInvoiceCommand(order.Id),
@@ -89,6 +89,20 @@ public sealed class IssueInvoiceCommandHandlerTests
             Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
         public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<NotificationOutbox?>(null);
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class PaymentAccountRepositoryStub : IInvoicePaymentAccountRepository
+    {
+        public Task<IReadOnlyCollection<InvoicePaymentAccount>> GetActiveAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<InvoicePaymentAccount>>(new[]
+            {
+                new InvoicePaymentAccount { CardNumber = "1234567812345678", AccountHolder = "Test", BankName = "Test Bank" }
+            });
+        public Task<IReadOnlyCollection<InvoicePaymentAccount>> GetForAdminAsync(CancellationToken cancellationToken = default) =>
+            GetActiveAsync(cancellationToken);
+        public Task<InvoicePaymentAccount?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<InvoicePaymentAccount?>(null);
+        public Task AddAsync(InvoicePaymentAccount account, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }
