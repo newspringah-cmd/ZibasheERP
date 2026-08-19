@@ -405,6 +405,12 @@ public sealed partial class TelegramWebhookController
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton("✍️ ثبت مقدار سفارشی", "adminrequest:start:custom")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton("✏️ ویرایش لیست فروش", "adminrequest:start:edit")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup")
         }).ToList();
         if (long.TryParse(_options.OwnerUserId, out _))
             buttons.Add(new[] { new TelegramInlineButton("💰 مدیریت قیمت‌ها", "invoiceadmin:pricing") });
@@ -565,31 +571,21 @@ public sealed partial class TelegramWebhookController
 
         if (parts.Length == 3 && parts[1] == "start")
         {
-            var kind = parts[2] == "next"
-                ? TelegramAdminRequestKind.NextBottle
-                : TelegramAdminRequestKind.CustomRequest;
-            var lists = (await _salesListRepository.GetForAdminAsync(50, ct))
-                .Where(x => x.Status is SalesListStatus.Open or SalesListStatus.Full)
-                .Take(10)
-                .ToArray();
+            var kind = parts[2] switch
+            {
+                "next" => TelegramAdminRequestKind.NextBottle,
+                "edit" => TelegramAdminRequestKind.EditList,
+                "cleanup" => TelegramAdminRequestKind.CleanupList,
+                _ => TelegramAdminRequestKind.CustomRequest
+            };
+            _adminRequestDrafts.Set(new TelegramAdminRequestDraft
+            {
+                ChatId = chatId, UserId = userId, Kind = kind,
+                Stage = TelegramAdminRequestStage.AwaitingListSearch
+            });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            if (lists.Length == 0)
-            {
-                await ReplyAsync(chatId, "لیست فروش بازی برای انتخاب وجود ندارد.", ct);
-                return;
-            }
-            var rows = lists.Select(x => (IReadOnlyCollection<TelegramInlineButton>)new[]
-            {
-                new TelegramInlineButton($"{x.PublicCode} — {x.EnglishName}",
-                    $"adminrequest:list:{(kind == TelegramAdminRequestKind.NextBottle ? "n" : "c")}:{x.Id:N}")
-            }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-            {
-                new TelegramInlineButton("❌ لغو", "adminrequest:cancel")
-            }).ToArray();
-            await _sender.SendInlineKeyboardAsync(chatId.ToString(),
-                kind == TelegramAdminRequestKind.NextBottle
-                    ? "لیست مربوط به صف بطری بعدی را انتخاب کنید:"
-                    : "لیست مربوط به مقدار سفارشی را انتخاب کنید:", rows, ct);
+            await ReplyAsync(chatId,
+                "کد لیست یا بخشی از نام فارسی/انگلیسی عطر را وارد کنید:", ct);
             return;
         }
 
@@ -601,15 +597,52 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct);
                 return;
             }
-            var kind = parts[2] == "n" ? TelegramAdminRequestKind.NextBottle : TelegramAdminRequestKind.CustomRequest;
-            _adminRequestDrafts.Set(new TelegramAdminRequestDraft
+            if (!_adminRequestDrafts.TryGet(chatId, userId, out var draft))
             {
-                ChatId = chatId, UserId = userId, Kind = kind, SalesListId = list.Id,
-                PublicCode = list.PublicCode, SalesListName = list.EnglishName
-            });
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return;
+            }
+            draft.SalesListId = list.Id;
+            draft.PublicCode = list.PublicCode;
+            draft.SalesListName = list.EnglishName;
+            draft.Stage = TelegramAdminRequestStage.AwaitingIdentity;
+            _adminRequestDrafts.Set(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            if (draft.Kind == TelegramAdminRequestKind.CleanupList)
+            {
+                if (list.Status != SalesListStatus.Full)
+                {
+                    await ReplyAsync(chatId, "این لیست هنوز تکمیل نشده و قابل پاک‌سازی نیست.", ct);
+                    return;
+                }
+                var requests = await _salesListRequestRepository.GetConfirmedAsync(list.Id, ct);
+                await CompleteAndRollSalesListAsync(list, requests, ct);
+                _adminRequestDrafts.Remove(chatId, userId);
+                await ReplyAsync(chatId, "پاک‌سازی لیست تکمیل‌شده انجام شد ✅", ct);
+                return;
+            }
+            if (draft.Kind == TelegramAdminRequestKind.EditList)
+            {
+                await SendEditFieldSelectionAsync(chatId, ct);
+                return;
+            }
             await ReplyAsync(chatId,
                 "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
+            return;
+        }
+
+        if (parts.Length == 3 && parts[1] == "editfield")
+        {
+            if (!_adminRequestDrafts.TryGet(chatId, userId, out var draft) || draft.Kind != TelegramAdminRequestKind.EditList)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return;
+            }
+            draft.EditField = parts[2];
+            draft.Stage = parts[2] == "photo" ? TelegramAdminRequestStage.AwaitingEditPhoto : TelegramAdminRequestStage.AwaitingEditValue;
+            _adminRequestDrafts.Set(draft);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(chatId, parts[2] == "photo" ? "عکس جدید عطر را ارسال کنید:" : "مقدار جدید را وارد کنید:", ct);
             return;
         }
 
@@ -647,12 +680,73 @@ public sealed partial class TelegramWebhookController
             _adminRequestDrafts.Remove(message.Chat.Id, message.From.Id);
             return false;
         }
+        if (draft.Stage == TelegramAdminRequestStage.AwaitingEditPhoto)
+        {
+            var photo = message.Photo?.OrderByDescending(x => (long)x.Width * x.Height).FirstOrDefault();
+            if (photo is null)
+            {
+                await ReplyAsync(message.Chat.Id, "لطفاً عکس را به‌صورت Photo ارسال کنید.", ct);
+                return true;
+            }
+            draft.EditValue = photo.FileId;
+            draft.Stage = TelegramAdminRequestStage.AwaitingConfirmation;
+            _adminRequestDrafts.Set(draft);
+            await SendEditConfirmationAsync(draft, "عکس جدید", ct);
+            return true;
+        }
         var input = message.Text?.Trim();
         if (string.IsNullOrWhiteSpace(input)) return true;
         if (string.Equals(input, "/cancel", StringComparison.OrdinalIgnoreCase))
         {
             _adminRequestDrafts.Remove(message.Chat.Id, message.From.Id);
             await ReplyAsync(message.Chat.Id, "ثبت درخواست لغو شد.", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramAdminRequestStage.AwaitingListSearch)
+        {
+            var query = input.Trim();
+            var normalizedCode = new string(query.Where(char.IsDigit).ToArray());
+            var lists = (await _salesListRepository.GetForAdminAsync(200, ct))
+                .Where(x => x.Status is SalesListStatus.Open or SalesListStatus.Full)
+                .Where(x =>
+                    (!string.IsNullOrEmpty(normalizedCode) && x.PublicCode.ToString().Contains(normalizedCode, StringComparison.Ordinal)) ||
+                    x.EnglishName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    x.PersianName.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .Take(10)
+                .ToArray();
+            if (lists.Length == 0)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "نتیجه‌ای پیدا نشد. کد یا نام دیگری وارد کنید؛ برای لغو /cancel را بفرستید.", ct);
+                return true;
+            }
+            var kindCode = draft.Kind switch
+            {
+                TelegramAdminRequestKind.NextBottle => "n",
+                TelegramAdminRequestKind.EditList => "e",
+                TelegramAdminRequestKind.CleanupList => "x",
+                _ => "c"
+            };
+            var rows = lists.Select(x => (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton($"{x.PublicCode} — {x.EnglishName}",
+                    $"adminrequest:list:{kindCode}:{x.Id:N}")
+            }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton("❌ لغو", "adminrequest:cancel")
+            }).ToArray();
+            await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+                lists.Length == 10
+                    ? "نتایج جستجو (۱۰ نتیجه اول)؛ لیست موردنظر را انتخاب کنید:"
+                    : "نتیجه جستجو؛ لیست موردنظر را انتخاب کنید:", rows, ct);
+            return true;
+        }
+        if (draft.Stage == TelegramAdminRequestStage.AwaitingEditValue)
+        {
+            draft.EditValue = input;
+            draft.Stage = TelegramAdminRequestStage.AwaitingConfirmation;
+            _adminRequestDrafts.Set(draft);
+            await SendEditConfirmationAsync(draft, input, ct);
             return true;
         }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingIdentity)
@@ -666,7 +760,10 @@ public sealed partial class TelegramWebhookController
             draft.Identity = normalized;
             draft.Stage = TelegramAdminRequestStage.AwaitingVolume;
             _adminRequestDrafts.Set(draft);
-            await ReplyAsync(message.Chat.Id, "مقدار درخواستی را به میل وارد کنید؛ مثال: 5", ct);
+            await ReplyAsync(message.Chat.Id,
+                draft.Kind == TelegramAdminRequestKind.NextBottle
+                    ? "این مشتری چند میل از باتل اصلی می‌خواهد؟ مقدار را به میل وارد کنید؛ مثال: 30"
+                    : "مقدار درخواستی را به میل وارد کنید؛ مثال: 5", ct);
             return true;
         }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingVolume)
@@ -721,6 +818,30 @@ public sealed partial class TelegramWebhookController
             }, ct);
     }
 
+    private async Task SendEditFieldSelectionAsync(long chatId, CancellationToken ct)
+    {
+        IReadOnlyCollection<TelegramInlineButton>[] rows =
+        [
+            [new("نام انگلیسی", "adminrequest:editfield:english"), new("نام فارسی", "adminrequest:editfield:persian")],
+            [new("لینک عطردان", "adminrequest:editfield:url"), new("برند", "adminrequest:editfield:brand")],
+            [new("جنسیت", "adminrequest:editfield:gender"), new("سال تولید", "adminrequest:editfield:year")],
+            [new("نت ابتدایی", "adminrequest:editfield:top"), new("نت میانی", "adminrequest:editfield:middle")],
+            [new("نت پایانی", "adminrequest:editfield:base"), new("آکوردها", "adminrequest:editfield:accords")],
+            [new("قیمت هر میل", "adminrequest:editfield:price"), new("حداقل سفارش", "adminrequest:editfield:minimum")],
+            [new("توضیحات", "adminrequest:editfield:notes"), new("🖼 تغییر عکس", "adminrequest:editfield:photo")],
+            [new("❌ لغو", "adminrequest:cancel")]
+        ];
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), "فیلد موردنظر برای ویرایش را انتخاب کنید:", rows, ct);
+    }
+
+    private async Task SendEditConfirmationAsync(TelegramAdminRequestDraft draft, string displayValue, CancellationToken ct) =>
+        await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
+            $"پیش‌نمایش ویرایش لیست {draft.PublicCode} — {draft.SalesListName}\n\nمقدار جدید: {displayValue}",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("✅ ذخیره", "adminrequest:confirm"), new TelegramInlineButton("❌ لغو", "adminrequest:cancel") }
+            }, ct);
+
     private async Task ConfirmAdminRequestAsync(TelegramCallbackQuery callback, CancellationToken ct)
     {
         var chatId = callback.Message!.Chat.Id;
@@ -728,6 +849,11 @@ public sealed partial class TelegramWebhookController
             draft.Stage != TelegramAdminRequestStage.AwaitingConfirmation)
         {
             await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نمایش منقضی شده است.", ct);
+            return;
+        }
+        if (draft.Kind == TelegramAdminRequestKind.EditList)
+        {
+            await ApplySalesListEditAsync(callback, draft, ct);
             return;
         }
         var identity = draft.Identity.Trim();
@@ -774,6 +900,60 @@ public sealed partial class TelegramWebhookController
         _adminRequestDrafts.Remove(chatId, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست ثبت شد ✅", ct);
         await ReplyAsync(chatId, "درخواست با موفقیت ثبت و لیست فروش به‌روزرسانی شد ✅", ct);
+    }
+
+    private async Task ApplySalesListEditAsync(TelegramCallbackQuery callback, TelegramAdminRequestDraft draft, CancellationToken ct)
+    {
+        var list = await _salesListRepository.GetByIdAsync(draft.SalesListId, ct);
+        if (list is null)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct);
+            return;
+        }
+        try
+        {
+            switch (draft.EditField)
+            {
+                case "english": list.EnglishName = draft.EditValue.Trim(); break;
+                case "persian": list.PersianName = draft.EditValue.Trim(); break;
+                case "url" when Uri.TryCreate(draft.EditValue, UriKind.Absolute, out _): list.ProductPageUrl = draft.EditValue.Trim(); break;
+                case "url": throw new InvalidOperationException("لینک معتبر نیست.");
+                case "brand": list.DisplayBrand = draft.EditValue.Trim(); break;
+                case "gender": list.Gender = draft.EditValue.Trim() switch { "زنانه" or "women" => PerfumeGender.Women, "مردانه" or "men" => PerfumeGender.Men, "یونیسکس" or "unisex" => PerfumeGender.Unisex, _ => throw new InvalidOperationException("جنسیت باید زنانه، مردانه یا یونیسکس باشد.") }; break;
+                case "year" when int.TryParse(NormalizeNumber(draft.EditValue), out var year) && year is >= 1800 and <= 2200: list.ReleaseYear = year; break;
+                case "year": throw new InvalidOperationException("سال تولید معتبر نیست.");
+                case "top": list.TopNotes = draft.EditValue.Trim(); break;
+                case "middle": list.MiddleNotes = draft.EditValue.Trim(); break;
+                case "base": list.BaseNotes = draft.EditValue.Trim(); break;
+                case "accords": list.Accords = draft.EditValue.Trim(); break;
+                case "price" when TryParsePositiveDecimal(draft.EditValue, out var price): list.PricePerMl = price; break;
+                case "price": throw new InvalidOperationException("قیمت معتبر نیست.");
+                case "minimum" when TryParsePositiveInt(draft.EditValue, out var minimum) && minimum <= list.TotalVolume: list.MinimumRequestVolumeMl = minimum; break;
+                case "minimum": throw new InvalidOperationException("حداقل سفارش معتبر نیست.");
+                case "notes": list.Notes = draft.EditValue == "-" ? null : draft.EditValue.Trim(); break;
+                case "photo": list.TelegramPhotoFileId = draft.EditValue; break;
+                default: throw new InvalidOperationException("فیلد ویرایش معتبر نیست.");
+            }
+            list.UpdatedAt = DateTime.UtcNow;
+            await _salesListRepository.UpdateAsync(list, ct);
+            await _salesListRepository.SaveChangesAsync(ct);
+            var requests = await _salesListRequestRepository.GetConfirmedAsync(list.Id, ct);
+            if (list.TelegramMessageId.HasValue && !string.IsNullOrWhiteSpace(list.TelegramChannelId))
+            {
+                if (draft.EditField == "photo")
+                    await _sender.EditPhotoAsync(list.TelegramChannelId, list.TelegramMessageId.Value, draft.EditValue,
+                        FormatChannelSalesList(list, requests), BuildChannelVolumeButtons(list), ct);
+                else
+                    await RefreshChannelSalesListAsync(list.Id, ct);
+            }
+            _adminRequestDrafts.Remove(callback.Message!.Chat.Id, callback.From.Id);
+            await _sender.AnswerCallbackAsync(callback.Id, "ویرایش ذخیره شد ✅", ct);
+            await ReplyAsync(callback.Message.Chat.Id, "لیست و پست کانال با موفقیت به‌روزرسانی شدند ✅", ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, ex.Message, ct);
+        }
     }
 
     private async Task ApplyOwnerPricingDraftAsync(TelegramCallbackQuery callback, CancellationToken ct)

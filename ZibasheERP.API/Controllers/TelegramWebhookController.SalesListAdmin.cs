@@ -396,6 +396,7 @@ public sealed partial class TelegramWebhookController
 
             salesList.TelegramChannelId = _options.SalesChannelId;
             salesList.TelegramMessageId = result.MessageId;
+            salesList.TelegramPhotoFileId = draft.PhotoFileId;
             salesList.UpdatedAt = DateTime.UtcNow;
             await _salesListRepository.UpdateAsync(salesList, cancellationToken);
             await _salesListRepository.SaveChangesAsync(cancellationToken);

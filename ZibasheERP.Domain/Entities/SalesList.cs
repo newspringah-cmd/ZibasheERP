@@ -96,6 +96,9 @@ public class SalesList : BaseEntity
 
     public long? TelegramDiscussionMessageId { get; set; }
 
+    [MaxLength(500)]
+    public string? TelegramPhotoFileId { get; set; }
+
     // کانال تلگرام
     [MaxLength(100)]
     public string? TelegramChannelId { get; set; }

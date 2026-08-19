@@ -196,6 +196,89 @@ public sealed partial class TelegramWebhookController
             FormatChannelSalesList(salesList, requests),
             BuildChannelVolumeButtons(salesList),
             cancellationToken);
+        if (salesList.Status == SalesListStatus.Full)
+            await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
+    }
+
+    private async Task CompleteAndRollSalesListAsync(
+        SalesList completed, IReadOnlyCollection<SalesListRequest> requests, CancellationToken ct)
+    {
+        var finalCaption = "✅ لیست فروش تکمیل شد\n\n" + FormatChannelSalesList(completed, requests);
+        if (!string.IsNullOrWhiteSpace(completed.TelegramPhotoFileId))
+            await _sender.SendPhotoAsync(_options.AdminChatId, completed.TelegramPhotoFileId, finalCaption, ct);
+        else
+            await ReplyAsync(long.Parse(_options.AdminChatId), finalCaption, ct);
+
+        completed.Status = SalesListStatus.Closed;
+        completed.ClosedDate = DateTime.UtcNow;
+        completed.UpdatedAt = DateTime.UtcNow;
+        await _salesListRepository.UpdateAsync(completed, ct);
+        await _salesListRepository.SaveChangesAsync(ct);
+
+        if (!string.IsNullOrWhiteSpace(completed.TelegramChannelId))
+        {
+            if (completed.TelegramDiscussionMessageId.HasValue)
+                await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramDiscussionMessageId.Value, ct);
+            if (completed.TelegramMessageId.HasValue)
+                await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramMessageId.Value, ct);
+        }
+
+        var queue = requests.Where(x => x.Kind == SalesListRequestKind.NextBottle)
+            .OrderBy(x => x.ConfirmedAt).ThenBy(x => x.CreatedAt).ToArray();
+        if (queue.Length == 0 || string.IsNullOrWhiteSpace(completed.TelegramPhotoFileId))
+            return;
+
+        int publicCode;
+        do publicCode = Random.Shared.Next(10000, 100000);
+        while (await _salesListRepository.PublicCodeExistsAsync(publicCode, ct));
+        var now = DateTime.UtcNow;
+        var nextList = new SalesList
+        {
+            Id = Guid.NewGuid(), CreatedAt = now, PublicCode = publicCode,
+            EnglishName = completed.EnglishName, ProductPageUrl = completed.ProductPageUrl,
+            DisplayBrand = completed.DisplayBrand, Gender = completed.Gender, ReleaseYear = completed.ReleaseYear,
+            PersianName = completed.PersianName, TopNotes = completed.TopNotes, MiddleNotes = completed.MiddleNotes,
+            BaseNotes = completed.BaseNotes, Accords = completed.Accords, BatchId = completed.BatchId,
+            PricePerMl = completed.PricePerMl, TotalVolume = completed.TotalVolume,
+            MinimumRequestVolumeMl = completed.MinimumRequestVolumeMl,
+            ReservedVolume = Math.Min(queue[0].VolumeMl, completed.TotalVolume),
+            Status = queue[0].VolumeMl >= completed.TotalVolume ? SalesListStatus.Full : SalesListStatus.Open,
+            OpenDate = now, TelegramChannelId = _options.SalesChannelId,
+            TelegramPhotoFileId = completed.TelegramPhotoFileId, Notes = completed.Notes
+        };
+        await _salesListRepository.AddAsync(nextList, ct);
+        foreach (var (old, index) in queue.Select((value, index) => (value, index)))
+        {
+            await _salesListRequestRepository.AddAsync(new SalesListRequest
+            {
+                Id = Guid.NewGuid(), CreatedAt = now, SalesListId = nextList.Id,
+                TelegramUserId = old.TelegramUserId, TelegramUsername = old.TelegramUsername,
+                VolumeMl = old.VolumeMl, PerfumePricePerMl = nextList.PricePerMl,
+                Kind = index == 0 ? SalesListRequestKind.CurrentBottle : SalesListRequestKind.NextBottle,
+                Status = SalesListRequestStatus.Confirmed, CreatedByAdmin = old.CreatedByAdmin,
+                ExpiresAt = DateTime.MaxValue, ConfirmedAt = now.AddTicks(index),
+                ExternalReference = $"auto-next:{completed.Id:N}:{old.Id:N}"
+            }, ct);
+        }
+        await _salesListRequestRepository.SaveChangesAsync(ct);
+        var nextRequests = await _salesListRequestRepository.GetConfirmedAsync(nextList.Id, ct);
+        var post = await _sender.SendPhotoWithKeyboardAsync(_options.SalesChannelId,
+            nextList.TelegramPhotoFileId, FormatChannelSalesList(nextList, nextRequests),
+            BuildChannelVolumeButtons(nextList), ct);
+        if (!post.IsSuccessful)
+        {
+            await ReplyAsync(long.Parse(_options.AdminChatId), $"ساخت لیست بعدی انجام شد اما انتشار ناموفق بود: {post.Error}", ct);
+            return;
+        }
+        nextList.TelegramMessageId = post.MessageId;
+        var discussion = await _sender.SendAsync(_options.SalesChannelId,
+            $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\nکد لیست: {nextList.PublicCode}\n" +
+            "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.", ct);
+        if (discussion.IsSuccessful) nextList.TelegramDiscussionMessageId = discussion.MessageId;
+        await _salesListRepository.UpdateAsync(nextList, ct);
+        await _salesListRepository.SaveChangesAsync(ct);
+        await ReplyAsync(long.Parse(_options.AdminChatId),
+            $"لیست بعدی به‌صورت خودکار منتشر شد ✅\nکد جدید: {nextList.PublicCode}\nصاحب باتل: {DisplayUser(queue[0])} — {queue[0].VolumeMl} میل", ct);
     }
 
     private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(SalesList list)

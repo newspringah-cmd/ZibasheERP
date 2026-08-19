@@ -48,6 +48,14 @@ public interface ITelegramMessageSender
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> EditPhotoAsync(
+        string chatId, long messageId, string photo, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> DeleteMessageAsync(
+        string chatId, long messageId, CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> SendDocumentAsync(
         string chatId,
         string document,
@@ -219,6 +227,27 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 }
             },
             cancellationToken);
+
+    public async Task<TelegramSendResult> EditPhotoAsync(
+        string chatId, long messageId, string photo, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "editMessageMedia",
+            new
+            {
+                chat_id = chatId,
+                message_id = messageId,
+                media = new { type = "photo", media = photo, caption, parse_mode = "HTML" },
+                reply_markup = new
+                {
+                    inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+                }
+            }, cancellationToken);
+
+    public async Task<TelegramSendResult> DeleteMessageAsync(
+        string chatId, long messageId, CancellationToken cancellationToken = default) =>
+        await SendRequestAsync("deleteMessage", new { chat_id = chatId, message_id = messageId }, cancellationToken);
 
     public async Task<TelegramSendResult> SendDocumentAsync(
         string chatId,

@@ -133,21 +133,23 @@ public sealed class TelegramOwnerPricingDraftStore
     public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
 }
 
-public enum TelegramAdminRequestKind { NextBottle, CustomRequest }
-public enum TelegramAdminRequestStage { AwaitingIdentity, AwaitingVolume, AwaitingBottleType, AwaitingConfirmation }
+public enum TelegramAdminRequestKind { NextBottle, CustomRequest, EditList, CleanupList }
+public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingConfirmation }
 
 public sealed class TelegramAdminRequestDraft
 {
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
     public required TelegramAdminRequestKind Kind { get; init; }
-    public required Guid SalesListId { get; init; }
-    public required int PublicCode { get; init; }
-    public required string SalesListName { get; init; }
-    public TelegramAdminRequestStage Stage { get; set; } = TelegramAdminRequestStage.AwaitingIdentity;
+    public Guid SalesListId { get; set; }
+    public int PublicCode { get; set; }
+    public string SalesListName { get; set; } = string.Empty;
+    public TelegramAdminRequestStage Stage { get; set; } = TelegramAdminRequestStage.AwaitingListSearch;
     public string Identity { get; set; } = string.Empty;
     public int VolumeMl { get; set; }
     public BottleType? BottleType { get; set; }
+    public string EditField { get; set; } = string.Empty;
+    public string EditValue { get; set; } = string.Empty;
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
 
