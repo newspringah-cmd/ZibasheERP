@@ -4,6 +4,7 @@ using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -221,27 +222,29 @@ public sealed partial class TelegramWebhookController
         var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle).ToArray();
         var gender = list.Gender switch
         {
-            PerfumeGender.Women => "#زنانه 👩",
-            PerfumeGender.Men => "#مردانه 👨",
-            _ => "#یونیسکس 👩‍🦰👨"
+            PerfumeGender.Women => "#women 👩",
+            PerfumeGender.Men => "#men 👨",
+            _ => "#unisex 👩‍🦰👨"
         };
         var englishName = Html(list.EnglishName);
         var linkedName = string.IsNullOrWhiteSpace(list.ProductPageUrl)
             ? englishName
             : $"<a href=\"{Html(list.ProductPageUrl)}\">{englishName}</a>";
-        var brandTag = "#" + Html(list.DisplayBrand.Replace(' ', '_'));
+        var brandTag = "#" + Html(ToHashtag(list.DisplayBrand));
         return $"کد: <b>{list.PublicCode}</b>\n" +
             $"{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{Html(list.PersianName)}\n\n" +
-            $"🍊 نت ابتدایی: {Html(list.TopNotes)}\n" +
-            $"🌸 نت میانی: {Html(list.MiddleNotes)}\n" +
-            $"🌳 نت پایانی: {Html(list.BaseNotes)}\n" +
+            $"🍊 نت‌های ابتدایی: {Html(list.TopNotes)}\n" +
+            $"🌸 نت‌های میانی: {Html(list.MiddleNotes)}\n" +
+            $"🌳 نت‌های پایانی: {Html(list.BaseNotes)}\n" +
             $"🎼 آکوردها: {Html(list.Accords)}\n\n" +
             $"حجم کل: {list.TotalVolume}ml\nقیمت هر میل: {list.PricePerMl:N0} تومان\n" +
             $"حداقل میل درخواستی: {list.MinimumRequestVolumeMl} میل\nباقی‌مانده: {list.RemainingVolume} میل\n\n" +
             string.Join("\n\n", roster) +
             "\n\nNext Bottle:\n" +
-            (next.Length == 0 ? "—" : string.Join("\n", next.Select(item => Html(DisplayUser(item)))));
+            (next.Length == 0
+                ? "اولین نفر صف باتل باشید 😘😘"
+                : string.Join("\n", next.Select(item => Html(DisplayUser(item)))));
     }
 
     private static string DisplayUser(SalesListRequest request) =>
@@ -254,6 +257,8 @@ public sealed partial class TelegramWebhookController
         string.Equals(type, nameof(BottleType.Fancy), StringComparison.OrdinalIgnoreCase) ? "شیشه فانتزی" : "شیشه نرمال";
     private static string EncodeCompactGuid(Guid value) => TelegramCallbackParser.EncodeGuid(value);
     private static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+    private static string ToHashtag(string value) =>
+        Regex.Replace(value.Trim(), @"[^\p{L}\p{N}]+", "_").Trim('_');
     private static bool TryDecodeCompactGuid(string value, out Guid result)
     {
         try

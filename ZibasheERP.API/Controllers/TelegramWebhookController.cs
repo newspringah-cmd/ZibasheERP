@@ -47,6 +47,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly ISalesListRepository _salesListRepository;
     private readonly ISalesListRequestRepository _salesListRequestRepository;
     private readonly TelegramAdminSalesListDraftStore _adminSalesListDrafts;
+    private readonly TelegramOwnerPricingDraftStore _ownerPricingDrafts;
+    private readonly IBottleRepository _bottleRepository;
+    private readonly IPerfumeRepository _perfumeRepository;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -58,6 +61,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         ISalesListRepository salesListRepository,
         ISalesListRequestRepository salesListRequestRepository,
         TelegramAdminSalesListDraftStore adminSalesListDrafts,
+        TelegramOwnerPricingDraftStore ownerPricingDrafts,
+        IBottleRepository bottleRepository,
+        IPerfumeRepository perfumeRepository,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
@@ -69,6 +75,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _salesListRepository = salesListRepository;
         _salesListRequestRepository = salesListRequestRepository;
         _adminSalesListDrafts = adminSalesListDrafts;
+        _ownerPricingDrafts = ownerPricingDrafts;
+        _bottleRepository = bottleRepository;
+        _perfumeRepository = perfumeRepository;
         _logger = logger;
     }
 

@@ -99,6 +99,7 @@ builder.Services.AddOptions<N8nOptions>()
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
+builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddScoped<ITelegramGroupMembershipTracker, TelegramGroupMembershipTracker>();
 builder.Services.AddHostedService<TelegramOutboxWorker>();

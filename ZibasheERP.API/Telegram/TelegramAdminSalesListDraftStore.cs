@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.API.Telegram;
 
@@ -85,4 +86,37 @@ public sealed class TelegramAdminSalesListDraftStore
         foreach (var item in _drafts.Where(item => item.Value.UpdatedAt < threshold))
             _drafts.TryRemove(item.Key, out _);
     }
+}
+
+public enum TelegramOwnerPricingKind { BottleRange, PerfumePercentage }
+
+public sealed class TelegramOwnerPricingDraft
+{
+    public required long ChatId { get; init; }
+    public required long UserId { get; init; }
+    public required TelegramOwnerPricingKind Kind { get; init; }
+    public BottleType? BottleType { get; init; }
+    public int MinimumVolumeMl { get; init; }
+    public int MaximumVolumeMl { get; init; }
+    public decimal Value { get; init; }
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+}
+
+public sealed class TelegramOwnerPricingDraftStore
+{
+    private readonly ConcurrentDictionary<(long, long), TelegramOwnerPricingDraft> _values = new();
+    public void Set(TelegramOwnerPricingDraft value) => _values[(value.ChatId, value.UserId)] = value;
+    public bool TryGet(long chatId, long userId, out TelegramOwnerPricingDraft value)
+    {
+        if (_values.TryGetValue((chatId, userId), out var found) &&
+            found.CreatedAt > DateTime.UtcNow.AddMinutes(-15))
+        {
+            value = found;
+            return true;
+        }
+        _values.TryRemove((chatId, userId), out _);
+        value = null!;
+        return false;
+    }
+    public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
 }

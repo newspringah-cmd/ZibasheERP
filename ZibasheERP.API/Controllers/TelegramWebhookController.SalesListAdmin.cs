@@ -404,9 +404,9 @@ public sealed partial class TelegramWebhookController
             {
                 var discussion = await _sender.SendAsync(
                     _options.SalesChannelId,
-                    $"💬 پرسش‌ها و درخواست مقدار سفارشی برای {draft.PerfumeName}\n" +
+                    $"💬 هر سؤالی در رابطه با عطر «{draft.EnglishName}» دارید، اینجا بپرسید.\n" +
                     $"کد لیست: {salesList.PublicCode}\n" +
-                    "اگر مقدار موردنظر در دکمه‌ها نیست، آن را در پاسخ به این پیام بنویسید تا ادمین ثبت کند.",
+                    "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.",
                     cancellationToken);
                 if (discussion.IsSuccessful)
                     salesList.TelegramDiscussionMessageId = discussion.MessageId;
@@ -435,11 +435,11 @@ public sealed partial class TelegramWebhookController
         $"🌿 لیست فروش جدید زیباشی\n" +
         $"🧴 {draft.EnglishName}\n" +
         $"🔗 {draft.ProductPageUrl}\n" +
-        $"🏷 #{draft.DisplayBrand.Replace(' ', '_')} — {GenderLabel(draft.Gender)} — L.{draft.ReleaseYear}\n" +
+        $"🏷 #{NormalizeBrandTag(draft.DisplayBrand)} — {GenderLabel(draft.Gender)} — L.{draft.ReleaseYear}\n" +
         $"🇮🇷 {draft.PersianName}\n" +
-        $"🍊 نت ابتدایی: {draft.TopNotes}\n" +
-        $"🌸 نت میانی: {draft.MiddleNotes}\n" +
-        $"🌳 نت پایانی: {draft.BaseNotes}\n" +
+        $"🍊 نت‌های ابتدایی: {draft.TopNotes}\n" +
+        $"🌸 نت‌های میانی: {draft.MiddleNotes}\n" +
+        $"🌳 نت‌های پایانی: {draft.BaseNotes}\n" +
         $"🎼 آکوردها: {draft.Accords}\n" +
         $"🏷 بچ: {draft.BatchNumber}\n" +
         $"💧 حجم قابل فروش: {draft.TotalVolume:N0} میل\n" +
@@ -485,8 +485,12 @@ public sealed partial class TelegramWebhookController
 
     private static string GenderLabel(int gender) => gender switch
     {
-        1 => "#زنانه 👩",
-        2 => "#مردانه 👨",
-        _ => "#یونیسکس 👩‍🦰👨"
+        1 => "#women 👩",
+        2 => "#men 👨",
+        _ => "#unisex 👩‍🦰👨"
     };
+
+    private static string NormalizeBrandTag(string value) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            value.Trim(), @"[^\p{L}\p{N}]+", "_").Trim('_');
 }

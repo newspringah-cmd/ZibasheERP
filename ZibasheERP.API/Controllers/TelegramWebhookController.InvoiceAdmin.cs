@@ -12,12 +12,88 @@ public sealed partial class TelegramWebhookController
             !(text.StartsWith("/admin", StringComparison.OrdinalIgnoreCase) ||
               text.StartsWith("/bank", StringComparison.OrdinalIgnoreCase) ||
               text.StartsWith("/nextbottle", StringComparison.OrdinalIgnoreCase) ||
-              text.StartsWith("/listrequest", StringComparison.OrdinalIgnoreCase)))
+              text.StartsWith("/listrequest", StringComparison.OrdinalIgnoreCase) ||
+              text.StartsWith("/bottleprice", StringComparison.OrdinalIgnoreCase) ||
+              text.StartsWith("/perfumepercent", StringComparison.OrdinalIgnoreCase) ||
+              text.StartsWith("/whoami", StringComparison.OrdinalIgnoreCase)))
             return false;
 
         if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From!.Id, ct))
         {
             await ReplyAsync(message.Chat.Id, "این بخش فقط برای مدیران گروه حسابداری فعال است.", ct);
+            return true;
+        }
+
+        if (text.Equals("/whoami", StringComparison.OrdinalIgnoreCase))
+        {
+            await ReplyAsync(message.Chat.Id, $"Telegram User ID شما: {message.From.Id}", ct);
+            return true;
+        }
+
+        if (text.StartsWith("/bottleprice ", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith("/perfumepercent ", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!IsPrimaryOwner(message.From.Id))
+            {
+                await ReplyAsync(message.Chat.Id, "تغییر قیمت فقط برای مدیر اصلی سیستم مجاز است.", ct);
+                return true;
+            }
+            if (text.StartsWith("/bottleprice ", StringComparison.OrdinalIgnoreCase))
+            {
+                var values = text[13..].Split('|', StringSplitOptions.TrimEntries);
+                var type = values.ElementAtOrDefault(0)?.ToLowerInvariant() switch
+                {
+                    "نرمال" or "normal" => BottleType.Normal,
+                    "فانتزی" or "fancy" => BottleType.Fancy,
+                    _ => (BottleType?)null
+                };
+                if (values.Length != 4 || type is null ||
+                    !TryParsePositiveInt(values[1], out var minimum) ||
+                    !TryParsePositiveInt(values[2], out var maximum) || minimum > maximum ||
+                    !TryParsePositiveDecimal(values[3], out var price))
+                {
+                    await ReplyAsync(message.Chat.Id,
+                        "فرمت صحیح:\n/bottleprice نرمال یا فانتزی | حداقل میل | حداکثر میل | قیمت تومان", ct);
+                    return true;
+                }
+                var affected = PriceableVolumes(type.Value, minimum, maximum);
+                if (affected.Length == 0)
+                {
+                    await ReplyAsync(message.Chat.Id, "در این بازه حجم استاندارد و مجازی برای این نوع شیشه وجود ندارد.", ct);
+                    return true;
+                }
+                _ownerPricingDrafts.Set(new TelegramOwnerPricingDraft
+                {
+                    ChatId = message.Chat.Id, UserId = message.From.Id,
+                    Kind = TelegramOwnerPricingKind.BottleRange, BottleType = type,
+                    MinimumVolumeMl = minimum, MaximumVolumeMl = maximum, Value = price
+                });
+                await SendOwnerPriceConfirmationAsync(message.Chat.Id,
+                    $"نوع: {(type == BottleType.Normal ? "نرمال" : "فانتزی")}\n" +
+                    $"حجم‌های تحت تأثیر: {string.Join("، ", affected)} میل\nقیمت جدید هر شیشه: {price:N0} تومان", ct);
+                return true;
+            }
+
+            var percentText = text[16..].Trim();
+            if (!decimal.TryParse(NormalizeNumber(percentText), System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var percent) || percent is <= -100 or > 1000 || percent == 0)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "درصد را با علامت وارد کنید؛ مثال افزایش ۵ درصد: /perfumepercent +5\nکاهش ۵ درصد: /perfumepercent -5", ct);
+                return true;
+            }
+            var perfumes = await _perfumeRepository.GetAllAsync(false, 200, ct);
+            _ownerPricingDrafts.Set(new TelegramOwnerPricingDraft
+            {
+                ChatId = message.Chat.Id, UserId = message.From.Id,
+                Kind = TelegramOwnerPricingKind.PerfumePercentage, Value = percent
+            });
+            var samples = perfumes.Take(3).Select(value =>
+                $"{value.EnglishName}: {value.PricePerMl:N0} ← {AdjustedPrice(value.PricePerMl, percent):N0}");
+            await SendOwnerPriceConfirmationAsync(message.Chat.Id,
+                $"تغییر قیمت کاتالوگ {perfumes.Count} عطر: {percent:+0.##;-0.##}%\n" +
+                string.Join("\n", samples) +
+                "\nقیمت لیست‌های منتشرشده تغییر نمی‌کند.", ct);
             return true;
         }
 
@@ -158,11 +234,45 @@ public sealed partial class TelegramWebhookController
     private async Task<bool> TryHandleAdminCallbackAsync(TelegramCallbackQuery callback, CancellationToken ct)
     {
         if (callback.Message is null || callback.Data is null ||
-            !callback.Data.StartsWith("invoiceadmin:", StringComparison.Ordinal))
+            !(callback.Data.StartsWith("invoiceadmin:", StringComparison.Ordinal) ||
+              callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal)))
             return false;
         if (!await IsAuthorizedInvoiceAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
         {
             await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مدیریت ندارید.", ct);
+            return true;
+        }
+
+        if (callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal))
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فقط مدیر اصلی مجاز است.", ct);
+                return true;
+            }
+            if (callback.Data == "ownerprice:cancel")
+            {
+                _ownerPricingDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
+                await _sender.AnswerCallbackAsync(callback.Id, "لغو شد.", ct);
+                return true;
+            }
+            await ApplyOwnerPricingDraftAsync(callback, ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:pricing")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این بخش فقط برای مدیر اصلی است.", ct);
+                return true;
+            }
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "مدیریت گروهی قیمت‌ها:\n\n" +
+                "/bottleprice نرمال | 5 | 10 | 30000\n" +
+                "/bottleprice فانتزی | 5 | 10 | 60000\n\n" +
+                "افزایش ۵ درصد قیمت کاتالوگ عطرها:\n/perfumepercent +5\n" +
+                "کاهش ۵ درصد:\n/perfumepercent -5", ct);
             return true;
         }
 
@@ -200,13 +310,15 @@ public sealed partial class TelegramWebhookController
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton("🧴 لیست فروش جدید", "adminlist:new")
-        }).ToArray();
+        }).ToList();
+        if (long.TryParse(_options.OwnerUserId, out _))
+            buttons.Add(new[] { new TelegramInlineButton("💰 راهنمای مدیریت قیمت‌ها", "invoiceadmin:pricing") });
         var message = (notice is null ? "" : notice + "\n\n") +
             $"⚙️ تنظیمات فاکتور زیباشی\n⏱ مهلت پرداخت: ۲۴ ساعت\n🏦 حساب‌ها: {accounts.Count}/4 (پیشنهاد: ۲ حساب فعال)\n\nحساب‌های بانکی:\n" + lines +
             "\n\nافزودن حساب:\n/bankadd شماره‌کارت | نام صاحب حساب | نام بانک";
         message += "\n\nثبت صف بطری بعدی (فقط ادمین):\n/nextbottle کدلیست | @username | مقدارمیل";
         message += "\n\nثبت مقدار سفارشی از کامنت:\n/listrequest کدلیست | @username | مقدارمیل | نرمال یا فانتزی";
-        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons.ToArray(), ct);
     }
 
     private async Task<bool> IsAuthorizedInvoiceAdminAsync(long chatId, long userId, CancellationToken ct) =>
@@ -220,4 +332,82 @@ public sealed partial class TelegramWebhookController
     }
 
     private static string FormatCard(string card) => string.Join('-', Enumerable.Range(0, 4).Select(i => card.Substring(i * 4, 4)));
+
+    private bool IsPrimaryOwner(long userId) =>
+        long.TryParse(_options.OwnerUserId, out var ownerUserId) && ownerUserId == userId;
+
+    private static readonly int[] StandardVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
+    private static int[] PriceableVolumes(BottleType type, int minimum, int maximum) =>
+        StandardVolumes.Where(volume => volume >= minimum && volume <= maximum &&
+            (volume != 3 || type == BottleType.Normal) &&
+            (volume <= 10 || type == BottleType.Fancy)).ToArray();
+
+    private async Task SendOwnerPriceConfirmationAsync(long chatId, string preview, CancellationToken ct) =>
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+            "پیش‌نمایش تغییر قیمت:\n\n" + preview,
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[]
+                {
+                    new TelegramInlineButton("✅ تأیید تغییر قیمت", "ownerprice:confirm"),
+                    new TelegramInlineButton("❌ لغو", "ownerprice:cancel")
+                }
+            }, ct);
+
+    private async Task ApplyOwnerPricingDraftAsync(TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        if (!_ownerPricingDrafts.TryGet(callback.Message!.Chat.Id, callback.From.Id, out var draft))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نمایش منقضی شده است.", ct);
+            return;
+        }
+        if (draft.Kind == TelegramOwnerPricingKind.BottleRange)
+        {
+            var affected = PriceableVolumes(draft.BottleType!.Value, draft.MinimumVolumeMl, draft.MaximumVolumeMl);
+            var existing = await _bottleRepository.GetForAdminAsync(true, 200, ct);
+            foreach (var volume in affected)
+            {
+                var bottle = existing.FirstOrDefault(value =>
+                    value.VolumeMl == volume && value.Type == draft.BottleType.Value);
+                if (bottle is null)
+                {
+                    await _bottleRepository.AddAsync(new Bottle
+                    {
+                        Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+                        Name = $"شیشه {(draft.BottleType == BottleType.Normal ? "نرمال" : "فانتزی")} {volume} میل",
+                        VolumeMl = volume, Type = draft.BottleType.Value,
+                        SalePrice = draft.Value, IsActive = true
+                    }, ct);
+                }
+                else
+                {
+                    bottle.SalePrice = draft.Value;
+                    bottle.IsActive = true;
+                    bottle.IsDeleted = false;
+                    bottle.UpdatedAt = DateTime.UtcNow;
+                    await _bottleRepository.UpdateAsync(bottle, ct);
+                }
+            }
+            await _bottleRepository.SaveChangesAsync(ct);
+        }
+        else
+        {
+            var perfumes = await _perfumeRepository.GetAllAsync(false, 200, ct);
+            foreach (var summary in perfumes)
+            {
+                var perfume = await _perfumeRepository.GetByIdAsync(summary.Id, ct);
+                if (perfume is null) continue;
+                perfume.PricePerMl = AdjustedPrice(perfume.PricePerMl, draft.Value);
+                perfume.UpdatedAt = DateTime.UtcNow;
+                await _perfumeRepository.UpdateAsync(perfume, ct);
+            }
+            await _perfumeRepository.SaveChangesAsync(ct);
+        }
+        _ownerPricingDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
+        await _sender.AnswerCallbackAsync(callback.Id, "تغییر قیمت اعمال شد ✅", ct);
+        await ReplyAsync(callback.Message.Chat.Id, "تغییر قیمت با موفقیت اعمال شد ✅", ct);
+    }
+
+    private static decimal AdjustedPrice(decimal price, decimal percent) =>
+        Math.Round(price * (1 + percent / 100m), 0, MidpointRounding.AwayFromZero);
 }
