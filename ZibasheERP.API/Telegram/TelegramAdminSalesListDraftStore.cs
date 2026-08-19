@@ -89,17 +89,29 @@ public sealed class TelegramAdminSalesListDraftStore
 }
 
 public enum TelegramOwnerPricingKind { BottleRange, PerfumePercentage }
+public enum TelegramOwnerPricingStage
+{
+    AwaitingBottleType,
+    AwaitingMinimumVolume,
+    AwaitingMaximumVolume,
+    AwaitingBottlePrice,
+    AwaitingPercentageDirection,
+    AwaitingPercentageValue,
+    AwaitingConfirmation
+}
 
 public sealed class TelegramOwnerPricingDraft
 {
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
-    public required TelegramOwnerPricingKind Kind { get; init; }
-    public BottleType? BottleType { get; init; }
-    public int MinimumVolumeMl { get; init; }
-    public int MaximumVolumeMl { get; init; }
-    public decimal Value { get; init; }
-    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+    public required TelegramOwnerPricingKind Kind { get; set; }
+    public TelegramOwnerPricingStage Stage { get; set; }
+    public BottleType? BottleType { get; set; }
+    public int MinimumVolumeMl { get; set; }
+    public int MaximumVolumeMl { get; set; }
+    public decimal Value { get; set; }
+    public int PercentageSign { get; set; } = 1;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class TelegramOwnerPricingDraftStore
@@ -107,6 +119,43 @@ public sealed class TelegramOwnerPricingDraftStore
     private readonly ConcurrentDictionary<(long, long), TelegramOwnerPricingDraft> _values = new();
     public void Set(TelegramOwnerPricingDraft value) => _values[(value.ChatId, value.UserId)] = value;
     public bool TryGet(long chatId, long userId, out TelegramOwnerPricingDraft value)
+    {
+        if (_values.TryGetValue((chatId, userId), out var found) &&
+            found.CreatedAt > DateTime.UtcNow.AddMinutes(-15))
+        {
+            value = found;
+            return true;
+        }
+        _values.TryRemove((chatId, userId), out _);
+        value = null!;
+        return false;
+    }
+    public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
+}
+
+public enum TelegramAdminRequestKind { NextBottle, CustomRequest }
+public enum TelegramAdminRequestStage { AwaitingIdentity, AwaitingVolume, AwaitingBottleType, AwaitingConfirmation }
+
+public sealed class TelegramAdminRequestDraft
+{
+    public required long ChatId { get; init; }
+    public required long UserId { get; init; }
+    public required TelegramAdminRequestKind Kind { get; init; }
+    public required Guid SalesListId { get; init; }
+    public required int PublicCode { get; init; }
+    public required string SalesListName { get; init; }
+    public TelegramAdminRequestStage Stage { get; set; } = TelegramAdminRequestStage.AwaitingIdentity;
+    public string Identity { get; set; } = string.Empty;
+    public int VolumeMl { get; set; }
+    public BottleType? BottleType { get; set; }
+    public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+}
+
+public sealed class TelegramAdminRequestDraftStore
+{
+    private readonly ConcurrentDictionary<(long, long), TelegramAdminRequestDraft> _values = new();
+    public void Set(TelegramAdminRequestDraft value) => _values[(value.ChatId, value.UserId)] = value;
+    public bool TryGet(long chatId, long userId, out TelegramAdminRequestDraft value)
     {
         if (_values.TryGetValue((chatId, userId), out var found) &&
             found.CreatedAt > DateTime.UtcNow.AddMinutes(-15))

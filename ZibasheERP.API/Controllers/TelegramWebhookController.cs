@@ -48,6 +48,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly ISalesListRequestRepository _salesListRequestRepository;
     private readonly TelegramAdminSalesListDraftStore _adminSalesListDrafts;
     private readonly TelegramOwnerPricingDraftStore _ownerPricingDrafts;
+    private readonly TelegramAdminRequestDraftStore _adminRequestDrafts;
     private readonly IBottleRepository _bottleRepository;
     private readonly IPerfumeRepository _perfumeRepository;
 
@@ -62,6 +63,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         ISalesListRequestRepository salesListRequestRepository,
         TelegramAdminSalesListDraftStore adminSalesListDrafts,
         TelegramOwnerPricingDraftStore ownerPricingDrafts,
+        TelegramAdminRequestDraftStore adminRequestDrafts,
         IBottleRepository bottleRepository,
         IPerfumeRepository perfumeRepository,
         ILogger<TelegramWebhookController> logger)
@@ -76,6 +78,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _salesListRequestRepository = salesListRequestRepository;
         _adminSalesListDrafts = adminSalesListDrafts;
         _ownerPricingDrafts = ownerPricingDrafts;
+        _adminRequestDrafts = adminRequestDrafts;
         _bottleRepository = bottleRepository;
         _perfumeRepository = perfumeRepository;
         _logger = logger;
@@ -753,6 +756,12 @@ public sealed partial class TelegramWebhookController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (await TryHandleAdminCommandAsync(message, cancellationToken))
+            return;
+
+        if (await TryHandleOwnerPricingMessageAsync(message, cancellationToken))
+            return;
+
+        if (await TryHandleAdminRequestMessageAsync(message, cancellationToken))
             return;
 
         if (await TryHandleAdminSalesListMessageAsync(message, cancellationToken))
