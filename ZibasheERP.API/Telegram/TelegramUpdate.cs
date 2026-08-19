@@ -14,7 +14,8 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("from")] TelegramUser? From,
     [property: JsonPropertyName("contact")] TelegramContact? Contact,
     [property: JsonPropertyName("photo")] IReadOnlyCollection<TelegramPhotoSize>? Photo = null,
-    [property: JsonPropertyName("caption")] string? Caption = null);
+    [property: JsonPropertyName("caption")] string? Caption = null,
+    [property: JsonPropertyName("message_id")] long MessageId = 0);
 
 public sealed record TelegramPhotoSize(
     [property: JsonPropertyName("file_id")] string FileId,
