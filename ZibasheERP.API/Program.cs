@@ -101,6 +101,9 @@ builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDedupli
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
 builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();
 builder.Services.AddSingleton<TelegramAdminRequestDraftStore>();
+builder.Services.AddSingleton<TelegramTemporaryMessageCleaner>();
+builder.Services.AddHostedService(serviceProvider =>
+    serviceProvider.GetRequiredService<TelegramTemporaryMessageCleaner>());
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddScoped<ITelegramGroupMembershipTracker, TelegramGroupMembershipTracker>();
 builder.Services.AddHostedService<TelegramOutboxWorker>();
