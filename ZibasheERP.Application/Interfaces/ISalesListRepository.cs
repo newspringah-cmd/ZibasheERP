@@ -18,6 +18,9 @@ public interface ISalesListRepository
         Guid batchId,
         CancellationToken cancellationToken = default);
 
+    Task<bool> PublicCodeExistsAsync(int publicCode, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
     Task AddAsync(SalesList salesList, CancellationToken cancellationToken = default);
 
     Task UpdateAsync(SalesList salesList, CancellationToken cancellationToken = default);

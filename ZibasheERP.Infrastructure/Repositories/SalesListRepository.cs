@@ -72,6 +72,11 @@ public class SalesListRepository : ISalesListRepository
                           salesList.Status == SalesListStatus.Invoiced),
             cancellationToken);
 
+    public Task<bool> PublicCodeExistsAsync(int publicCode, CancellationToken cancellationToken = default) =>
+        _dbContext.SalesLists.AnyAsync(
+            salesList => !salesList.IsDeleted && salesList.PublicCode == publicCode,
+            cancellationToken);
+
     public Task AddAsync(
         SalesList salesList,
         CancellationToken cancellationToken = default) =>

@@ -8,7 +8,17 @@ public sealed record CreateSalesListCommand(
     int TotalVolume,
     string? TelegramChannelId,
     string? Notes,
-    int MinimumRequestVolumeMl = 1) : IRequest<AdminSalesListResponse>;
+    int MinimumRequestVolumeMl = 1,
+    string? EnglishName = null,
+    string? ProductPageUrl = null,
+    string? DisplayBrand = null,
+    int Gender = 3,
+    int ReleaseYear = 0,
+    string? PersianName = null,
+    string? TopNotes = null,
+    string? MiddleNotes = null,
+    string? BaseNotes = null,
+    string? Accords = null) : IRequest<AdminSalesListResponse>;
 
 public sealed record CloseSalesListCommand(Guid SalesListId)
     : IRequest<AdminSalesListResponse>;
@@ -33,4 +43,5 @@ public sealed record AdminSalesListResponse(
     DateTime OpenDate,
     DateTime? ClosedDate,
     string? TelegramChannelId,
-    string? Notes);
+    string? Notes,
+    int PublicCode = 0);

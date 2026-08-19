@@ -58,6 +58,7 @@ public sealed partial class TelegramWebhookController
             var code = values[0].Trim();
             var lists = await _salesListRepository.GetForAdminAsync(200, ct);
             var matches = lists.Where(value =>
+                value.PublicCode.ToString() == code ||
                 value.Id.ToString("N").StartsWith(code, StringComparison.OrdinalIgnoreCase)).ToArray();
             if (matches.Length != 1)
             {
@@ -101,8 +102,9 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             var lists = await _salesListRepository.GetForAdminAsync(200, ct);
-            var matches = lists.Where(value => value.Id.ToString("N").StartsWith(
-                values[0].Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            var matches = lists.Where(value =>
+                value.PublicCode.ToString() == values[0].Trim() ||
+                value.Id.ToString("N").StartsWith(values[0].Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
             if (matches.Length != 1)
             {
                 await ReplyAsync(message.Chat.Id, matches.Length == 0

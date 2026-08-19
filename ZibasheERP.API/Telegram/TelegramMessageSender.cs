@@ -191,6 +191,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 chat_id = chatId,
                 photo,
                 caption,
+                parse_mode = "HTML",
                 reply_markup = new
                 {
                     inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
@@ -211,6 +212,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 chat_id = chatId,
                 message_id = messageId,
                 caption,
+                parse_mode = "HTML",
                 reply_markup = new
                 {
                     inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()

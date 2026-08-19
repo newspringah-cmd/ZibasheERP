@@ -3,6 +3,7 @@ using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using System.Net;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -212,20 +213,35 @@ public sealed partial class TelegramWebhookController
     private static string FormatChannelSalesList(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests)
     {
-        var perfume = list.Batch.Perfume;
         var roster = requests
             .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
             .GroupBy(value => value.VolumeMl)
             .OrderByDescending(value => value.Key)
-            .Select(value => $"{value.Key} ml:\n" + string.Join("\n", value.Select(DisplayUser)));
+            .Select(value => $"{value.Key} ml:\n" + string.Join("\n", value.Select(item => Html(DisplayUser(item)))));
         var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle).ToArray();
-        return $"کد: {list.Id.ToString("N")[..8]}\n" +
-            $"{perfume.EnglishName}\n#{perfume.Brand.Replace(' ', '_')}\n\n" +
-            $"{perfume.Name}\n{perfume.Notes}\n\n" +
+        var gender = list.Gender switch
+        {
+            PerfumeGender.Women => "#زنانه 👩",
+            PerfumeGender.Men => "#مردانه 👨",
+            _ => "#یونیسکس 👩‍🦰👨"
+        };
+        var englishName = Html(list.EnglishName);
+        var linkedName = string.IsNullOrWhiteSpace(list.ProductPageUrl)
+            ? englishName
+            : $"<a href=\"{Html(list.ProductPageUrl)}\">{englishName}</a>";
+        var brandTag = "#" + Html(list.DisplayBrand.Replace(' ', '_'));
+        return $"کد: <b>{list.PublicCode}</b>\n" +
+            $"{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
+            $"{Html(list.PersianName)}\n\n" +
+            $"🍊 نت ابتدایی: {Html(list.TopNotes)}\n" +
+            $"🌸 نت میانی: {Html(list.MiddleNotes)}\n" +
+            $"🌳 نت پایانی: {Html(list.BaseNotes)}\n" +
+            $"🎼 آکوردها: {Html(list.Accords)}\n\n" +
             $"حجم کل: {list.TotalVolume}ml\nقیمت هر میل: {list.PricePerMl:N0} تومان\n" +
             $"حداقل میل درخواستی: {list.MinimumRequestVolumeMl} میل\nباقی‌مانده: {list.RemainingVolume} میل\n\n" +
             string.Join("\n\n", roster) +
-            (next.Length == 0 ? string.Empty : "\n\nNext Bottle:\n" + string.Join("\n", next.Select(DisplayUser)));
+            "\n\nNext Bottle:\n" +
+            (next.Length == 0 ? "—" : string.Join("\n", next.Select(item => Html(DisplayUser(item)))));
     }
 
     private static string DisplayUser(SalesListRequest request) =>
@@ -237,6 +253,7 @@ public sealed partial class TelegramWebhookController
     private static string BottleLabel(string type) =>
         string.Equals(type, nameof(BottleType.Fancy), StringComparison.OrdinalIgnoreCase) ? "شیشه فانتزی" : "شیشه نرمال";
     private static string EncodeCompactGuid(Guid value) => TelegramCallbackParser.EncodeGuid(value);
+    private static string Html(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
     private static bool TryDecodeCompactGuid(string value, out Guid result)
     {
         try

@@ -34,10 +34,23 @@ public sealed class CreateSalesListCommandHandler
             throw new InvalidOperationException("برای این بچ یک لیست فروش فعال وجود دارد.");
 
         var now = DateTime.UtcNow;
+        var publicCode = await GeneratePublicCodeAsync(cancellationToken);
         var salesList = new SalesList
         {
             Id = Guid.NewGuid(),
             CreatedAt = now,
+            PublicCode = publicCode,
+            EnglishName = NormalizeRequired(request.EnglishName, batch.Perfume.EnglishName),
+            ProductPageUrl = NormalizeOptional(request.ProductPageUrl) ?? string.Empty,
+            DisplayBrand = NormalizeRequired(request.DisplayBrand, batch.Perfume.Brand),
+            Gender = Enum.IsDefined(typeof(PerfumeGender), request.Gender)
+                ? (PerfumeGender)request.Gender : PerfumeGender.Unisex,
+            ReleaseYear = request.ReleaseYear,
+            PersianName = NormalizeRequired(request.PersianName, batch.Perfume.Name),
+            TopNotes = NormalizeOptional(request.TopNotes) ?? string.Empty,
+            MiddleNotes = NormalizeOptional(request.MiddleNotes) ?? string.Empty,
+            BaseNotes = NormalizeOptional(request.BaseNotes) ?? string.Empty,
+            Accords = NormalizeOptional(request.Accords) ?? string.Empty,
             BatchId = batch.Id,
             Batch = batch,
             PricePerMl = request.PricePerMl,
@@ -57,6 +70,20 @@ public sealed class CreateSalesListCommandHandler
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string NormalizeRequired(string? value, string fallback) =>
+        NormalizeOptional(value) ?? fallback.Trim();
+
+    private async Task<int> GeneratePublicCodeAsync(CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var code = Random.Shared.Next(10000, 100000);
+            if (!await _salesListRepository.PublicCodeExistsAsync(code, cancellationToken))
+                return code;
+        }
+        throw new InvalidOperationException("تولید کد یکتای لیست ناموفق بود؛ دوباره تلاش کنید.");
+    }
 }
 
 public sealed class CloseSalesListCommandHandler
@@ -129,5 +156,6 @@ internal static class SalesListMapper
         salesList.OpenDate,
         salesList.ClosedDate,
         salesList.TelegramChannelId,
-        salesList.Notes);
+        salesList.Notes,
+        salesList.PublicCode);
 }

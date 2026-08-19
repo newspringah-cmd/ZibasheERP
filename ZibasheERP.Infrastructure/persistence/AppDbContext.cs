@@ -160,6 +160,11 @@ public class AppDbContext : DbContext
     private static void ConfigureSalesList(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<SalesList>()
+            .HasIndex(x => x.PublicCode)
+            .IsUnique()
+            .HasFilter("[PublicCode] > 0");
+
+        modelBuilder.Entity<SalesList>()
             .Property(x => x.PricePerMl)
             .HasPrecision(18, 2);
 

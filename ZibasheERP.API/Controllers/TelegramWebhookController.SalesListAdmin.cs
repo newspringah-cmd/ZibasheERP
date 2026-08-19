@@ -98,6 +98,91 @@ public sealed partial class TelegramWebhookController
 
         switch (draft.Stage)
         {
+            case TelegramAdminSalesListStage.AwaitingEnglishName:
+                draft.EnglishName = Limit(input, 200);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingProductPageUrl;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "لینک کامل صفحه عطر در سایت عطردان را وارد کنید؛ باید با https:// شروع شود.", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingProductPageUrl:
+                if (!Uri.TryCreate(input, UriKind.Absolute, out var productUri) || productUri.Scheme != Uri.UriSchemeHttps)
+                {
+                    await ForceReplyAsync(message.Chat.Id, "لینک معتبر نیست. لینک کامل https صفحه عطر را وارد کنید.", cancellationToken);
+                    return true;
+                }
+                draft.ProductPageUrl = Limit(productUri.ToString(), 500);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingBrand;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "نام برند را به انگلیسی وارد کنید؛ مثال: Chanel", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingBrand:
+                draft.DisplayBrand = Limit(input, 150);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingGender;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "جنسیت عطر را وارد کنید: زنانه، مردانه یا یونیسکس", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingGender:
+                if (!TryParseGender(input, out var gender))
+                {
+                    await ForceReplyAsync(message.Chat.Id, "فقط یکی از این سه مقدار را بفرستید: زنانه، مردانه، یونیسکس", cancellationToken);
+                    return true;
+                }
+                draft.Gender = gender;
+                draft.Stage = TelegramAdminSalesListStage.AwaitingReleaseYear;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "سال تولید عطر را میلادی وارد کنید؛ مثال: 2021", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingReleaseYear:
+                if (!TryParsePositiveInt(input, out var releaseYear) || releaseYear is < 1800 or > 2100)
+                {
+                    await ForceReplyAsync(message.Chat.Id, "سال تولید معتبر نیست؛ مثال: 2021", cancellationToken);
+                    return true;
+                }
+                draft.ReleaseYear = releaseYear;
+                draft.Stage = TelegramAdminSalesListStage.AwaitingPersianName;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "نام فارسی عطر را وارد کنید.", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingPersianName:
+                draft.PersianName = Limit(input, 200);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingTopNotes;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "نت‌های ابتدایی را به فارسی وارد کنید.", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingTopNotes:
+                draft.TopNotes = Limit(input, 500);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingMiddleNotes;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "نت‌های میانی را به فارسی وارد کنید.", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingMiddleNotes:
+                draft.MiddleNotes = Limit(input, 500);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingBaseNotes;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "نت‌های پایانی را به فارسی وارد کنید.", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingBaseNotes:
+                draft.BaseNotes = Limit(input, 500);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingAccords;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "آکوردهای اصلی را به فارسی وارد کنید.", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingAccords:
+                draft.Accords = Limit(input, 500);
+                draft.Stage = TelegramAdminSalesListStage.AwaitingPrice;
+                _adminSalesListDrafts.Set(draft);
+                await ForceReplyAsync(message.Chat.Id, "قیمت فروش هر میل را به تومان وارد کنید؛ مثال: 150000", cancellationToken);
+                return true;
+
             case TelegramAdminSalesListStage.AwaitingPrice:
                 if (!TryParsePositiveDecimal(input, out var price))
                 {
@@ -215,7 +300,7 @@ public sealed partial class TelegramWebhookController
         };
         _adminSalesListDrafts.Set(draft);
         await _sender.AnswerCallbackAsync(callback.Id, "بچ انتخاب شد.", cancellationToken);
-        await ForceReplyAsync(draft.ChatId, $"بچ «{batch.PerfumeName} — {batch.BatchNumber}» انتخاب شد.\nقیمت فروش هر میل را به تومان وارد کنید؛ مثال: 150000", cancellationToken);
+        await ForceReplyAsync(draft.ChatId, $"بچ «{batch.PerfumeName} — {batch.BatchNumber}» انتخاب شد.\nنام انگلیسی عطر را وارد کنید.", cancellationToken);
     }
 
     private async Task SendSalesListPreviewAsync(
@@ -272,7 +357,17 @@ public sealed partial class TelegramWebhookController
                         draft.TotalVolume,
                         _options.SalesChannelId,
                         draft.Notes,
-                        draft.MinimumRequestVolumeMl),
+                        draft.MinimumRequestVolumeMl,
+                        draft.EnglishName,
+                        draft.ProductPageUrl,
+                        draft.DisplayBrand,
+                        draft.Gender,
+                        draft.ReleaseYear,
+                        draft.PersianName,
+                        draft.TopNotes,
+                        draft.MiddleNotes,
+                        draft.BaseNotes,
+                        draft.Accords),
                     cancellationToken);
                 draft.SalesListId = created.Id;
                 _adminSalesListDrafts.Set(draft);
@@ -310,7 +405,7 @@ public sealed partial class TelegramWebhookController
                 var discussion = await _sender.SendAsync(
                     _options.SalesChannelId,
                     $"💬 پرسش‌ها و درخواست مقدار سفارشی برای {draft.PerfumeName}\n" +
-                    $"کد لیست: {salesList.Id.ToString("N")[..8]}\n" +
+                    $"کد لیست: {salesList.PublicCode}\n" +
                     "اگر مقدار موردنظر در دکمه‌ها نیست، آن را در پاسخ به این پیام بنویسید تا ادمین ثبت کند.",
                     cancellationToken);
                 if (discussion.IsSuccessful)
@@ -338,7 +433,14 @@ public sealed partial class TelegramWebhookController
 
     private static string FormatSalesListAnnouncement(TelegramAdminSalesListDraft draft) =>
         $"🌿 لیست فروش جدید زیباشی\n" +
-        $"🧴 {draft.PerfumeName} — {draft.Brand}\n" +
+        $"🧴 {draft.EnglishName}\n" +
+        $"🔗 {draft.ProductPageUrl}\n" +
+        $"🏷 #{draft.DisplayBrand.Replace(' ', '_')} — {GenderLabel(draft.Gender)} — L.{draft.ReleaseYear}\n" +
+        $"🇮🇷 {draft.PersianName}\n" +
+        $"🍊 نت ابتدایی: {draft.TopNotes}\n" +
+        $"🌸 نت میانی: {draft.MiddleNotes}\n" +
+        $"🌳 نت پایانی: {draft.BaseNotes}\n" +
+        $"🎼 آکوردها: {draft.Accords}\n" +
         $"🏷 بچ: {draft.BatchNumber}\n" +
         $"💧 حجم قابل فروش: {draft.TotalVolume:N0} میل\n" +
         $"📏 حداقل درخواست: {draft.MinimumRequestVolumeMl:N0} میل\n" +
@@ -364,4 +466,27 @@ public sealed partial class TelegramWebhookController
         });
         return new string(chars.ToArray());
     }
+
+    private static string Limit(string value, int maximum) =>
+        value.Trim().Length <= maximum ? value.Trim() : value.Trim()[..maximum];
+
+    private static bool TryParseGender(string value, out int gender)
+    {
+        var normalized = value.Trim().ToLowerInvariant();
+        gender = normalized switch
+        {
+            "زنانه" or "women" or "female" => 1,
+            "مردانه" or "men" or "male" => 2,
+            "یونیسکس" or "unisex" => 3,
+            _ => 0
+        };
+        return gender != 0;
+    }
+
+    private static string GenderLabel(int gender) => gender switch
+    {
+        1 => "#زنانه 👩",
+        2 => "#مردانه 👨",
+        _ => "#یونیسکس 👩‍🦰👨"
+    };
 }

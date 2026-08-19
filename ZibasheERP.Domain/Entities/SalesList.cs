@@ -12,8 +12,45 @@ public enum SalesListStatus
     Cancelled = 6      // لغو شده
 }
 
+public enum PerfumeGender
+{
+    Women = 1,
+    Men = 2,
+    Unisex = 3
+}
+
 public class SalesList : BaseEntity
 {
+    public int PublicCode { get; set; }
+
+    [MaxLength(200)]
+    public string EnglishName { get; set; } = string.Empty;
+
+    [MaxLength(500)]
+    public string ProductPageUrl { get; set; } = string.Empty;
+
+    [MaxLength(150)]
+    public string DisplayBrand { get; set; } = string.Empty;
+
+    public PerfumeGender Gender { get; set; } = PerfumeGender.Unisex;
+
+    public int ReleaseYear { get; set; }
+
+    [MaxLength(200)]
+    public string PersianName { get; set; } = string.Empty;
+
+    [MaxLength(500)]
+    public string TopNotes { get; set; } = string.Empty;
+
+    [MaxLength(500)]
+    public string MiddleNotes { get; set; } = string.Empty;
+
+    [MaxLength(500)]
+    public string BaseNotes { get; set; } = string.Empty;
+
+    [MaxLength(500)]
+    public string Accords { get; set; } = string.Empty;
+
     // بچ مربوط به این لیست
     public Guid BatchId { get; set; }
 
