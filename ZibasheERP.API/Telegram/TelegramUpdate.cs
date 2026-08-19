@@ -30,7 +30,9 @@ public sealed record TelegramChat(
 
 public sealed record TelegramUser(
     [property: JsonPropertyName("id")] long Id,
-    [property: JsonPropertyName("username")] string? Username);
+    [property: JsonPropertyName("username")] string? Username,
+    [property: JsonPropertyName("first_name")] string? FirstName = null,
+    [property: JsonPropertyName("last_name")] string? LastName = null);
 
 public sealed record TelegramContact(
     [property: JsonPropertyName("phone_number")] string PhoneNumber,

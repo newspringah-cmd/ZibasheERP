@@ -117,18 +117,23 @@ public sealed partial class TelegramWebhookController
             (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton(
-                    $"{BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان",
+                    $"{volume} میل {BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان",
                     $"slb:{EncodeCompactGuid(request.Id)}:{EncodeCompactGuid(bottle.Id)}")
             }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}")
             }).ToArray();
-        await _sender.SendInlineKeyboardAsync(
-            _options.SalesDiscussionChatId,
-            $"کاربر {DisplayUser(request)}\n{warning}برای درخواست {volume} میل، نوع شیشه را انتخاب کنید:",
-            rows,
-            cancellationToken);
-        await _sender.AnswerCallbackAsync(callback.Id, "انتخاب شیشه در بخش گفت‌وگو ارسال شد.", cancellationToken);
+        var prompt = $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}برای درخواست {volume} میل، نوع شیشه را انتخاب کنید:";
+        var privateResult = await _sender.SendInlineKeyboardAsync(
+            callback.From.Id.ToString(), prompt, rows, cancellationToken);
+        if (privateResult.IsSuccessful)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "گزینه‌های شیشه در گفت‌وگوی خصوصی ربات ارسال شد.", cancellationToken);
+            return;
+        }
+        await _sender.SendInlineKeyboardAsync(_options.SalesDiscussionChatId, prompt, rows, cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id,
+            "ابتدا ربات را Start کنید؛ گزینه‌ها فعلاً در بخش گفت‌وگو ارسال شد.", cancellationToken);
     }
 
     private async Task SelectChannelBottleAsync(
@@ -158,15 +163,16 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("❌ خیر", $"sln:{EncodeCompactGuid(request.Id)}")
             }
         };
-        await _sender.SendInlineKeyboardAsync(
-            _options.SalesDiscussionChatId,
-            $"کاربر {DisplayUser(request)}، آیا از ثبت این درخواست مطمئن هستید؟\n\n" +
+        var confirmation =
+            $"کاربر {DisplayTelegramUser(callback.From)}، آیا از ثبت این درخواست مطمئن هستید؟\n\n" +
             duplicate +
             $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
             $"شیشه: {BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان\n" +
-            $"مبلغ کل: {total:N0} تومان",
-            rows,
-            cancellationToken);
+            $"مبلغ کل: {total:N0} تومان";
+        var privateResult = await _sender.SendInlineKeyboardAsync(
+            callback.From.Id.ToString(), confirmation, rows, cancellationToken);
+        if (!privateResult.IsSuccessful)
+            await _sender.SendInlineKeyboardAsync(_options.SalesDiscussionChatId, confirmation, rows, cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, "نوع شیشه انتخاب شد.", cancellationToken);
     }
 
@@ -180,6 +186,23 @@ public sealed partial class TelegramWebhookController
         await _salesListRequestRepository.ConfirmCurrentBottleAsync(
             request.Id, callback.From.Id.ToString(), cancellationToken);
         await RefreshChannelSalesListAsync(request.SalesListId, cancellationToken);
+        var confirmed = await _salesListRequestRepository.GetAsync(request.Id, cancellationToken)
+            ?? request;
+        var bottleText = confirmed.Bottle is null
+            ? "نامشخص"
+            : $"{BottleLabel(confirmed.Bottle.Type.ToString())} — {confirmed.BottlePrice:N0} تومان";
+        var total = confirmed.VolumeMl * confirmed.PerfumePricePerMl + confirmed.BottlePrice;
+        var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
+        await _sender.SendAsync(_options.AdminChatId,
+            "✅ ثبت جدید در لیست فروش\n" +
+            $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
+            $"کاربر: {DisplayTelegramUser(callback.From)}\n" +
+            $"Telegram ID: {callback.From.Id}\n" +
+            $"کد لیست: {confirmed.SalesList.PublicCode}\n" +
+            $"عطر: {confirmed.SalesList.EnglishName}\n" +
+            $"مقدار: {confirmed.VolumeMl} میل\n" +
+            $"شیشه: {bottleText}\n" +
+            $"مبلغ کل: {total:N0} تومان", cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست با موفقیت ثبت شد ✅", cancellationToken);
     }
 
@@ -334,6 +357,13 @@ public sealed partial class TelegramWebhookController
         string.IsNullOrWhiteSpace(request.TelegramUsername)
             ? $"کاربر {request.TelegramUserId}"
             : $"@{request.TelegramUsername.TrimStart('@')}";
+    private static string DisplayTelegramUser(TelegramUser user)
+    {
+        var fullName = string.Join(' ', new[] { user.FirstName, user.LastName }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        var identity = string.IsNullOrWhiteSpace(user.Username) ? user.Id.ToString() : $"@{user.Username}";
+        return string.IsNullOrWhiteSpace(fullName) ? identity : $"{fullName} ({identity})";
+    }
     private static string? NormalizeUsername(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimStart('@');
     private static string BottleLabel(string type) =>
