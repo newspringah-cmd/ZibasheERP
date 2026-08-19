@@ -94,10 +94,12 @@ public sealed partial class TelegramWebhookController
             });
             var samples = perfumes.Take(3).Select(value =>
                 $"{value.EnglishName}: {value.PricePerMl:N0} ← {AdjustedPrice(value.PricePerMl, percent):N0}");
+            var openListsCount = (await _salesListRepository.GetForAdminAsync(200, ct))
+                .Count(value => value.Status == SalesListStatus.Open);
             await SendOwnerPriceConfirmationAsync(message.Chat.Id,
                 $"تغییر قیمت کاتالوگ {perfumes.Count} عطر: {percent:+0.##;-0.##}%\n" +
                 string.Join("\n", samples) +
-                "\nقیمت لیست‌های منتشرشده تغییر نمی‌کند.", ct);
+                $"\n{openListsCount} لیست فروش باز نیز به‌روزرسانی می‌شود؛ فاکتورها و لیست‌های بسته تغییر نمی‌کنند.", ct);
             return true;
         }
 
@@ -546,9 +548,12 @@ public sealed partial class TelegramWebhookController
             var perfumes = await _perfumeRepository.GetAllAsync(false, 200, ct);
             var samples = perfumes.Take(3).Select(value =>
                 $"{value.EnglishName}: {value.PricePerMl:N0} ← {AdjustedPrice(value.PricePerMl, draft.Value):N0}");
+            var openListsCount = (await _salesListRepository.GetForAdminAsync(200, ct))
+                .Count(value => value.Status == SalesListStatus.Open);
             await SendOwnerPriceConfirmationAsync(message.Chat.Id,
                 $"تغییر قیمت کاتالوگ {perfumes.Count} عطر: {draft.Value:+0.##;-0.##}%\n" +
-                string.Join("\n", samples) + "\nقیمت لیست‌های منتشرشده تغییر نمی‌کند.", ct);
+                string.Join("\n", samples) +
+                $"\n{openListsCount} لیست فروش باز نیز به‌روزرسانی می‌شود؛ فاکتورها و لیست‌های بسته تغییر نمی‌کنند.", ct);
             return true;
         }
 
@@ -1004,6 +1009,21 @@ public sealed partial class TelegramWebhookController
                 await _perfumeRepository.UpdateAsync(perfume, ct);
             }
             await _perfumeRepository.SaveChangesAsync(ct);
+
+            var openLists = (await _salesListRepository.GetForAdminAsync(200, ct))
+                .Where(value => value.Status == SalesListStatus.Open)
+                .ToArray();
+            foreach (var summary in openLists)
+            {
+                var list = await _salesListRepository.GetByIdAsync(summary.Id, ct);
+                if (list is null) continue;
+                list.PricePerMl = AdjustedPrice(list.PricePerMl, draft.Value);
+                list.UpdatedAt = DateTime.UtcNow;
+                await _salesListRepository.UpdateAsync(list, ct);
+            }
+            await _salesListRepository.SaveChangesAsync(ct);
+            foreach (var list in openLists.Where(value => value.TelegramMessageId.HasValue))
+                await RefreshChannelSalesListAsync(list.Id, ct);
         }
         _ownerPricingDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, "تغییر قیمت اعمال شد ✅", ct);
