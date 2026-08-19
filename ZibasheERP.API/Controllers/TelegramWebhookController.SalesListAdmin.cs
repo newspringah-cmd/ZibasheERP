@@ -1,6 +1,7 @@
 using System.Globalization;
 using MediatR;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
 using ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
 
 namespace ZibasheERP.API.Controllers;
@@ -29,8 +30,23 @@ public sealed partial class TelegramWebhookController
             case "new":
             case "restart":
                 _adminSalesListDrafts.Remove(chatId, userId);
-                await SendPerfumeSelectionAsync(chatId, cancellationToken);
+                await SendNewSalesListSourceMenuAsync(chatId, cancellationToken);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+                return true;
+
+            case "newperfume":
+                await StartNewPerfumeDraftAsync(callback, cancellationToken);
+                return true;
+
+            case "search":
+                _adminSalesListDrafts.Set(new TelegramAdminSalesListDraft
+                {
+                    ChatId = chatId,
+                    UserId = userId,
+                    Stage = TelegramAdminSalesListStage.AwaitingPerfumeSearch
+                });
+                await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+                await ReplyAsync(chatId, "نام فارسی، نام انگلیسی یا برند عطر را برای جستجو وارد کنید.", cancellationToken);
                 return true;
 
             case "perfume" when parts.Length == 3 && Guid.TryParseExact(parts[2], "N", out var perfumeId):
@@ -97,6 +113,10 @@ public sealed partial class TelegramWebhookController
 
         switch (draft.Stage)
         {
+            case TelegramAdminSalesListStage.AwaitingPerfumeSearch:
+                await SendPerfumeSearchResultsAsync(message.Chat.Id, input, cancellationToken);
+                return true;
+
             case TelegramAdminSalesListStage.AwaitingEnglishName:
                 draft.EnglishName = Limit(input, 200);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingProductPageUrl;
@@ -191,7 +211,7 @@ public sealed partial class TelegramWebhookController
                 draft.PricePerMl = price;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingVolume;
                 _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "حجم هدف پیش‌فروش را به میل وارد کنید؛ مثال: 100", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "برای باز کردن لیست جدید، حجم کل را به میل وارد کنید؛ مثال: 100", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingVolume:
@@ -234,7 +254,7 @@ public sealed partial class TelegramWebhookController
         }
     }
 
-    private async Task SendPerfumeSelectionAsync(long chatId, CancellationToken cancellationToken)
+    private async Task SendNewSalesListSourceMenuAsync(long chatId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.SalesChannelId))
         {
@@ -242,25 +262,53 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        var perfumes = (await _perfumeRepository.GetAllAsync(false, 100, cancellationToken))
-            .Take(20).ToArray();
+        var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[] { new TelegramInlineButton("➕ عطر جدید", "adminlist:newperfume") },
+            new[] { new TelegramInlineButton("🔎 جستجوی عطرهای ثبت‌شده", "adminlist:search") },
+            new[]
+            {
+                new TelegramInlineButton("لغو", "adminlist:cancel")
+            }
+        };
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), "برای ساخت لیست فروش جدید یکی از گزینه‌ها را انتخاب کنید:", buttons, cancellationToken);
+    }
+
+    private async Task SendPerfumeSearchResultsAsync(long chatId, string query, CancellationToken cancellationToken)
+    {
+        var normalized = query.Trim();
+        var perfumes = (await _perfumeRepository.GetAllAsync(false, 500, cancellationToken))
+            .Where(perfume => perfume.Name.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                              perfume.EnglishName.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                              perfume.Brand.Contains(normalized, StringComparison.OrdinalIgnoreCase))
+            .Take(20)
+            .ToArray();
         if (perfumes.Length == 0)
         {
-            await ReplyAsync(chatId, "عطر فعالی برای ساخت لیست فروش وجود ندارد. ابتدا عطر را در کاتالوگ ثبت کنید.", cancellationToken);
+            await ReplyAsync(chatId, "عطری پیدا نشد. عبارت دیگری بفرستید یا از منو «عطر جدید» را انتخاب کنید.", cancellationToken);
             return;
         }
 
         var buttons = perfumes.Select(perfume =>
             (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
-                new TelegramInlineButton(
-                    $"{perfume.EnglishName} — {perfume.Brand}",
-                    $"adminlist:perfume:{perfume.Id:N}")
-            }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-            {
-                new TelegramInlineButton("لغو", "adminlist:cancel")
-            }).ToArray();
-        await _sender.SendInlineKeyboardAsync(chatId.ToString(), "برای پیش‌فروش جدید، عطر موردنظر را انتخاب کنید:", buttons, cancellationToken);
+                new TelegramInlineButton($"{perfume.EnglishName} — {perfume.Brand}", $"adminlist:perfume:{perfume.Id:N}")
+            }).Append(new[] { new TelegramInlineButton("❌ لغو", "adminlist:cancel") }).ToArray();
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), $"نتایج جستجو برای «{normalized}»:", buttons, cancellationToken);
+    }
+
+    private async Task StartNewPerfumeDraftAsync(TelegramCallbackQuery callback, CancellationToken cancellationToken)
+    {
+        var draft = new TelegramAdminSalesListDraft
+        {
+            ChatId = callback.Message!.Chat.Id,
+            UserId = callback.From.Id,
+            IsNewPerfume = true,
+            Stage = TelegramAdminSalesListStage.AwaitingEnglishName
+        };
+        _adminSalesListDrafts.Set(draft);
+        await _sender.AnswerCallbackAsync(callback.Id, "ثبت عطر جدید آغاز شد.", cancellationToken);
+        await ReplyAsync(draft.ChatId, "نام انگلیسی عطر جدید را وارد کنید.", cancellationToken);
     }
 
     private async Task StartSalesListDraftAsync(
@@ -281,7 +329,10 @@ public sealed partial class TelegramWebhookController
             UserId = callback.From.Id,
             PerfumeId = perfume.Id,
             PerfumeName = perfume.Name,
-            Brand = perfume.Brand
+            Brand = perfume.Brand,
+            EnglishName = perfume.EnglishName,
+            DisplayBrand = perfume.Brand,
+            PersianName = perfume.Name
         };
         _adminSalesListDrafts.Set(draft);
         await _sender.AnswerCallbackAsync(callback.Id, "عطر انتخاب شد.", cancellationToken);
@@ -335,9 +386,23 @@ public sealed partial class TelegramWebhookController
         {
             if (!draft.SalesListId.HasValue)
             {
+                if (!draft.PerfumeId.HasValue)
+                {
+                    var perfume = await _mediator.Send(new CreatePerfumeCommand(
+                        draft.PersianName,
+                        draft.EnglishName,
+                        draft.DisplayBrand,
+                        draft.PricePerMl,
+                        draft.TotalVolume,
+                        draft.Notes), cancellationToken);
+                    draft.PerfumeId = perfume.Id;
+                    draft.PerfumeName = perfume.Name;
+                    draft.Brand = perfume.Brand;
+                }
+
                 var created = await _mediator.Send(
                     new CreateSalesListCommand(
-                        draft.PerfumeId,
+                        draft.PerfumeId.Value,
                         draft.PricePerMl,
                         draft.TotalVolume,
                         _options.SalesChannelId,
@@ -420,7 +485,7 @@ public sealed partial class TelegramWebhookController
         $"🌸 نت‌های میانی: {draft.MiddleNotes}\n" +
         $"🌳 نت‌های پایانی: {draft.BaseNotes}\n" +
         $"🎼 آکوردها: {draft.Accords}\n" +
-        $"💧 حجم هدف پیش‌فروش: {draft.TotalVolume:N0} میل\n" +
+        $"💧 حجم کل: {draft.TotalVolume:N0} میل\n" +
         $"📏 حداقل درخواست: {draft.MinimumRequestVolumeMl:N0} میل\n" +
         $"💰 قیمت هر میل: {draft.PricePerMl:N0} تومان" +
         (string.IsNullOrWhiteSpace(draft.Notes) ? string.Empty : $"\n📝 {draft.Notes}");

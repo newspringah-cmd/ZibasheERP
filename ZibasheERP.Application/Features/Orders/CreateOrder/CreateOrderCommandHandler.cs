@@ -80,7 +80,7 @@ public class CreateOrderCommandHandler
 
         if (!salesList.BatchId.HasValue)
             throw new InvalidOperationException(
-                "این پیش‌فروش هنوز خریداری نشده و بچ واقعی به آن متصل نیست؛ ابتدا خرید عطر را ثبت کنید.");
+                "برای این لیست هنوز عطر خریداری نشده و بچ واقعی به آن متصل نیست؛ ابتدا خرید عطر را ثبت کنید.");
 
         var batch = await _batchRepository.GetByIdAsync(
             salesList.BatchId.Value,
