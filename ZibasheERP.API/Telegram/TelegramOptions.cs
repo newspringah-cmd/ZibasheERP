@@ -10,6 +10,7 @@ public sealed class TelegramOptions
     public string AdminChatId { get; set; } = string.Empty;
     public string SalesChannelId { get; set; } = string.Empty;
     public string SalesDiscussionChatId { get; set; } = string.Empty;
+    public string SalesAuditChatId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
     public int PollIntervalSeconds { get; set; } = 10;
     public int BatchSize { get; set; } = 20;

@@ -73,8 +73,10 @@ builder.Services.AddOptions<TelegramOptions>()
           (options.WebhookSecret.Length <= 256 && options.WebhookSecret.All(character =>
               char.IsAsciiLetterOrDigit(character) || character is '_' or '-'))) &&
          (builder.Environment.IsDevelopment() ||
-          (long.TryParse(options.AdminChatId, out var adminChatId) && adminChatId != 0)) &&
-         options.PollIntervalSeconds is >= 1 and <= 300 &&
+         (long.TryParse(options.AdminChatId, out var adminChatId) && adminChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.SalesAuditChatId) ||
+         (long.TryParse(options.SalesAuditChatId, out var salesAuditChatId) && salesAuditChatId != 0)) &&
+        options.PollIntervalSeconds is >= 1 and <= 300 &&
          options.BatchSize is >= 1 and <= 100 &&
          options.MaxAttempts is >= 1 and <= 20),
         "Enabled Telegram integration has invalid or missing settings. Production also requires a valid AdminChatId.")

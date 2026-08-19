@@ -210,7 +210,10 @@ public sealed partial class TelegramWebhookController
             : $"{BottleLabel(confirmed.Bottle.Type.ToString())} — {confirmed.BottlePrice:N0} تومان";
         var total = confirmed.VolumeMl * confirmed.PerfumePricePerMl + confirmed.BottlePrice;
         var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
-        await _sender.SendAsync(_options.AdminChatId,
+        var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+            ? _options.AdminChatId
+            : _options.SalesAuditChatId;
+        await _sender.SendAsync(auditChatId,
             "✅ ثبت جدید در لیست فروش\n" +
             $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
             $"کاربر: {DisplayTelegramUser(callback.From)}\n" +
