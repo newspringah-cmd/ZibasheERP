@@ -902,6 +902,39 @@ public sealed partial class TelegramWebhookController
         if (draft.Kind == TelegramAdminRequestKind.CustomRequest)
             await _salesListRequestRepository.ConfirmCurrentBottleAsync(request.Id, telegramId, ct);
         await RefreshChannelSalesListAsync(list.Id, ct);
+        var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+            ? _options.AdminChatId
+            : _options.SalesAuditChatId;
+        var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
+        var adminIdentity = DisplayTelegramUser(callback.From);
+        if (draft.Kind == TelegramAdminRequestKind.CustomRequest)
+        {
+            var bottleLabel = bottle is null
+                ? "نامشخص"
+                : $"{BottleLabel(bottle.Type.ToString())} — {bottle.SalePrice:N0} تومان";
+            var total = draft.VolumeMl * list.PricePerMl + (bottle?.SalePrice ?? 0);
+            await _sender.SendAsync(auditChatId,
+                "✍️ ثبت دستی در لیست فروش\n" +
+                $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
+                $"ثبت‌کننده: {adminIdentity}\n" +
+                $"مشتری: {draft.Identity}\n" +
+                $"کد لیست: {list.PublicCode}\n" +
+                $"عطر: {list.EnglishName}\n" +
+                $"مقدار: {draft.VolumeMl} میل\n" +
+                $"شیشه: {bottleLabel}\n" +
+                $"مبلغ کل: {total:N0} تومان", ct);
+        }
+        else
+        {
+            await _sender.SendAsync(auditChatId,
+                "⏭ ثبت دستی در صف Next Bottle\n" +
+                $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
+                $"ثبت‌کننده: {adminIdentity}\n" +
+                $"مشتری: {draft.Identity}\n" +
+                $"کد لیست: {list.PublicCode}\n" +
+                $"عطر: {list.EnglishName}\n" +
+                $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل", ct);
+        }
         _adminRequestDrafts.Remove(chatId, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست ثبت شد ✅", ct);
         await ReplyAsync(chatId, "درخواست با موفقیت ثبت و لیست فروش به‌روزرسانی شد ✅", ct);
