@@ -296,7 +296,7 @@ public sealed partial class TelegramWebhookController
                 draft.Stage = TelegramOwnerPricingStage.AwaitingMinimumVolume;
                 _ownerPricingDrafts.Set(draft);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-                await ForceReplyAsync(callback.Message.Chat.Id,
+                await ReplyAsync(callback.Message.Chat.Id,
                     "حداقل حجم شیشه را به میل وارد کنید؛ مثال: 5", ct);
                 return true;
             }
@@ -334,7 +334,7 @@ public sealed partial class TelegramWebhookController
                 draft.Stage = TelegramOwnerPricingStage.AwaitingPercentageValue;
                 _ownerPricingDrafts.Set(draft);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-                await ForceReplyAsync(callback.Message.Chat.Id,
+                await ReplyAsync(callback.Message.Chat.Id,
                     $"درصد {(draft.PercentageSign > 0 ? "افزایش" : "کاهش")} را بدون علامت وارد کنید؛ مثال: 5", ct);
                 return true;
             }
@@ -478,13 +478,13 @@ public sealed partial class TelegramWebhookController
         {
             if (!TryParsePositiveInt(input, out var minimum))
             {
-                await ForceReplyAsync(message.Chat.Id, "حداقل حجم نامعتبر است؛ فقط عدد مثبت وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "حداقل حجم نامعتبر است؛ فقط عدد مثبت وارد کنید.", ct);
                 return true;
             }
             draft.MinimumVolumeMl = minimum;
             draft.Stage = TelegramOwnerPricingStage.AwaitingMaximumVolume;
             _ownerPricingDrafts.Set(draft);
-            await ForceReplyAsync(message.Chat.Id, "حداکثر حجم شیشه را به میل وارد کنید؛ مثال: 10", ct);
+            await ReplyAsync(message.Chat.Id, "حداکثر حجم شیشه را به میل وارد کنید؛ مثال: 10", ct);
             return true;
         }
 
@@ -492,19 +492,19 @@ public sealed partial class TelegramWebhookController
         {
             if (!TryParsePositiveInt(input, out var maximum) || maximum < draft.MinimumVolumeMl)
             {
-                await ForceReplyAsync(message.Chat.Id,
+                await ReplyAsync(message.Chat.Id,
                     $"حداکثر حجم باید عددی مساوی یا بزرگ‌تر از {draft.MinimumVolumeMl} باشد.", ct);
                 return true;
             }
             if (PriceableVolumes(draft.BottleType!.Value, draft.MinimumVolumeMl, maximum).Length == 0)
             {
-                await ForceReplyAsync(message.Chat.Id, "در این بازه حجم استاندارد مجازی وجود ندارد؛ مقدار دیگری وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "در این بازه حجم استاندارد مجازی وجود ندارد؛ مقدار دیگری وارد کنید.", ct);
                 return true;
             }
             draft.MaximumVolumeMl = maximum;
             draft.Stage = TelegramOwnerPricingStage.AwaitingBottlePrice;
             _ownerPricingDrafts.Set(draft);
-            await ForceReplyAsync(message.Chat.Id, "قیمت هر شیشه را به تومان وارد کنید؛ مثال: 30000", ct);
+            await ReplyAsync(message.Chat.Id, "قیمت هر شیشه را به تومان وارد کنید؛ مثال: 30000", ct);
             return true;
         }
 
@@ -512,7 +512,7 @@ public sealed partial class TelegramWebhookController
         {
             if (!TryParsePositiveDecimal(input, out var price))
             {
-                await ForceReplyAsync(message.Chat.Id, "قیمت نامعتبر است؛ فقط مبلغ مثبت به تومان وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "قیمت نامعتبر است؛ فقط مبلغ مثبت به تومان وارد کنید.", ct);
                 return true;
             }
             draft.Value = price;
@@ -532,7 +532,7 @@ public sealed partial class TelegramWebhookController
                 absolutePercent <= 0 || absolutePercent > 1000 ||
                 (draft.PercentageSign < 0 && absolutePercent >= 100))
             {
-                await ForceReplyAsync(message.Chat.Id, "درصد نامعتبر است؛ یک عدد مثبت وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "درصد نامعتبر است؛ یک عدد مثبت وارد کنید.", ct);
                 return true;
             }
             draft.Value = absolutePercent * draft.PercentageSign;
@@ -609,7 +609,7 @@ public sealed partial class TelegramWebhookController
                 PublicCode = list.PublicCode, SalesListName = list.EnglishName
             });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ForceReplyAsync(chatId,
+            await ReplyAsync(chatId,
                 "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
             return;
         }
@@ -661,20 +661,20 @@ public sealed partial class TelegramWebhookController
             var normalized = input.StartsWith('@') ? input : new string(input.Where(char.IsDigit).ToArray());
             if ((input.StartsWith('@') && input.Length < 2) || (!input.StartsWith('@') && normalized.Length == 0))
             {
-                await ForceReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", ct);
                 return true;
             }
             draft.Identity = normalized;
             draft.Stage = TelegramAdminRequestStage.AwaitingVolume;
             _adminRequestDrafts.Set(draft);
-            await ForceReplyAsync(message.Chat.Id, "مقدار درخواستی را به میل وارد کنید؛ مثال: 5", ct);
+            await ReplyAsync(message.Chat.Id, "مقدار درخواستی را به میل وارد کنید؛ مثال: 5", ct);
             return true;
         }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingVolume)
         {
             if (!TryParsePositiveInt(input, out var volume))
             {
-                await ForceReplyAsync(message.Chat.Id, "مقدار نامعتبر است؛ فقط عدد مثبت وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "مقدار نامعتبر است؛ فقط عدد مثبت وارد کنید.", ct);
                 return true;
             }
             draft.VolumeMl = volume;
