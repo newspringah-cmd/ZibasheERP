@@ -19,7 +19,8 @@ public sealed class GetOpenSalesListsQueryHandlerTests
         var salesList = new SalesList
         {
             Id = Guid.NewGuid(),
-            Batch = new Batch { Perfume = perfume },
+            PerfumeId = perfume.Id,
+            Perfume = perfume,
             PricePerMl = 250_000,
             TotalVolume = 100,
             ReservedVolume = 35,

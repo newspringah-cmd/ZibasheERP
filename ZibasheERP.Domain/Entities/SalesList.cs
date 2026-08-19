@@ -51,10 +51,14 @@ public class SalesList : BaseEntity
     [MaxLength(500)]
     public string Accords { get; set; } = string.Empty;
 
-    // بچ مربوط به این لیست
-    public Guid BatchId { get; set; }
+    // عطر موضوع پیش‌فروش؛ قبل از خرید مستقل از بچ است.
+    public Guid PerfumeId { get; set; }
+    public Perfume Perfume { get; set; } = null!;
 
-    public Batch Batch { get; set; } = null!;
+    // بچ واقعی پس از تکمیل پیش‌فروش و خرید به لیست متصل می‌شود.
+    public Guid? BatchId { get; set; }
+
+    public Batch? Batch { get; set; }
 
     // قیمت هر میل در زمان باز شدن لیست
     public decimal PricePerMl { get; set; }

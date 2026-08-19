@@ -78,8 +78,12 @@ public class CreateOrderCommandHandler
             throw new InvalidOperationException(
                 $"حجم کافی موجود نیست. حجم باقی‌مانده لیست {salesList.RemainingVolume} میل است.");
 
+        if (!salesList.BatchId.HasValue)
+            throw new InvalidOperationException(
+                "این پیش‌فروش هنوز خریداری نشده و بچ واقعی به آن متصل نیست؛ ابتدا خرید عطر را ثبت کنید.");
+
         var batch = await _batchRepository.GetByIdAsync(
-            salesList.BatchId,
+            salesList.BatchId.Value,
             cancellationToken);
 
         if (batch is null)

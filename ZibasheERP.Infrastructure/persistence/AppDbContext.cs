@@ -173,6 +173,12 @@ public class AppDbContext : DbContext
             .IsRowVersion();
 
         modelBuilder.Entity<SalesList>()
+            .HasOne(x => x.Perfume)
+            .WithMany()
+            .HasForeignKey(x => x.PerfumeId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<SalesList>()
             .HasOne(x => x.Batch)
             .WithMany()
             .HasForeignKey(x => x.BatchId)

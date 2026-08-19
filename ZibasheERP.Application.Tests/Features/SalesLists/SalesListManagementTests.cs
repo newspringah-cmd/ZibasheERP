@@ -8,36 +8,39 @@ namespace ZibasheERP.Application.Tests.Features.SalesLists;
 public sealed class SalesListManagementTests
 {
     [Fact]
-    public async Task CreateSalesList_OpensListFromAvailableBatch()
+    public async Task CreateSalesList_OpensPreorderWithoutPurchasedBatch()
     {
         var batch = CreateBatch();
         var lists = new SalesListRepositoryStub();
-        var handler = new CreateSalesListCommandHandler(lists, new BatchRepositoryStub(batch));
+        var handler = new CreateSalesListCommandHandler(lists, new PerfumeRepositoryStub(batch.Perfume));
 
         var result = await handler.Handle(
-            new CreateSalesListCommand(batch.Id, 300_000, 100, "@channel", null),
+            new CreateSalesListCommand(batch.PerfumeId, 300_000, 100, "@channel", null),
             CancellationToken.None);
 
         Assert.NotNull(lists.AddedSalesList);
         Assert.Equal(SalesListStatus.Open, lists.AddedSalesList!.Status);
         Assert.Equal(100, result.RemainingVolume);
         Assert.Equal("Test Brand", result.Brand);
+        Assert.Null(result.BatchId);
         Assert.True(lists.SaveChangesCalled);
     }
 
     [Fact]
-    public async Task CreateSalesList_RejectsVolumeAboveBatchInventory()
+    public async Task CreateSalesList_AcceptsTargetVolumeWithoutPurchasedInventory()
     {
         var batch = CreateBatch();
         batch.RemainingVolumeMl = 50;
         var handler = new CreateSalesListCommandHandler(
             new SalesListRepositoryStub(),
-            new BatchRepositoryStub(batch));
+            new PerfumeRepositoryStub(batch.Perfume));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            handler.Handle(
-                new CreateSalesListCommand(batch.Id, 300_000, 100, null, null),
-                CancellationToken.None));
+        var result = await handler.Handle(
+            new CreateSalesListCommand(batch.PerfumeId, 300_000, 100, null, null),
+            CancellationToken.None);
+
+        Assert.Equal(100, result.TotalVolume);
+        Assert.Null(result.BatchId);
     }
 
     [Fact]
@@ -49,6 +52,8 @@ public sealed class SalesListManagementTests
             Id = Guid.NewGuid(),
             BatchId = batch.Id,
             Batch = batch,
+            PerfumeId = batch.PerfumeId,
+            Perfume = batch.Perfume,
             TotalVolume = 100,
             ReservedVolume = 40,
             Status = SalesListStatus.Open
@@ -109,15 +114,15 @@ public sealed class SalesListManagementTests
         }
     }
 
-    private sealed class BatchRepositoryStub(Batch batch) : IBatchRepository
+    private sealed class PerfumeRepositoryStub(Perfume perfume) : IPerfumeRepository
     {
-        public Task<IReadOnlyCollection<Batch>> GetForInventoryAsync(int limit, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyCollection<Batch>>(new[] { batch });
-        public Task<Batch?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
-            Task.FromResult<Batch?>(batch.Id == id ? batch : null);
-        public Task<bool> BatchNumberExistsAsync(string batchNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
-        public Task AddAsync(Batch value, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task UpdateAsync(Batch value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<Perfume?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Perfume?>(perfume.Id == id ? perfume : null);
+        public Task<IReadOnlyCollection<Perfume>> GetAllAsync(bool includeInactive, int limit, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyCollection<Perfume>>(new[] { perfume });
+        public Task<bool> ExistsAsync(string brand, string englishName, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Perfume value, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task UpdateAsync(Perfume value, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

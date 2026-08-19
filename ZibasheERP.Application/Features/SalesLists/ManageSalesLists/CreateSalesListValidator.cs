@@ -6,7 +6,7 @@ public sealed class CreateSalesListValidator : AbstractValidator<CreateSalesList
 {
     public CreateSalesListValidator()
     {
-        RuleFor(command => command.BatchId).NotEmpty();
+        RuleFor(command => command.PerfumeId).NotEmpty();
         RuleFor(command => command.PricePerMl).GreaterThan(0);
         RuleFor(command => command.TotalVolume).InclusiveBetween(1, 5000);
         RuleFor(command => command.TelegramChannelId).MaximumLength(100);

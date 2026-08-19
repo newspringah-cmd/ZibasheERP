@@ -72,6 +72,7 @@ public static class SeedData
         {
             Id = Guid.Parse("55555555-5555-5555-5555-555555555555"),
             BatchId = batch.Id,
+            PerfumeId = perfume.Id,
             PricePerMl = perfume.PricePerMl,
             TotalVolume = 100,
             ReservedVolume = 0,

@@ -3,7 +3,7 @@ using MediatR;
 namespace ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
 
 public sealed record CreateSalesListCommand(
-    Guid BatchId,
+    Guid PerfumeId,
     decimal PricePerMl,
     int TotalVolume,
     string? TelegramChannelId,
@@ -28,8 +28,8 @@ public sealed record GetAdminSalesListsQuery(int Limit = 100)
 
 public sealed record AdminSalesListResponse(
     Guid Id,
-    Guid BatchId,
-    string BatchNumber,
+    Guid? BatchId,
+    string? BatchNumber,
     string PerfumeName,
     string Brand,
     decimal PricePerMl,

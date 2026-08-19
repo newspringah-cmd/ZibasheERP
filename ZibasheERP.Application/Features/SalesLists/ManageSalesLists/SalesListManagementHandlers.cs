@@ -8,30 +8,26 @@ public sealed class CreateSalesListCommandHandler
     : IRequestHandler<CreateSalesListCommand, AdminSalesListResponse>
 {
     private readonly ISalesListRepository _salesListRepository;
-    private readonly IBatchRepository _batchRepository;
+    private readonly IPerfumeRepository _perfumeRepository;
 
     public CreateSalesListCommandHandler(
         ISalesListRepository salesListRepository,
-        IBatchRepository batchRepository)
+        IPerfumeRepository perfumeRepository)
     {
         _salesListRepository = salesListRepository;
-        _batchRepository = batchRepository;
+        _perfumeRepository = perfumeRepository;
     }
 
     public async Task<AdminSalesListResponse> Handle(
         CreateSalesListCommand request,
         CancellationToken cancellationToken)
     {
-        var batch = await _batchRepository.GetByIdAsync(request.BatchId, cancellationToken)
-            ?? throw new InvalidOperationException("بچ انتخاب‌شده پیدا نشد.");
-        if (!batch.Perfume.IsActive)
-            throw new InvalidOperationException("عطر این بچ غیرفعال است.");
-        if (request.TotalVolume > batch.RemainingVolumeMl)
-            throw new InvalidOperationException("حجم لیست از موجودی باقیمانده بچ بیشتر است.");
+        var perfume = await _perfumeRepository.GetByIdAsync(request.PerfumeId, cancellationToken)
+            ?? throw new InvalidOperationException("عطر انتخاب‌شده پیدا نشد.");
+        if (!perfume.IsActive)
+            throw new InvalidOperationException("عطر انتخاب‌شده غیرفعال است.");
         if (request.MinimumRequestVolumeMl <= 0 || request.MinimumRequestVolumeMl > request.TotalVolume)
             throw new InvalidOperationException("حداقل حجم درخواست معتبر نیست.");
-        if (await _salesListRepository.HasActiveForBatchAsync(batch.Id, cancellationToken))
-            throw new InvalidOperationException("برای این بچ یک لیست فروش فعال وجود دارد.");
 
         var now = DateTime.UtcNow;
         var publicCode = await GeneratePublicCodeAsync(cancellationToken);
@@ -40,19 +36,20 @@ public sealed class CreateSalesListCommandHandler
             Id = Guid.NewGuid(),
             CreatedAt = now,
             PublicCode = publicCode,
-            EnglishName = NormalizeRequired(request.EnglishName, batch.Perfume.EnglishName),
+            EnglishName = NormalizeRequired(request.EnglishName, perfume.EnglishName),
             ProductPageUrl = NormalizeOptional(request.ProductPageUrl) ?? string.Empty,
-            DisplayBrand = NormalizeRequired(request.DisplayBrand, batch.Perfume.Brand),
+            DisplayBrand = NormalizeRequired(request.DisplayBrand, perfume.Brand),
             Gender = Enum.IsDefined(typeof(PerfumeGender), request.Gender)
                 ? (PerfumeGender)request.Gender : PerfumeGender.Unisex,
             ReleaseYear = request.ReleaseYear,
-            PersianName = NormalizeRequired(request.PersianName, batch.Perfume.Name),
+            PersianName = NormalizeRequired(request.PersianName, perfume.Name),
             TopNotes = NormalizeOptional(request.TopNotes) ?? string.Empty,
             MiddleNotes = NormalizeOptional(request.MiddleNotes) ?? string.Empty,
             BaseNotes = NormalizeOptional(request.BaseNotes) ?? string.Empty,
             Accords = NormalizeOptional(request.Accords) ?? string.Empty,
-            BatchId = batch.Id,
-            Batch = batch,
+            PerfumeId = perfume.Id,
+            Perfume = perfume,
+            BatchId = null,
             PricePerMl = request.PricePerMl,
             TotalVolume = request.TotalVolume,
             MinimumRequestVolumeMl = request.MinimumRequestVolumeMl,
@@ -142,9 +139,9 @@ internal static class SalesListMapper
     internal static AdminSalesListResponse ToResponse(SalesList salesList) => new(
         salesList.Id,
         salesList.BatchId,
-        salesList.Batch.BatchNumber,
-        salesList.Batch.Perfume.Name,
-        salesList.Batch.Perfume.Brand,
+        salesList.Batch?.BatchNumber,
+        salesList.Perfume.Name,
+        salesList.Perfume.Brand,
         salesList.PricePerMl,
         salesList.TotalVolume,
         salesList.MinimumRequestVolumeMl,

@@ -1,7 +1,6 @@
 using System.Globalization;
 using MediatR;
 using ZibasheERP.API.Telegram;
-using ZibasheERP.Application.Features.Batches.GetBatches;
 using ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
 
 namespace ZibasheERP.API.Controllers;
@@ -30,12 +29,12 @@ public sealed partial class TelegramWebhookController
             case "new":
             case "restart":
                 _adminSalesListDrafts.Remove(chatId, userId);
-                await SendBatchSelectionAsync(chatId, cancellationToken);
+                await SendPerfumeSelectionAsync(chatId, cancellationToken);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
                 return true;
 
-            case "batch" when parts.Length == 3 && Guid.TryParseExact(parts[2], "N", out var batchId):
-                await StartSalesListDraftAsync(callback, batchId, cancellationToken);
+            case "perfume" when parts.Length == 3 && Guid.TryParseExact(parts[2], "N", out var perfumeId):
+                await StartSalesListDraftAsync(callback, perfumeId, cancellationToken);
                 return true;
 
             case "cancel":
@@ -192,13 +191,13 @@ public sealed partial class TelegramWebhookController
                 draft.PricePerMl = price;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingVolume;
                 _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, $"حجم قابل فروش را به میل وارد کنید. حداکثر موجودی این بچ: {draft.BatchRemainingVolumeMl:N0} میل", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "حجم هدف پیش‌فروش را به میل وارد کنید؛ مثال: 100", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingVolume:
-                if (!TryParsePositiveInt(input, out var volume) || volume > draft.BatchRemainingVolumeMl)
+                if (!TryParsePositiveInt(input, out var volume))
                 {
-                    await ReplyAsync(message.Chat.Id, $"حجم باید عددی مثبت و حداکثر {draft.BatchRemainingVolumeMl:N0} میل باشد.", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, "حجم هدف باید عددی مثبت باشد.", cancellationToken);
                     return true;
                 }
                 draft.TotalVolume = volume;
@@ -235,7 +234,7 @@ public sealed partial class TelegramWebhookController
         }
     }
 
-    private async Task SendBatchSelectionAsync(long chatId, CancellationToken cancellationToken)
+    private async Task SendPerfumeSelectionAsync(long chatId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.SalesChannelId))
         {
@@ -243,48 +242,36 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        var batches = await _mediator.Send(new GetBatchesQuery(50), cancellationToken);
-        var candidates = batches
-            .Where(batch => string.Equals(batch.Status, "Open", StringComparison.OrdinalIgnoreCase) && batch.RemainingVolumeMl > 0)
-            .Take(20)
-            .ToArray();
-        var available = new List<ZibasheERP.Application.Features.Batches.CreateBatch.BatchResponse>();
-        foreach (var batch in candidates)
+        var perfumes = (await _perfumeRepository.GetAllAsync(false, 100, cancellationToken))
+            .Take(20).ToArray();
+        if (perfumes.Length == 0)
         {
-            if (!await _salesListRepository.HasActiveForBatchAsync(batch.Id, cancellationToken))
-                available.Add(batch);
-        }
-        if (available.Count == 0)
-        {
-            await ReplyAsync(chatId, "بچ بازی برای ساخت لیست فروش وجود ندارد. ابتدا بچ جدید ثبت کنید.", cancellationToken);
+            await ReplyAsync(chatId, "عطر فعالی برای ساخت لیست فروش وجود ندارد. ابتدا عطر را در کاتالوگ ثبت کنید.", cancellationToken);
             return;
         }
 
-        var buttons = available.Select(batch =>
+        var buttons = perfumes.Select(perfume =>
             (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton(
-                    $"{batch.PerfumeName} — {batch.BatchNumber} ({batch.RemainingVolumeMl:N0} میل)",
-                    $"adminlist:batch:{batch.Id:N}")
+                    $"{perfume.EnglishName} — {perfume.Brand}",
+                    $"adminlist:perfume:{perfume.Id:N}")
             }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton("لغو", "adminlist:cancel")
             }).ToArray();
-        await _sender.SendInlineKeyboardAsync(chatId.ToString(), "برای لیست فروش جدید، بچ موردنظر را انتخاب کنید:", buttons, cancellationToken);
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), "برای پیش‌فروش جدید، عطر موردنظر را انتخاب کنید:", buttons, cancellationToken);
     }
 
     private async Task StartSalesListDraftAsync(
         TelegramCallbackQuery callback,
-        Guid batchId,
+        Guid perfumeId,
         CancellationToken cancellationToken)
     {
-        var batch = (await _mediator.Send(new GetBatchesQuery(100), cancellationToken))
-            .FirstOrDefault(value => value.Id == batchId &&
-                string.Equals(value.Status, "Open", StringComparison.OrdinalIgnoreCase) &&
-                value.RemainingVolumeMl > 0);
-        if (batch is null)
+        var perfume = await _perfumeRepository.GetByIdAsync(perfumeId, cancellationToken);
+        if (perfume is null || !perfume.IsActive)
         {
-            await _sender.AnswerCallbackAsync(callback.Id, "این بچ دیگر قابل انتخاب نیست.", cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, "این عطر دیگر قابل انتخاب نیست.", cancellationToken);
             return;
         }
 
@@ -292,15 +279,13 @@ public sealed partial class TelegramWebhookController
         {
             ChatId = callback.Message!.Chat.Id,
             UserId = callback.From.Id,
-            BatchId = batch.Id,
-            BatchNumber = batch.BatchNumber,
-            PerfumeName = batch.PerfumeName,
-            Brand = batch.Brand,
-            BatchRemainingVolumeMl = batch.RemainingVolumeMl
+            PerfumeId = perfume.Id,
+            PerfumeName = perfume.Name,
+            Brand = perfume.Brand
         };
         _adminSalesListDrafts.Set(draft);
-        await _sender.AnswerCallbackAsync(callback.Id, "بچ انتخاب شد.", cancellationToken);
-        await ReplyAsync(draft.ChatId, $"بچ «{batch.PerfumeName} — {batch.BatchNumber}» انتخاب شد.\nنام انگلیسی عطر را وارد کنید.", cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, "عطر انتخاب شد.", cancellationToken);
+        await ReplyAsync(draft.ChatId, $"عطر «{perfume.EnglishName} — {perfume.Brand}» انتخاب شد.\nنام انگلیسی عطر را وارد کنید.", cancellationToken);
     }
 
     private async Task SendSalesListPreviewAsync(
@@ -352,7 +337,7 @@ public sealed partial class TelegramWebhookController
             {
                 var created = await _mediator.Send(
                     new CreateSalesListCommand(
-                        draft.BatchId,
+                        draft.PerfumeId,
                         draft.PricePerMl,
                         draft.TotalVolume,
                         _options.SalesChannelId,
@@ -435,8 +420,7 @@ public sealed partial class TelegramWebhookController
         $"🌸 نت‌های میانی: {draft.MiddleNotes}\n" +
         $"🌳 نت‌های پایانی: {draft.BaseNotes}\n" +
         $"🎼 آکوردها: {draft.Accords}\n" +
-        $"🏷 بچ: {draft.BatchNumber}\n" +
-        $"💧 حجم قابل فروش: {draft.TotalVolume:N0} میل\n" +
+        $"💧 حجم هدف پیش‌فروش: {draft.TotalVolume:N0} میل\n" +
         $"📏 حداقل درخواست: {draft.MinimumRequestVolumeMl:N0} میل\n" +
         $"💰 قیمت هر میل: {draft.PricePerMl:N0} تومان" +
         (string.IsNullOrWhiteSpace(draft.Notes) ? string.Empty : $"\n📝 {draft.Notes}");

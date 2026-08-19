@@ -12,7 +12,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
 
     public Task<SalesListRequest?> GetAsync(Guid id, CancellationToken cancellationToken = default) =>
         _dbContext.SalesListRequests
-            .Include(value => value.SalesList).ThenInclude(value => value.Batch).ThenInclude(value => value.Perfume)
+            .Include(value => value.SalesList).ThenInclude(value => value.Perfume)
             .Include(value => value.Bottle)
             .FirstOrDefaultAsync(value => value.Id == id && !value.IsDeleted, cancellationToken);
 

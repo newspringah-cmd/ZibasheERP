@@ -23,9 +23,9 @@ public sealed class GetOpenSalesListsQueryHandler
 
         return lists.Select(salesList => new OpenSalesListResponse(
             salesList.Id,
-            salesList.Batch.Perfume.Name,
-            salesList.Batch.Perfume.EnglishName,
-            salesList.Batch.Perfume.Brand,
+            salesList.Perfume.Name,
+            salesList.Perfume.EnglishName,
+            salesList.Perfume.Brand,
             salesList.PricePerMl,
             salesList.RemainingVolume,
             !salesList.HasBottleOwner,

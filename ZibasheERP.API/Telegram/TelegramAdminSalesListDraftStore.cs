@@ -27,11 +27,9 @@ public sealed class TelegramAdminSalesListDraft
 {
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
-    public required Guid BatchId { get; init; }
-    public required string BatchNumber { get; init; }
+    public required Guid PerfumeId { get; init; }
     public required string PerfumeName { get; init; }
     public required string Brand { get; init; }
-    public required decimal BatchRemainingVolumeMl { get; init; }
     public TelegramAdminSalesListStage Stage { get; set; } = TelegramAdminSalesListStage.AwaitingEnglishName;
     public string EnglishName { get; set; } = string.Empty;
     public string ProductPageUrl { get; set; } = string.Empty;

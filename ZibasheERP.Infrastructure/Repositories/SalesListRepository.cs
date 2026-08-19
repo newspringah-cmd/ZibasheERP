@@ -20,7 +20,7 @@ public class SalesListRepository : ISalesListRepository
     {
         return await _dbContext.SalesLists
             .Include(x => x.Batch)
-                .ThenInclude(batch => batch.Perfume)
+            .Include(x => x.Perfume)
             .Include(x => x.BottleOwnerCustomer)
             .FirstOrDefaultAsync(
                 x => x.Id == id && !x.IsDeleted,
@@ -34,11 +34,11 @@ public class SalesListRepository : ISalesListRepository
         return await _dbContext.SalesLists
             .AsNoTracking()
             .Include(salesList => salesList.Batch)
-                .ThenInclude(batch => batch.Perfume)
+            .Include(salesList => salesList.Perfume)
             .Where(salesList =>
                 salesList.Status == SalesListStatus.Open &&
                 salesList.ReservedVolume < salesList.TotalVolume &&
-                salesList.Batch.Perfume.IsActive &&
+                salesList.Perfume.IsActive &&
                 !salesList.IsDeleted)
             .OrderByDescending(salesList => salesList.OpenDate)
             .Take(Math.Clamp(limit, 1, 50))
@@ -52,7 +52,7 @@ public class SalesListRepository : ISalesListRepository
         return await _dbContext.SalesLists
             .AsNoTracking()
             .Include(salesList => salesList.Batch)
-                .ThenInclude(batch => batch.Perfume)
+            .Include(salesList => salesList.Perfume)
             .Include(salesList => salesList.BottleOwnerCustomer)
             .Where(salesList => !salesList.IsDeleted)
             .OrderByDescending(salesList => salesList.OpenDate)
