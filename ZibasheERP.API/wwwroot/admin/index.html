@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>پنل مدیریت زیباشی</title>
+  <link rel="stylesheet" href="/admin/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div><span class="eyebrow">ZIBASHI ERP</span><h1>پنل مدیریت زیباشی</h1></div>
+      <button id="logout" class="ghost hidden" type="button">خروج امن</button>
+    </header>
+
+    <section id="loginView" class="login-card">
+      <div class="brand-mark">ز</div>
+      <h2>ورود مدیر</h2>
+      <p>کلید مدیریت Production را وارد کنید. کلید فقط تا زمان بسته‌شدن این تب در حافظه مرورگر می‌ماند.</p>
+      <form id="loginForm">
+        <label>کلید مدیریت<input id="apiKey" type="password" required autocomplete="off" minlength="32"></label>
+        <button type="submit">ورود به پنل</button>
+      </form>
+      <p id="loginError" class="error" role="alert"></p>
+    </section>
+
+    <section id="appView" class="hidden">
+      <nav class="tabs" aria-label="بخش‌های مدیریت">
+        <button class="tab active" data-panel="dashboard">داشبورد</button>
+        <button class="tab" data-panel="perfumes">عطرها</button>
+        <button class="tab" data-panel="batches">بچ‌ها</button>
+        <button class="tab" data-panel="bottles">شیشه‌ها</button>
+        <button class="tab" data-panel="salesLists">لیست فروش</button>
+        <button class="tab" data-panel="customers">مشتریان</button>
+        <button class="tab" data-panel="orders">سفارش‌ها</button>
+      </nav>
+
+      <div id="notice" class="notice hidden" role="status"></div>
+
+      <section id="dashboard" class="panel active">
+        <div class="section-title"><div><h2>وضعیت عملیاتی</h2><p>نمای کلی داده‌های Production</p></div><button class="secondary" data-action="refresh">به‌روزرسانی</button></div>
+        <div id="stats" class="stats"></div>
+        <div class="guide"><h3>ترتیب شروع کار</h3><ol><li>عطر را ثبت کنید.</li><li>برای آن بچ خرید بسازید.</li><li>شیشه‌های قابل فروش را ثبت کنید.</li><li>لیست فروش باز کنید.</li><li>مشتری و سپس سفارش را ثبت کنید.</li></ol></div>
+      </section>
+
+      <section id="perfumes" class="panel">
+        <div class="section-title"><div><h2>عطرها</h2><p>کاتالوگ و قیمت پایه هر میل</p></div></div>
+        <form id="perfumeForm" class="form-grid">
+          <label>نام فارسی<input name="name" required maxlength="150"></label>
+          <label>نام انگلیسی<input name="englishName" required maxlength="150" dir="ltr"></label>
+          <label>برند<input name="brand" required maxlength="100"></label>
+          <label>قیمت هر میل (تومان)<input name="pricePerMl" type="number" required min="1"></label>
+          <label>حجم شیشه اصلی (میل)<input name="originalBottleVolumeMl" type="number" required min="1"></label>
+          <label class="wide">توضیحات<input name="notes" maxlength="500"></label>
+          <button type="submit">ثبت عطر</button>
+        </form>
+        <div id="perfumeList" class="cards"></div>
+      </section>
+
+      <section id="batches" class="panel">
+        <div class="section-title"><div><h2>بچ‌های خرید</h2><p>موجودی ورودی هر عطر</p></div></div>
+        <form id="batchForm" class="form-grid">
+          <label>عطر<select name="perfumeId" data-options="perfumes" required></select></label>
+          <label>شماره بچ<input name="batchNumber" required maxlength="100" dir="ltr"></label>
+          <label>قیمت خرید کل (تومان)<input name="purchasePrice" type="number" required min="0"></label>
+          <label>حجم کل (میل)<input name="totalVolumeMl" type="number" required min="1"></label>
+          <label>تاریخ خرید<input name="purchaseDate" type="date" required></label>
+          <button type="submit">ثبت بچ</button>
+        </form>
+        <div id="batchList" class="cards"></div>
+      </section>
+
+      <section id="bottles" class="panel">
+        <div class="section-title"><div><h2>شیشه‌ها</h2><p>مدل و قیمت شیشه دکانت</p></div></div>
+        <form id="bottleForm" class="form-grid">
+          <label>نام شیشه<input name="name" required maxlength="120"></label>
+          <label>حجم (میل)<input name="volumeMl" type="number" required min="1"></label>
+          <label>نوع<select name="type"><option value="0">معمولی</option><option value="1">فانتزی</option></select></label>
+          <label>قیمت فروش (تومان)<input name="salePrice" type="number" required min="0"></label>
+          <label class="check"><input name="isDefault" type="checkbox"> پیش‌فرض این حجم</label>
+          <label class="wide">توضیحات<input name="notes" maxlength="500"></label>
+          <button type="submit">ثبت شیشه</button>
+        </form>
+        <div id="bottleList" class="cards"></div>
+      </section>
+
+      <section id="salesLists" class="panel">
+        <div class="section-title"><div><h2>لیست‌های فروش</h2><p>ظرفیت و قیمت فروش هر بچ</p></div></div>
+        <form id="salesListForm" class="form-grid">
+          <label>بچ<select name="batchId" data-options="batches" required></select></label>
+          <label>قیمت هر میل (تومان)<input name="pricePerMl" type="number" required min="1"></label>
+          <label>حجم قابل فروش (میل)<input name="totalVolume" type="number" required min="1"></label>
+          <label>شناسه کانال تلگرام<input name="telegramChannelId" dir="ltr"></label>
+          <label class="wide">توضیحات<input name="notes" maxlength="500"></label>
+          <button type="submit">ساخت لیست فروش</button>
+        </form>
+        <div id="salesListList" class="cards"></div>
+      </section>
+
+      <section id="customers" class="panel">
+        <div class="section-title"><div><h2>مشتریان</h2><p>اطلاعات تماس و هویت تلگرام</p></div></div>
+        <form id="customerForm" class="form-grid">
+          <label>نام و نام خانوادگی<input name="fullName" required maxlength="100"></label>
+          <label>شماره موبایل<input name="mobile" required maxlength="20" dir="ltr" placeholder="09121234567"></label>
+          <label>شناسه عددی تلگرام<input name="telegramId" maxlength="50" dir="ltr"></label>
+          <label>نام کاربری تلگرام<input name="username" maxlength="100" dir="ltr" placeholder="username"></label>
+          <label>سقف اعتبار (تومان)<input name="creditLimit" type="number" min="0" value="0"></label>
+          <label>موجودی کیف پول (تومان)<input name="walletBalance" type="number" min="0" value="0"></label>
+          <label class="wide">توضیحات<input name="notes" maxlength="500"></label>
+          <button type="submit">ثبت مشتری</button>
+        </form>
+        <div id="customerList" class="cards"></div>
+      </section>
+
+      <section id="orders" class="panel">
+        <div class="section-title"><div><h2>سفارش‌ها</h2><p>ثبت سفارش از لیست فروش باز</p></div></div>
+        <form id="orderForm" class="form-grid">
+          <label>مشتری<select name="customerId" data-options="customers" required></select></label>
+          <label>لیست فروش<select name="salesListId" data-options="salesLists" required></select></label>
+          <label>حجم درخواستی (میل)<input name="requestedVolumeMl" type="number" required min="1"></label>
+          <label>شیشه<select name="bottleId" data-options="bottles"><option value="">بدون شیشه (فقط صاحب باتل)</option></select></label>
+          <label class="check"><input name="isBottleOwner" type="checkbox"> مشتری صاحب باتل اصلی است</label>
+          <label class="wide">توضیحات<input name="notes" maxlength="500"></label>
+          <button type="submit">ثبت سفارش</button>
+        </form>
+        <div id="orderList" class="cards"></div>
+      </section>
+    </section>
+  </main>
+  <script src="/admin/app.js" defer></script>
+</body>
+</html>

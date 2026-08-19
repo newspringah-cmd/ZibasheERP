@@ -22,6 +22,12 @@ public sealed class CreateCustomerRequest
 
     [MaxLength(500)]
     public string? Notes { get; set; }
+
+    [Range(typeof(decimal), "0", "9999999999999999")]
+    public decimal CreditLimit { get; set; }
+
+    [Range(typeof(decimal), "0", "9999999999999999")]
+    public decimal WalletBalance { get; set; }
 }
 
 public sealed class UpdateCustomerRequest

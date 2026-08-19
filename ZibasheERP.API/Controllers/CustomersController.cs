@@ -178,8 +178,8 @@ public sealed class CustomersController : ControllerBase
             TelegramId = telegramId,
             Username = username,
             Notes = NormalizeOptional(request.Notes),
-            WalletBalance = 0,
-            CreditLimit = 0,
+            WalletBalance = request.WalletBalance,
+            CreditLimit = request.CreditLimit,
             CurrentDebt = 0,
             CanPlaceOrder = true,
             IsBlocked = false
