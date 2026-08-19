@@ -122,18 +122,17 @@ public sealed partial class TelegramWebhookController
             }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}")
-            }).ToArray();
+        }).ToArray();
         var prompt = $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}برای درخواست {volume} میل، نوع شیشه را انتخاب کنید:";
-        var privateResult = await _sender.SendInlineKeyboardAsync(
-            callback.From.Id.ToString(), prompt, rows, cancellationToken);
-        if (privateResult.IsSuccessful)
-        {
-            await _sender.AnswerCallbackAsync(callback.Id, "گزینه‌های شیشه در گفت‌وگوی خصوصی ربات ارسال شد.", cancellationToken);
-            return;
-        }
-        await _sender.SendInlineKeyboardAsync(_options.SalesDiscussionChatId, prompt, rows, cancellationToken);
+        var discussionResult = string.IsNullOrWhiteSpace(salesList.TelegramPhotoFileId)
+            ? await _sender.SendInlineKeyboardAsync(
+                _options.SalesDiscussionChatId, prompt, rows, cancellationToken)
+            : await _sender.SendPhotoWithKeyboardAsync(
+                _options.SalesDiscussionChatId, salesList.TelegramPhotoFileId, prompt, rows, cancellationToken);
+        if (!discussionResult.IsSuccessful)
+            throw new InvalidOperationException("نمایش گزینه‌های شیشه در گروه گفت‌وگو ناموفق بود.");
         await _sender.AnswerCallbackAsync(callback.Id,
-            "ابتدا ربات را Start کنید؛ گزینه‌ها فعلاً در بخش گفت‌وگو ارسال شد.", cancellationToken);
+            "گزینه‌های شیشه در بخش گفت‌وگوی کانال نمایش داده شد.", cancellationToken);
     }
 
     private async Task SelectChannelBottleAsync(
@@ -169,10 +168,13 @@ public sealed partial class TelegramWebhookController
             $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
             $"شیشه: {BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان\n" +
             $"مبلغ کل: {total:N0} تومان";
-        var privateResult = await _sender.SendInlineKeyboardAsync(
-            callback.From.Id.ToString(), confirmation, rows, cancellationToken);
-        if (!privateResult.IsSuccessful)
-            await _sender.SendInlineKeyboardAsync(_options.SalesDiscussionChatId, confirmation, rows, cancellationToken);
+        var discussionResult = string.IsNullOrWhiteSpace(request.SalesList.TelegramPhotoFileId)
+            ? await _sender.SendInlineKeyboardAsync(
+                _options.SalesDiscussionChatId, confirmation, rows, cancellationToken)
+            : await _sender.SendPhotoWithKeyboardAsync(
+                _options.SalesDiscussionChatId, request.SalesList.TelegramPhotoFileId, confirmation, rows, cancellationToken);
+        if (!discussionResult.IsSuccessful)
+            throw new InvalidOperationException("نمایش تأیید درخواست در گروه گفت‌وگو ناموفق بود.");
         await _sender.AnswerCallbackAsync(callback.Id, "نوع شیشه انتخاب شد.", cancellationToken);
     }
 
