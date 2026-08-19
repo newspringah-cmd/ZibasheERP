@@ -18,15 +18,16 @@ public sealed partial class TelegramWebhookController
               text.StartsWith("/whoami", StringComparison.OrdinalIgnoreCase)))
             return false;
 
-        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From!.Id, ct))
+        if (text.Equals("/whoami", StringComparison.OrdinalIgnoreCase) &&
+            long.TryParse(_options.AdminChatId, out var adminChatId) && adminChatId == message.Chat.Id)
         {
-            await ReplyAsync(message.Chat.Id, "این بخش فقط برای مدیران گروه حسابداری فعال است.", ct);
+            await ReplyAsync(message.Chat.Id, $"Telegram User ID دریافت‌شده توسط ربات: {message.From!.Id}", ct);
             return true;
         }
 
-        if (text.Equals("/whoami", StringComparison.OrdinalIgnoreCase))
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From!.Id, ct))
         {
-            await ReplyAsync(message.Chat.Id, $"Telegram User ID شما: {message.From.Id}", ct);
+            await ReplyAsync(message.Chat.Id, "این بخش فقط برای مدیران گروه حسابداری فعال است.", ct);
             return true;
         }
 
