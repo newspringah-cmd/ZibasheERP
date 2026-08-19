@@ -323,7 +323,8 @@ public sealed partial class TelegramWebhookController
 
     private async Task<bool> IsAuthorizedInvoiceAdminAsync(long chatId, long userId, CancellationToken ct) =>
         long.TryParse(_options.AdminChatId, out var configured) && configured == chatId &&
-        await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct);
+        (IsPrimaryOwner(userId) ||
+         await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct));
 
     private static bool TryNormalizeCard(string value, out string card)
     {
