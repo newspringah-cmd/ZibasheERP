@@ -10,7 +10,9 @@ public sealed partial class TelegramWebhookController
         var text = message.Text?.Trim();
         if (string.IsNullOrWhiteSpace(text) ||
             !(text.StartsWith("/admin", StringComparison.OrdinalIgnoreCase) ||
-              text.StartsWith("/bank", StringComparison.OrdinalIgnoreCase)))
+              text.StartsWith("/bank", StringComparison.OrdinalIgnoreCase) ||
+              text.StartsWith("/nextbottle", StringComparison.OrdinalIgnoreCase) ||
+              text.StartsWith("/listrequest", StringComparison.OrdinalIgnoreCase)))
             return false;
 
         if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From!.Id, ct))
@@ -41,6 +43,109 @@ public sealed partial class TelegramWebhookController
             }, ct);
             await _paymentAccountRepository.SaveChangesAsync(ct);
             await SendInvoiceAdminMenuAsync(message.Chat.Id, "حساب بانکی اضافه شد ✅", ct);
+            return true;
+        }
+
+        if (text.StartsWith("/nextbottle ", StringComparison.OrdinalIgnoreCase))
+        {
+            var values = text[12..].Split('|', StringSplitOptions.TrimEntries);
+            if (values.Length != 3 || !TryParsePositiveInt(values[2], out var volume))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "فرمت صحیح:\n/nextbottle کدلیست | @username یا TelegramId | مقدارمیل", ct);
+                return true;
+            }
+            var code = values[0].Trim();
+            var lists = await _salesListRepository.GetForAdminAsync(200, ct);
+            var matches = lists.Where(value =>
+                value.Id.ToString("N").StartsWith(code, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    matches.Length == 0 ? "لیستی با این کد پیدا نشد." : "کد واردشده یکتا نیست؛ تعداد بیشتری از حروف کد را وارد کنید.", ct);
+                return true;
+            }
+            var identity = values[1].Trim();
+            var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
+            var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
+            var request = new SalesListRequest
+            {
+                Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+                SalesListId = matches[0].Id,
+                TelegramUserId = telegramId,
+                TelegramUsername = username,
+                VolumeMl = volume,
+                PerfumePricePerMl = matches[0].PricePerMl,
+                Kind = SalesListRequestKind.NextBottle,
+                Status = SalesListRequestStatus.Confirmed,
+                CreatedByAdmin = true,
+                ExpiresAt = DateTime.MaxValue,
+                ConfirmedAt = DateTime.UtcNow,
+                ExternalReference = $"admin-next-bottle:{Guid.NewGuid():N}"
+            };
+            await _salesListRequestRepository.AddAsync(request, ct);
+            await _salesListRequestRepository.SaveChangesAsync(ct);
+            await RefreshChannelSalesListAsync(matches[0].Id, ct);
+            await ReplyAsync(message.Chat.Id,
+                $"{volume} میل برای {(username is null ? identity : "@" + username)} در صف Next Bottle ثبت شد ✅", ct);
+            return true;
+        }
+
+        if (text.StartsWith("/listrequest ", StringComparison.OrdinalIgnoreCase))
+        {
+            var values = text[13..].Split('|', StringSplitOptions.TrimEntries);
+            if (values.Length != 4 || !TryParsePositiveInt(values[2], out var volume))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "فرمت صحیح:\n/listrequest کدلیست | @username یا TelegramId | مقدارمیل | نرمال یا فانتزی", ct);
+                return true;
+            }
+            var lists = await _salesListRepository.GetForAdminAsync(200, ct);
+            var matches = lists.Where(value => value.Id.ToString("N").StartsWith(
+                values[0].Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1)
+            {
+                await ReplyAsync(message.Chat.Id, matches.Length == 0
+                    ? "لیستی با این کد پیدا نشد."
+                    : "کد واردشده یکتا نیست؛ تعداد بیشتری از حروف کد را وارد کنید.", ct);
+                return true;
+            }
+            var requestedType = values[3].Contains("فانتزی", StringComparison.OrdinalIgnoreCase)
+                ? BottleType.Fancy : BottleType.Normal;
+            var bottles = await _mediator.Send(
+                new ZibasheERP.Application.Features.Bottles.GetAvailableBottles.GetAvailableBottlesQuery(volume), ct);
+            var bottle = bottles.FirstOrDefault(value => string.Equals(
+                value.Type, requestedType.ToString(), StringComparison.OrdinalIgnoreCase));
+            if (bottle is null)
+            {
+                await ReplyAsync(message.Chat.Id, "برای این حجم، شیشه فعال از نوع انتخاب‌شده وجود ندارد.", ct);
+                return true;
+            }
+            var identity = values[1].Trim();
+            var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
+            var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
+            var request = new SalesListRequest
+            {
+                Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+                SalesListId = matches[0].Id,
+                TelegramUserId = telegramId,
+                TelegramUsername = username,
+                VolumeMl = volume,
+                BottleId = bottle.Id,
+                PerfumePricePerMl = matches[0].PricePerMl,
+                BottlePrice = bottle.Price,
+                Kind = SalesListRequestKind.CurrentBottle,
+                Status = SalesListRequestStatus.PendingConfirmation,
+                CreatedByAdmin = true,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+                ExternalReference = $"admin-custom-request:{Guid.NewGuid():N}"
+            };
+            await _salesListRequestRepository.AddAsync(request, ct);
+            await _salesListRequestRepository.SaveChangesAsync(ct);
+            await _salesListRequestRepository.ConfirmCurrentBottleAsync(request.Id, telegramId, ct);
+            await RefreshChannelSalesListAsync(matches[0].Id, ct);
+            await ReplyAsync(message.Chat.Id,
+                $"درخواست دستی {volume} میل با شیشه {values[3]} ثبت شد ✅", ct);
             return true;
         }
 
@@ -90,10 +195,15 @@ public sealed partial class TelegramWebhookController
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton("➕ راهنمای افزودن حساب", "invoiceadmin:add")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton("🧴 لیست فروش جدید", "adminlist:new")
         }).ToArray();
         var message = (notice is null ? "" : notice + "\n\n") +
             $"⚙️ تنظیمات فاکتور زیباشی\n⏱ مهلت پرداخت: ۲۴ ساعت\n🏦 حساب‌ها: {accounts.Count}/4 (پیشنهاد: ۲ حساب فعال)\n\nحساب‌های بانکی:\n" + lines +
             "\n\nافزودن حساب:\n/bankadd شماره‌کارت | نام صاحب حساب | نام بانک";
+        message += "\n\nثبت صف بطری بعدی (فقط ادمین):\n/nextbottle کدلیست | @username | مقدارمیل";
+        message += "\n\nثبت مقدار سفارشی از کامنت:\n/listrequest کدلیست | @username | مقدارمیل | نرمال یا فانتزی";
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
     }
 

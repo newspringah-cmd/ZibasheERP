@@ -25,6 +25,9 @@ public class SalesList : BaseEntity
     // حجم کل شیشه اصلی
     public int TotalVolume { get; set; } = 100;
 
+    // Smallest volume shown to customers on the channel post.
+    public int MinimumRequestVolumeMl { get; set; } = 1;
+
     // حجم رزرو شده
     public int ReservedVolume { get; set; }
 
@@ -54,6 +57,8 @@ public class SalesList : BaseEntity
     // پیام تلگرام
     public long? TelegramMessageId { get; set; }
 
+    public long? TelegramDiscussionMessageId { get; set; }
+
     // کانال تلگرام
     [MaxLength(100)]
     public string? TelegramChannelId { get; set; }
@@ -61,4 +66,6 @@ public class SalesList : BaseEntity
     // توضیحات
     [MaxLength(500)]
     public string? Notes { get; set; }
+
+    public ICollection<SalesListRequest> Requests { get; set; } = new List<SalesListRequest>();
 }

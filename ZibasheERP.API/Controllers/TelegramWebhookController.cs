@@ -44,6 +44,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly ITelegramOrderDraftRepository _draftRepository;
     private readonly ITelegramGroupMembershipTracker _groupMembershipTracker;
     private readonly IInvoicePaymentAccountRepository _paymentAccountRepository;
+    private readonly ISalesListRepository _salesListRepository;
+    private readonly ISalesListRequestRepository _salesListRequestRepository;
+    private readonly TelegramAdminSalesListDraftStore _adminSalesListDrafts;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -52,6 +55,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         ITelegramOrderDraftRepository draftRepository,
         ITelegramGroupMembershipTracker groupMembershipTracker,
         IInvoicePaymentAccountRepository paymentAccountRepository,
+        ISalesListRepository salesListRepository,
+        ISalesListRequestRepository salesListRequestRepository,
+        TelegramAdminSalesListDraftStore adminSalesListDrafts,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
@@ -60,6 +66,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _draftRepository = draftRepository;
         _groupMembershipTracker = groupMembershipTracker;
         _paymentAccountRepository = paymentAccountRepository;
+        _salesListRepository = salesListRepository;
+        _salesListRequestRepository = salesListRequestRepository;
+        _adminSalesListDrafts = adminSalesListDrafts;
         _logger = logger;
     }
 
@@ -326,6 +335,12 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleChannelSalesListCallbackAsync(callback, cancellationToken))
+            return;
+
+        if (await TryHandleAdminSalesListCallbackAsync(callback, cancellationToken))
+            return;
+
         if (await TryHandleAdminCallbackAsync(callback, cancellationToken))
             return;
 
@@ -729,6 +744,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (await TryHandleAdminCommandAsync(message, cancellationToken))
+            return;
+
+        if (await TryHandleAdminSalesListMessageAsync(message, cancellationToken))
             return;
 
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))

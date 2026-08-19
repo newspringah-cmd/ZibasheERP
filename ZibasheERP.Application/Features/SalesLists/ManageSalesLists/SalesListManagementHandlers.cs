@@ -28,6 +28,8 @@ public sealed class CreateSalesListCommandHandler
             throw new InvalidOperationException("عطر این بچ غیرفعال است.");
         if (request.TotalVolume > batch.RemainingVolumeMl)
             throw new InvalidOperationException("حجم لیست از موجودی باقیمانده بچ بیشتر است.");
+        if (request.MinimumRequestVolumeMl <= 0 || request.MinimumRequestVolumeMl > request.TotalVolume)
+            throw new InvalidOperationException("حداقل حجم درخواست معتبر نیست.");
         if (await _salesListRepository.HasActiveForBatchAsync(batch.Id, cancellationToken))
             throw new InvalidOperationException("برای این بچ یک لیست فروش فعال وجود دارد.");
 
@@ -40,6 +42,7 @@ public sealed class CreateSalesListCommandHandler
             Batch = batch,
             PricePerMl = request.PricePerMl,
             TotalVolume = request.TotalVolume,
+            MinimumRequestVolumeMl = request.MinimumRequestVolumeMl,
             ReservedVolume = 0,
             Status = SalesListStatus.Open,
             OpenDate = now,
@@ -117,6 +120,7 @@ internal static class SalesListMapper
         salesList.Batch.Perfume.Brand,
         salesList.PricePerMl,
         salesList.TotalVolume,
+        salesList.MinimumRequestVolumeMl,
         salesList.ReservedVolume,
         salesList.RemainingVolume,
         salesList.HasBottleOwner,

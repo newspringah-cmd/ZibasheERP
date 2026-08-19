@@ -48,6 +48,7 @@ builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IAdminCustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<ISalesListRepository, SalesListRepository>();
+builder.Services.AddScoped<ISalesListRequestRepository, SalesListRequestRepository>();
 builder.Services.AddScoped<IBottleRepository, BottleRepository>();
 builder.Services.AddScoped<IBatchRepository, BatchRepository>();
 builder.Services.AddScoped<IPerfumeRepository, PerfumeRepository>();
@@ -97,6 +98,7 @@ builder.Services.AddOptions<N8nOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
+builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddScoped<ITelegramGroupMembershipTracker, TelegramGroupMembershipTracker>();
 builder.Services.AddHostedService<TelegramOutboxWorker>();

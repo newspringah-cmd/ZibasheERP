@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
 
     public DbSet<Batch> Batches => Set<Batch>();
     public DbSet<SalesList> SalesLists => Set<SalesList>();
+    public DbSet<SalesListRequest> SalesListRequests => Set<SalesListRequest>();
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderArtifact> OrderArtifacts => Set<OrderArtifact>();
@@ -43,6 +44,7 @@ public class AppDbContext : DbContext
         ConfigureBottle(modelBuilder);
         ConfigureBatch(modelBuilder);
         ConfigureSalesList(modelBuilder);
+        ConfigureSalesListRequest(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderArtifact(modelBuilder);
         ConfigureTelegramOrderDraft(modelBuilder);
@@ -220,6 +222,33 @@ public class AppDbContext : DbContext
             .HasIndex(x => x.ExternalReference)
             .IsUnique()
             .HasFilter("[ExternalReference] IS NOT NULL");
+    }
+
+    private static void ConfigureSalesListRequest(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesListRequest>()
+            .HasOne(value => value.SalesList)
+            .WithMany(value => value.Requests)
+            .HasForeignKey(value => value.SalesListId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<SalesListRequest>()
+            .HasOne(value => value.Bottle)
+            .WithMany()
+            .HasForeignKey(value => value.BottleId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.TelegramUserId).HasMaxLength(50);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.TelegramUsername).HasMaxLength(100);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.ExternalReference).HasMaxLength(100);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.PerfumePricePerMl).HasPrecision(18, 2);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.BottlePrice).HasPrecision(18, 2);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.RowVersion).IsRowVersion();
+        modelBuilder.Entity<SalesListRequest>()
+            .HasIndex(value => value.ExternalReference)
+            .IsUnique();
+        modelBuilder.Entity<SalesListRequest>()
+            .HasIndex(value => new { value.SalesListId, value.Kind, value.Status, value.CreatedAt });
+        modelBuilder.Entity<SalesListRequest>()
+            .HasIndex(value => new { value.SalesListId, value.TelegramUserId, value.Status });
     }
 
     private static void ConfigureOrderArtifact(ModelBuilder modelBuilder)

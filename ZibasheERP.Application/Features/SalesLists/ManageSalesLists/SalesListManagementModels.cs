@@ -7,7 +7,8 @@ public sealed record CreateSalesListCommand(
     decimal PricePerMl,
     int TotalVolume,
     string? TelegramChannelId,
-    string? Notes) : IRequest<AdminSalesListResponse>;
+    string? Notes,
+    int MinimumRequestVolumeMl = 1) : IRequest<AdminSalesListResponse>;
 
 public sealed record CloseSalesListCommand(Guid SalesListId)
     : IRequest<AdminSalesListResponse>;
@@ -23,6 +24,7 @@ public sealed record AdminSalesListResponse(
     string Brand,
     decimal PricePerMl,
     int TotalVolume,
+    int MinimumRequestVolumeMl,
     int ReservedVolume,
     int RemainingVolume,
     bool HasBottleOwner,
