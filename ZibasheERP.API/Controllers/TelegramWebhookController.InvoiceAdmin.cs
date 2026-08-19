@@ -432,9 +432,8 @@ public sealed partial class TelegramWebhookController
     private bool IsPrimaryOwner(long userId) =>
         long.TryParse(_options.OwnerUserId, out var ownerUserId) && ownerUserId == userId;
 
-    private static readonly int[] StandardVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
     private static int[] PriceableVolumes(BottleType type, int minimum, int maximum) =>
-        StandardVolumes.Where(volume => volume >= minimum && volume <= maximum &&
+        Enumerable.Range(minimum, maximum - minimum + 1).Where(volume =>
             (volume != 3 || type == BottleType.Normal) &&
             (volume <= 10 || type == BottleType.Fancy)).ToArray();
 

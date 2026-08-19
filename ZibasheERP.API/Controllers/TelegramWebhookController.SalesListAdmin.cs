@@ -75,7 +75,7 @@ public sealed partial class TelegramWebhookController
                 .FirstOrDefault();
             if (photo is null)
             {
-                await ForceReplyAsync(message.Chat.Id, "لطفاً یک عکس از عطر ارسال کنید؛ فایل یا متن قابل قبول نیست.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "لطفاً یک عکس از عطر ارسال کنید؛ فایل یا متن قابل قبول نیست.", cancellationToken);
                 return true;
             }
 
@@ -102,128 +102,128 @@ public sealed partial class TelegramWebhookController
                 draft.EnglishName = Limit(input, 200);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingProductPageUrl;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "لینک کامل صفحه عطر در سایت عطردان را وارد کنید؛ باید با https:// شروع شود.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "لینک کامل صفحه عطر در سایت عطردان را وارد کنید؛ باید با https:// شروع شود.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingProductPageUrl:
                 if (!Uri.TryCreate(input, UriKind.Absolute, out var productUri) || productUri.Scheme != Uri.UriSchemeHttps)
                 {
-                    await ForceReplyAsync(message.Chat.Id, "لینک معتبر نیست. لینک کامل https صفحه عطر را وارد کنید.", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, "لینک معتبر نیست. لینک کامل https صفحه عطر را وارد کنید.", cancellationToken);
                     return true;
                 }
                 draft.ProductPageUrl = Limit(productUri.ToString(), 500);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBrand;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "نام برند را به انگلیسی وارد کنید؛ مثال: Chanel", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "نام برند را به انگلیسی وارد کنید؛ مثال: Chanel", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingBrand:
                 draft.DisplayBrand = Limit(input, 150);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingGender;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "جنسیت عطر را وارد کنید: زنانه، مردانه یا یونیسکس", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "جنسیت عطر را وارد کنید: زنانه، مردانه یا یونیسکس", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingGender:
                 if (!TryParseGender(input, out var gender))
                 {
-                    await ForceReplyAsync(message.Chat.Id, "فقط یکی از این سه مقدار را بفرستید: زنانه، مردانه، یونیسکس", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, "فقط یکی از این سه مقدار را بفرستید: زنانه، مردانه، یونیسکس", cancellationToken);
                     return true;
                 }
                 draft.Gender = gender;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingReleaseYear;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "سال تولید عطر را میلادی وارد کنید؛ مثال: 2021", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "سال تولید عطر را میلادی وارد کنید؛ مثال: 2021", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingReleaseYear:
                 if (!TryParsePositiveInt(input, out var releaseYear) || releaseYear is < 1800 or > 2100)
                 {
-                    await ForceReplyAsync(message.Chat.Id, "سال تولید معتبر نیست؛ مثال: 2021", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, "سال تولید معتبر نیست؛ مثال: 2021", cancellationToken);
                     return true;
                 }
                 draft.ReleaseYear = releaseYear;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingPersianName;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "نام فارسی عطر را وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "نام فارسی عطر را وارد کنید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingPersianName:
                 draft.PersianName = Limit(input, 200);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingTopNotes;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "نت‌های ابتدایی را به فارسی وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "نت‌های ابتدایی را به فارسی وارد کنید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingTopNotes:
                 draft.TopNotes = Limit(input, 500);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingMiddleNotes;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "نت‌های میانی را به فارسی وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "نت‌های میانی را به فارسی وارد کنید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingMiddleNotes:
                 draft.MiddleNotes = Limit(input, 500);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBaseNotes;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "نت‌های پایانی را به فارسی وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "نت‌های پایانی را به فارسی وارد کنید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingBaseNotes:
                 draft.BaseNotes = Limit(input, 500);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingAccords;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "آکوردهای اصلی را به فارسی وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "آکوردهای اصلی را به فارسی وارد کنید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingAccords:
                 draft.Accords = Limit(input, 500);
                 draft.Stage = TelegramAdminSalesListStage.AwaitingPrice;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "قیمت فروش هر میل را به تومان وارد کنید؛ مثال: 150000", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "قیمت فروش هر میل را به تومان وارد کنید؛ مثال: 150000", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingPrice:
                 if (!TryParsePositiveDecimal(input, out var price))
                 {
-                    await ForceReplyAsync(message.Chat.Id, "قیمت معتبر نیست. قیمت هر میل را فقط به تومان وارد کنید؛ مثال: 150000", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, "قیمت معتبر نیست. قیمت هر میل را فقط به تومان وارد کنید؛ مثال: 150000", cancellationToken);
                     return true;
                 }
                 draft.PricePerMl = price;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingVolume;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, $"حجم قابل فروش را به میل وارد کنید. حداکثر موجودی این بچ: {draft.BatchRemainingVolumeMl:N0} میل", cancellationToken);
+                await ReplyAsync(message.Chat.Id, $"حجم قابل فروش را به میل وارد کنید. حداکثر موجودی این بچ: {draft.BatchRemainingVolumeMl:N0} میل", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingVolume:
                 if (!TryParsePositiveInt(input, out var volume) || volume > draft.BatchRemainingVolumeMl)
                 {
-                    await ForceReplyAsync(message.Chat.Id, $"حجم باید عددی مثبت و حداکثر {draft.BatchRemainingVolumeMl:N0} میل باشد.", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, $"حجم باید عددی مثبت و حداکثر {draft.BatchRemainingVolumeMl:N0} میل باشد.", cancellationToken);
                     return true;
                 }
                 draft.TotalVolume = volume;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingMinimumVolume;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "حداقل حجم قابل درخواست مشتری را وارد کنید؛ مثال: 1", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "حداقل حجم قابل درخواست مشتری را وارد کنید؛ مثال: 1", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingMinimumVolume:
                 if (!TryParsePositiveInt(input, out var minimumVolume) || minimumVolume > draft.TotalVolume)
                 {
-                    await ForceReplyAsync(message.Chat.Id, $"حداقل حجم باید عددی مثبت و حداکثر {draft.TotalVolume:N0} میل باشد.", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, $"حداقل حجم باید عددی مثبت و حداکثر {draft.TotalVolume:N0} میل باشد.", cancellationToken);
                     return true;
                 }
                 draft.MinimumRequestVolumeMl = minimumVolume;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingNotes;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "توضیحات لیست را وارد کنید. اگر توضیحی ندارید فقط خط تیره (-) بفرستید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "توضیحات لیست را وارد کنید. اگر توضیحی ندارید فقط خط تیره (-) بفرستید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingNotes:
                 draft.Notes = input == "-" ? null : input.Length <= 500 ? input : input[..500];
                 draft.Stage = TelegramAdminSalesListStage.AwaitingPhoto;
                 _adminSalesListDrafts.Set(draft);
-                await ForceReplyAsync(message.Chat.Id, "حالا یک عکس واضح از عطر ارسال کنید. همین عکس همراه لیست در کانال اصلی منتشر می‌شود.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "حالا یک عکس واضح از عطر ارسال کنید. همین عکس همراه لیست در کانال اصلی منتشر می‌شود.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.Preview:
@@ -300,7 +300,7 @@ public sealed partial class TelegramWebhookController
         };
         _adminSalesListDrafts.Set(draft);
         await _sender.AnswerCallbackAsync(callback.Id, "بچ انتخاب شد.", cancellationToken);
-        await ForceReplyAsync(draft.ChatId, $"بچ «{batch.PerfumeName} — {batch.BatchNumber}» انتخاب شد.\nنام انگلیسی عطر را وارد کنید.", cancellationToken);
+        await ReplyAsync(draft.ChatId, $"بچ «{batch.PerfumeName} — {batch.BatchNumber}» انتخاب شد.\nنام انگلیسی عطر را وارد کنید.", cancellationToken);
     }
 
     private async Task SendSalesListPreviewAsync(
@@ -422,13 +422,6 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "ساخت لیست ناموفق بود.", cancellationToken);
             await ReplyAsync(chatId, exception.Message, cancellationToken);
         }
-    }
-
-    private async Task ForceReplyAsync(long chatId, string message, CancellationToken cancellationToken)
-    {
-        var result = await _sender.SendForceReplyAsync(chatId.ToString(), message, cancellationToken);
-        if (!result.IsSuccessful)
-            _logger.LogWarning("Telegram admin wizard prompt failed: {Error}", result.Error);
     }
 
     private static string FormatSalesListAnnouncement(TelegramAdminSalesListDraft draft) =>
