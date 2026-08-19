@@ -18,7 +18,8 @@ public sealed partial class TelegramWebhookController
               text.StartsWith("/whoami", StringComparison.OrdinalIgnoreCase)))
             return false;
 
-        if (text.Equals("/whoami", StringComparison.OrdinalIgnoreCase) &&
+        if ((text.Equals("/whoami", StringComparison.OrdinalIgnoreCase) ||
+             text.StartsWith("/whoami@", StringComparison.OrdinalIgnoreCase)) &&
             long.TryParse(_options.AdminChatId, out var adminChatId) && adminChatId == message.Chat.Id)
         {
             await ReplyAsync(message.Chat.Id, $"Telegram User ID دریافت‌شده توسط ربات: {message.From!.Id}", ct);
