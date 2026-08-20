@@ -26,6 +26,10 @@ public sealed class SalesListRequest : BaseEntity
     public SalesList SalesList { get; set; } = null!;
     public string TelegramUserId { get; set; } = string.Empty;
     public string? TelegramUsername { get; set; }
+    public bool IsGift { get; set; }
+    public string? GiftRecipientTelegramUserId { get; set; }
+    public string? GiftRecipientTelegramUsername { get; set; }
+    public bool IsBottleOwner { get; set; }
     public int VolumeMl { get; set; }
     public Guid? BottleId { get; set; }
     public Bottle? Bottle { get; set; }

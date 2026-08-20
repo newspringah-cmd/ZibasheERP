@@ -35,6 +35,41 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     public Task AddAsync(SalesListRequest request, CancellationToken cancellationToken = default) =>
         _dbContext.SalesListRequests.AddAsync(request, cancellationToken).AsTask();
 
+    public async Task SetGiftRecipientAsync(
+        Guid requestId, string telegramUserId, string recipientIdentity,
+        CancellationToken cancellationToken = default)
+    {
+        var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(
+            value => value.Id == requestId && !value.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.TelegramUserId != telegramUserId)
+            throw new InvalidOperationException("این درخواست متعلق به شما نیست.");
+        var identity = recipientIdentity.Trim();
+        request.IsGift = true;
+        if (identity.StartsWith('@'))
+            request.GiftRecipientTelegramUsername = identity.TrimStart('@');
+        else
+            request.GiftRecipientTelegramUserId = new string(identity.Where(char.IsDigit).ToArray());
+        request.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> IsGiftRecipientBottleOwnerAsync(
+        Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var request = await _dbContext.SalesListRequests.AsNoTracking()
+            .FirstOrDefaultAsync(value => value.Id == requestId && !value.IsDeleted, cancellationToken);
+        if (request is null || !request.IsGift)
+            return false;
+        return await _dbContext.SalesListRequests.AsNoTracking().AnyAsync(value =>
+            value.SalesListId == request.SalesListId && !value.IsDeleted && value.IsBottleOwner &&
+            value.Status == SalesListRequestStatus.Confirmed &&
+            ((!string.IsNullOrEmpty(request.GiftRecipientTelegramUserId) &&
+              value.TelegramUserId == request.GiftRecipientTelegramUserId) ||
+             (!string.IsNullOrEmpty(request.GiftRecipientTelegramUsername) &&
+              value.TelegramUsername == request.GiftRecipientTelegramUsername)), cancellationToken);
+    }
+
     public async Task SelectBottleAsync(
         Guid requestId, string telegramUserId, Guid bottleId, decimal bottlePrice,
         CancellationToken cancellationToken = default)
@@ -68,8 +103,34 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             return;
         if (request.Status != SalesListRequestStatus.PendingConfirmation || request.ExpiresAt <= DateTime.UtcNow)
             throw new InvalidOperationException("مهلت تأیید این درخواست تمام شده است.");
+        if (!request.BottleId.HasValue && !request.IsBottleOwner &&
+            !await IsGiftRecipientBottleOwnerAsync(request.Id, cancellationToken))
+            throw new InvalidOperationException("نوع شیشه برای این درخواست مشخص نشده است.");
         if (request.SalesList.Status != SalesListStatus.Open || request.VolumeMl > request.SalesList.RemainingVolume)
             throw new InvalidOperationException($"ظرفیت کافی نیست. باقی‌مانده فعلی {request.SalesList.RemainingVolume} میل است.");
+        if (request.IsBottleOwner && request.SalesList.HasBottleOwner)
+            throw new InvalidOperationException("صاحب باتل این لیست قبلاً مشخص شده است.");
+
+        if (request.IsBottleOwner)
+        {
+            request.BottleId = null;
+            request.BottlePrice = 0;
+            request.SalesList.HasBottleOwner = true;
+            var ownerUserId = request.IsGift ? request.GiftRecipientTelegramUserId : request.TelegramUserId;
+            var ownerUsername = request.IsGift ? request.GiftRecipientTelegramUsername : request.TelegramUsername;
+            var queued = await _dbContext.SalesListRequests.Where(value =>
+                value.SalesListId == request.SalesListId && !value.IsDeleted &&
+                value.Kind == SalesListRequestKind.NextBottle &&
+                value.Status == SalesListRequestStatus.Confirmed &&
+                ((!string.IsNullOrEmpty(ownerUserId) && value.TelegramUserId == ownerUserId) ||
+                 (!string.IsNullOrEmpty(ownerUsername) && value.TelegramUsername == ownerUsername)))
+                .ToArrayAsync(cancellationToken);
+            foreach (var queuedRequest in queued)
+            {
+                queuedRequest.Status = SalesListRequestStatus.Promoted;
+                queuedRequest.UpdatedAt = DateTime.UtcNow;
+            }
+        }
 
         request.SalesList.ReservedVolume += request.VolumeMl;
         request.SalesList.Status = request.SalesList.RemainingVolume == 0
@@ -95,6 +156,79 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             request.UpdatedAt = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    public async Task RemoveConfirmedAsync(Guid requestId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var request = await _dbContext.SalesListRequests.Include(value => value.SalesList)
+            .FirstOrDefaultAsync(value => value.Id == requestId && !value.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.Status != SalesListRequestStatus.Confirmed)
+            throw new InvalidOperationException("این مورد دیگر فعال نیست.");
+        if (request.Kind == SalesListRequestKind.CurrentBottle)
+        {
+            request.SalesList.ReservedVolume = Math.Max(0, request.SalesList.ReservedVolume - request.VolumeMl);
+            request.SalesList.Status = SalesListStatus.Open;
+        }
+        if (request.IsBottleOwner)
+            request.SalesList.HasBottleOwner = false;
+        request.Status = SalesListRequestStatus.Cancelled;
+        request.UpdatedAt = DateTime.UtcNow;
+        request.SalesList.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task PromoteNextBottleOwnerAsync(Guid requestId, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var request = await _dbContext.SalesListRequests.Include(value => value.SalesList)
+            .FirstOrDefaultAsync(value => value.Id == requestId && !value.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.Kind != SalesListRequestKind.NextBottle || request.Status != SalesListRequestStatus.Confirmed)
+            throw new InvalidOperationException("این فرد در صف فعال نیست.");
+        if (request.SalesList.HasBottleOwner)
+            throw new InvalidOperationException("ابتدا صاحب باتل فعلی را حذف کنید.");
+        if (request.VolumeMl > request.SalesList.RemainingVolume)
+            throw new InvalidOperationException("حجم درخواستی از ظرفیت باقی‌مانده بیشتر است.");
+        request.Kind = SalesListRequestKind.CurrentBottle;
+        request.IsBottleOwner = true;
+        request.BottleId = null;
+        request.BottlePrice = 0;
+        request.SalesList.HasBottleOwner = true;
+        request.SalesList.ReservedVolume += request.VolumeMl;
+        request.SalesList.Status = request.SalesList.RemainingVolume == 0 ? SalesListStatus.Full : SalesListStatus.Open;
+        request.UpdatedAt = request.SalesList.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task UpdateConfirmedVolumeAsync(
+        Guid requestId, int volumeMl, CancellationToken cancellationToken = default)
+    {
+        if (volumeMl <= 0)
+            throw new InvalidOperationException("مقدار باید مثبت باشد.");
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var request = await _dbContext.SalesListRequests.Include(value => value.SalesList)
+            .FirstOrDefaultAsync(value => value.Id == requestId && !value.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.Status != SalesListRequestStatus.Confirmed)
+            throw new InvalidOperationException("این مورد دیگر فعال نیست.");
+        if (request.Kind == SalesListRequestKind.CurrentBottle)
+        {
+            var changedReserved = request.SalesList.ReservedVolume - request.VolumeMl + volumeMl;
+            if (changedReserved > request.SalesList.TotalVolume)
+                throw new InvalidOperationException("مقدار جدید از ظرفیت لیست بیشتر است.");
+            request.SalesList.ReservedVolume = changedReserved;
+            request.SalesList.Status = request.SalesList.RemainingVolume == 0
+                ? SalesListStatus.Full : SalesListStatus.Open;
+            request.SalesList.UpdatedAt = DateTime.UtcNow;
+        }
+        request.VolumeMl = volumeMl;
+        request.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public Task SaveChangesAsync(CancellationToken cancellationToken = default) =>

@@ -53,6 +53,29 @@ public sealed partial class TelegramWebhookController
                 await StartSalesListDraftAsync(callback, perfumeId, cancellationToken);
                 return true;
 
+            case "owner" when parts.Length == 3 && parts[2] is "known" or "unknown":
+                if (!_adminSalesListDrafts.TryGet(chatId, userId, out var ownerDraft) ||
+                    ownerDraft.Stage != TelegramAdminSalesListStage.AwaitingBottleOwnerChoice)
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", cancellationToken);
+                    return true;
+                }
+                if (parts[2] == "unknown")
+                {
+                    ownerDraft.Stage = TelegramAdminSalesListStage.AwaitingNotes;
+                    _adminSalesListDrafts.Set(ownerDraft);
+                    await _sender.AnswerCallbackAsync(callback.Id, "فعلاً بدون صاحب باتل.", cancellationToken);
+                    await ReplyAsync(chatId, "توضیحات لیست را وارد کنید؛ اگر ندارید خط تیره (-) بفرستید.", cancellationToken);
+                }
+                else
+                {
+                    ownerDraft.Stage = TelegramAdminSalesListStage.AwaitingBottleOwnerIdentity;
+                    _adminSalesListDrafts.Set(ownerDraft);
+                    await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+                    await ReplyAsync(chatId, "شناسه صاحب باتل را به‌صورت @username یا Telegram ID وارد کنید.", cancellationToken);
+                }
+                return true;
+
             case "cancel":
                 _adminSalesListDrafts.Remove(chatId, userId);
                 await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نویس لغو شد.", cancellationToken);
@@ -233,9 +256,39 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.MinimumRequestVolumeMl = minimumVolume;
+                draft.Stage = TelegramAdminSalesListStage.AwaitingBottleOwnerChoice;
+                _adminSalesListDrafts.Set(draft);
+                await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+                    "صاحب باتل این لیست مشخص است؟",
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[] { new TelegramInlineButton("👑 ثبت صاحب باتل", "adminlist:owner:known") },
+                        new[] { new TelegramInlineButton("فعلاً مشخص نیست", "adminlist:owner:unknown") }
+                    }, cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingBottleOwnerIdentity:
+                if (!(input.StartsWith('@') && input.Length > 1) && new string(input.Where(char.IsDigit).ToArray()).Length < 5)
+                {
+                    await ReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", cancellationToken);
+                    return true;
+                }
+                draft.BottleOwnerIdentity = input;
+                draft.Stage = TelegramAdminSalesListStage.AwaitingBottleOwnerVolume;
+                _adminSalesListDrafts.Set(draft);
+                await ReplyAsync(message.Chat.Id, "صاحب باتل چند میل از باتل اصلی می‌خواهد؟", cancellationToken);
+                return true;
+
+            case TelegramAdminSalesListStage.AwaitingBottleOwnerVolume:
+                if (!TryParsePositiveInt(input, out var ownerVolume) || ownerVolume > draft.TotalVolume)
+                {
+                    await ReplyAsync(message.Chat.Id, $"مقدار باید مثبت و حداکثر {draft.TotalVolume} میل باشد.", cancellationToken);
+                    return true;
+                }
+                draft.BottleOwnerVolumeMl = ownerVolume;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingNotes;
                 _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "توضیحات لیست را وارد کنید. اگر توضیحی ندارید فقط خط تیره (-) بفرستید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "توضیحات لیست را وارد کنید؛ اگر ندارید خط تیره (-) بفرستید.", cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingNotes:
@@ -420,6 +473,29 @@ public sealed partial class TelegramWebhookController
                         draft.Accords),
                     cancellationToken);
                 draft.SalesListId = created.Id;
+                if (!string.IsNullOrWhiteSpace(draft.BottleOwnerIdentity) && draft.BottleOwnerVolumeMl > 0)
+                {
+                    var ownerIdentity = draft.BottleOwnerIdentity.Trim();
+                    var ownerUsername = ownerIdentity.StartsWith('@') ? ownerIdentity.TrimStart('@') : null;
+                    var ownerTelegramId = ownerUsername is null
+                        ? new string(ownerIdentity.Where(char.IsDigit).ToArray())
+                        : $"admin-username:{ownerUsername.ToLowerInvariant()}";
+                    var ownerRequest = new ZibasheERP.Domain.Entities.SalesListRequest
+                    {
+                        Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, SalesListId = created.Id,
+                        TelegramUserId = ownerTelegramId, TelegramUsername = ownerUsername,
+                        VolumeMl = draft.BottleOwnerVolumeMl, PerfumePricePerMl = draft.PricePerMl,
+                        BottlePrice = 0, IsBottleOwner = true,
+                        Kind = ZibasheERP.Domain.Entities.SalesListRequestKind.CurrentBottle,
+                        Status = ZibasheERP.Domain.Entities.SalesListRequestStatus.PendingConfirmation,
+                        CreatedByAdmin = true, ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+                        ExternalReference = $"admin-list-owner:{Guid.NewGuid():N}"
+                    };
+                    await _salesListRequestRepository.AddAsync(ownerRequest, cancellationToken);
+                    await _salesListRequestRepository.SaveChangesAsync(cancellationToken);
+                    await _salesListRequestRepository.ConfirmCurrentBottleAsync(
+                        ownerRequest.Id, ownerTelegramId, cancellationToken);
+                }
                 _adminSalesListDrafts.Set(draft);
             }
 
@@ -487,6 +563,9 @@ public sealed partial class TelegramWebhookController
         $"🎼 آکوردها: {draft.Accords}\n" +
         $"💧 حجم کل: {draft.TotalVolume:N0} میل\n" +
         $"📏 حداقل درخواست: {draft.MinimumRequestVolumeMl:N0} میل\n" +
+        (string.IsNullOrWhiteSpace(draft.BottleOwnerIdentity)
+            ? "👑 صاحب باتل: فعلاً مشخص نیست\n"
+            : $"👑 صاحب باتل: {draft.BottleOwnerIdentity} — {draft.BottleOwnerVolumeMl} میل\n") +
         $"💰 قیمت هر میل: {draft.PricePerMl:N0} تومان" +
         (string.IsNullOrWhiteSpace(draft.Notes) ? string.Empty : $"\n📝 {draft.Notes}");
 

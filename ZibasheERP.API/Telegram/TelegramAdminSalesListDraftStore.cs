@@ -19,6 +19,9 @@ public enum TelegramAdminSalesListStage
     AwaitingPrice,
     AwaitingVolume,
     AwaitingMinimumVolume,
+    AwaitingBottleOwnerChoice,
+    AwaitingBottleOwnerIdentity,
+    AwaitingBottleOwnerVolume,
     AwaitingNotes,
     AwaitingPhoto,
     Preview
@@ -46,6 +49,8 @@ public sealed class TelegramAdminSalesListDraft
     public decimal PricePerMl { get; set; }
     public int TotalVolume { get; set; }
     public int MinimumRequestVolumeMl { get; set; }
+    public string? BottleOwnerIdentity { get; set; }
+    public int BottleOwnerVolumeMl { get; set; }
     public string? Notes { get; set; }
     public string? PhotoFileId { get; set; }
     public Guid? SalesListId { get; set; }
@@ -133,8 +138,8 @@ public sealed class TelegramOwnerPricingDraftStore
     public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
 }
 
-public enum TelegramAdminRequestKind { NextBottle, CustomRequest, EditList, CleanupList }
-public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingConfirmation }
+public enum TelegramAdminRequestKind { NextBottle, CustomRequest, EditList, CleanupList, ManageBottleQueue }
+public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingConfirmation }
 
 public sealed class TelegramAdminRequestDraft
 {
@@ -146,10 +151,14 @@ public sealed class TelegramAdminRequestDraft
     public string SalesListName { get; set; } = string.Empty;
     public TelegramAdminRequestStage Stage { get; set; } = TelegramAdminRequestStage.AwaitingListSearch;
     public string Identity { get; set; } = string.Empty;
+    public bool IsGift { get; set; }
+    public string GiftRecipientIdentity { get; set; } = string.Empty;
+    public bool IsBottleOwner { get; set; }
     public int VolumeMl { get; set; }
     public BottleType? BottleType { get; set; }
     public string EditField { get; set; } = string.Empty;
     public string EditValue { get; set; } = string.Empty;
+    public Guid SelectedRequestId { get; set; }
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
 
@@ -170,4 +179,25 @@ public sealed class TelegramAdminRequestDraftStore
         return false;
     }
     public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
+}
+
+public sealed record TelegramGiftRecipientDraft(
+    Guid RequestId, Guid SalesListId, long TelegramUserId, DateTime ExpiresAt);
+
+public sealed class TelegramGiftRecipientDraftStore
+{
+    private readonly ConcurrentDictionary<long, TelegramGiftRecipientDraft> _values = new();
+    public void Set(TelegramGiftRecipientDraft value) => _values[value.TelegramUserId] = value;
+    public bool TryGet(long telegramUserId, out TelegramGiftRecipientDraft value)
+    {
+        if (_values.TryGetValue(telegramUserId, out var found) && found.ExpiresAt > DateTime.UtcNow)
+        {
+            value = found;
+            return true;
+        }
+        _values.TryRemove(telegramUserId, out _);
+        value = null!;
+        return false;
+    }
+    public void Remove(long telegramUserId) => _values.TryRemove(telegramUserId, out _);
 }

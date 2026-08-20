@@ -51,11 +51,11 @@ public class SalesList : BaseEntity
     [MaxLength(500)]
     public string Accords { get; set; } = string.Empty;
 
-    // عطر موضوع پیش‌فروش؛ قبل از خرید مستقل از بچ است.
+    // عطر موضوع لیست سفارش‌محور؛ قبل از خرید مستقل از بچ است.
     public Guid PerfumeId { get; set; }
     public Perfume Perfume { get; set; } = null!;
 
-    // بچ واقعی پس از تکمیل پیش‌فروش و خرید به لیست متصل می‌شود.
+    // بچ واقعی پس از تکمیل لیست و خرید به آن متصل می‌شود.
     public Guid? BatchId { get; set; }
 
     public Batch? Batch { get; set; }
