@@ -12,6 +12,8 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows);
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), ScheduledRestore> _scheduled = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), DateTime> _scheduledDeletes = new();
+    private sealed record InteractionLock(long UserId, DateTime ExpiresAt);
+    private readonly ConcurrentDictionary<(string ChatId, long MessageId), InteractionLock> _interactionLocks = new();
 
     public TelegramTemporaryMessageCleaner(
         ITelegramMessageSender sender,
@@ -22,6 +24,33 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     }
 
     public bool IsScheduled(string chatId, long messageId) => _scheduled.ContainsKey((chatId, messageId));
+
+    public bool TryAcquireInteraction(
+        string chatId, long messageId, long userId, TimeSpan timeout)
+    {
+        var key = (chatId, messageId);
+        while (true)
+        {
+            var now = DateTime.UtcNow;
+            if (!_interactionLocks.TryGetValue(key, out var current))
+                return _interactionLocks.TryAdd(key, new(userId, now.Add(timeout))) ||
+                    TryAcquireInteraction(chatId, messageId, userId, timeout);
+            if (current.UserId == userId)
+            {
+                _interactionLocks[key] = current with { ExpiresAt = now.Add(timeout) };
+                return true;
+            }
+            if (current.ExpiresAt > now) return false;
+            if (_interactionLocks.TryUpdate(key, new(userId, now.Add(timeout)), current)) return true;
+        }
+    }
+
+    public void ReleaseInteraction(string chatId, long messageId, long userId)
+    {
+        var key = (chatId, messageId);
+        if (_interactionLocks.TryGetValue(key, out var current) && current.UserId == userId)
+            _interactionLocks.TryRemove(key, out _);
+    }
 
     public void ScheduleRestore(
         string chatId, long messageId, string caption,
@@ -40,6 +69,8 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             var now = DateTime.UtcNow;
+            foreach (var item in _interactionLocks.Where(item => item.Value.ExpiresAt <= now).ToArray())
+                _interactionLocks.TryRemove(item.Key, out _);
             foreach (var item in _scheduled.Where(item => item.Value.ExpiresAt <= now).ToArray())
             {
                 if (!_scheduled.TryRemove(item.Key, out _)) continue;
