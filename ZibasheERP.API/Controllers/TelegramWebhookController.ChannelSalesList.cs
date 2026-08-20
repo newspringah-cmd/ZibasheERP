@@ -40,9 +40,24 @@ public sealed partial class TelegramWebhookController
                 TryDecodeCompactGuid(parts[1], out requestId))
             {
                 if (parts[2] == "gift")
-                    await StartGiftRecipientInputAsync(callback, requestId, cancellationToken);
+                    await ShowGiftRecipientTypeAsync(callback, requestId, cancellationToken);
                 else
                     await ShowChannelBottleSelectionAsync(callback, requestId, cancellationToken);
+                return true;
+            }
+            if (parts[0] == "slg" && parts.Length == 3 && TryDecodeCompactGuid(parts[1], out requestId))
+            {
+                if (parts[2] == "owner")
+                    await ConfirmBottleOwnerGiftAsync(callback, requestId, cancellationToken);
+                else
+                    await ShowGiftBottleSelectionAsync(callback, requestId, cancellationToken);
+                return true;
+            }
+            if (parts[0] == "slgb" && parts.Length == 3 &&
+                TryDecodeCompactGuid(parts[1], out requestId) && TryDecodeCompactGuid(parts[2], out var giftBottleId))
+            {
+                await SelectGiftBottleAndRequestRecipientAsync(
+                    callback, requestId, giftBottleId, cancellationToken);
                 return true;
             }
             if (parts[0] == "slf" && parts.Length == 2 && TryDecodeCompactGuid(parts[1], out requestId))
@@ -224,6 +239,102 @@ public sealed partial class TelegramWebhookController
             }, cancellationToken);
     }
 
+    private async Task ShowGiftRecipientTypeAsync(
+        TelegramCallbackQuery callback, Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.TelegramUserId != callback.From.Id.ToString())
+            throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
+        var confirmed = await _salesListRequestRepository.GetConfirmedAsync(
+            request.SalesListId, cancellationToken);
+        var hasOwner = confirmed.Any(value => value.IsBottleOwner);
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (hasOwner)
+            rows.Add(new[] { new TelegramInlineButton("👑 هدیه برای صاحب باتل", $"slg:{EncodeCompactGuid(request.Id)}:owner") });
+        rows.Add(new[] { new TelegramInlineButton("🎁 هدیه برای عضو دیگر", $"slg:{EncodeCompactGuid(request.Id)}:other") });
+        rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
+        await EditRequestPromptAsync(request,
+            $"هدیه {request.VolumeMl} میل برای چه کسی ثبت می‌شود؟", rows, cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task ShowGiftBottleSelectionAsync(
+        TelegramCallbackQuery callback, Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.TelegramUserId != callback.From.Id.ToString())
+            throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
+        var bottles = await _mediator.Send(new GetAvailableBottlesQuery(request.VolumeMl), cancellationToken);
+        var rows = bottles.Select(bottle =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"{BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان",
+                    $"slgb:{EncodeCompactGuid(request.Id)}:{EncodeCompactGuid(bottle.Id)}")
+            }).ToList();
+        rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
+        if (rows.Count == 1)
+            throw new InvalidOperationException($"برای {request.VolumeMl} میل شیشه فعالی تعریف نشده است.");
+        await EditRequestPromptAsync(request,
+            $"نوع شیشه هدیه {request.VolumeMl} میل را انتخاب کنید:", rows, cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+    }
+
+    private async Task SelectGiftBottleAndRequestRecipientAsync(
+        TelegramCallbackQuery callback, Guid requestId, Guid bottleId, CancellationToken cancellationToken)
+    {
+        var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.TelegramUserId != callback.From.Id.ToString())
+            throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
+        var bottles = await _mediator.Send(new GetAvailableBottlesQuery(request.VolumeMl), cancellationToken);
+        var bottle = bottles.FirstOrDefault(value => value.Id == bottleId)
+            ?? throw new InvalidOperationException("این شیشه دیگر قابل انتخاب نیست.");
+        await _salesListRequestRepository.SelectBottleAsync(
+            request.Id, request.TelegramUserId, bottle.Id, bottle.Price, cancellationToken);
+        await StartGiftRecipientInputAsync(callback, request.Id, cancellationToken);
+    }
+
+    private async Task ConfirmBottleOwnerGiftAsync(
+        TelegramCallbackQuery callback, Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.TelegramUserId != callback.From.Id.ToString())
+            throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
+        var confirmed = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
+        var owner = confirmed.FirstOrDefault(value => value.IsBottleOwner)
+            ?? throw new InvalidOperationException("صاحب باتل برای این لیست مشخص نشده است.");
+        var identity = !string.IsNullOrWhiteSpace(owner.TelegramUsername)
+            ? $"@{owner.TelegramUsername.TrimStart('@')}" : owner.TelegramUserId;
+        await _salesListRequestRepository.SetGiftRecipientAsync(
+            request.Id, callback.From.Id.ToString(), identity, cancellationToken);
+        request = await _salesListRequestRepository.GetAsync(request.Id, cancellationToken) ?? request;
+        request.BottleId = null;
+        request.BottlePrice = 0;
+        await _salesListRequestRepository.SaveChangesAsync(cancellationToken);
+        await _salesListRequestRepository.ConfirmCurrentBottleAsync(
+            request.Id, callback.From.Id.ToString(), cancellationToken);
+        if (request.SalesList.TelegramMessageId.HasValue && !string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))
+            _temporaryMessageCleaner.Cancel(request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value);
+        await RefreshChannelSalesListAsync(request.SalesListId, cancellationToken);
+        var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+            ? _options.AdminChatId : _options.SalesAuditChatId;
+        var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
+        await _sender.SendAsync(auditChatId,
+            "🎁 هدیه جدید برای صاحب باتل\n" +
+            $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
+            $"هدیه‌دهنده: {DisplayTelegramUser(callback.From)}\n" +
+            $"هدیه‌گیرنده: {identity}\n" +
+            $"کد لیست: {request.SalesList.PublicCode}\n" +
+            $"عطر: {request.SalesList.EnglishName}\n" +
+            $"مقدار: {request.VolumeMl} میل\nشیشه: رایگان", cancellationToken);
+        await _sender.AnswerCallbackAsync(
+            callback.Id, $"هدیه برای {identity} ثبت شد ✅", cancellationToken, showAlert: true);
+    }
+
     private async Task<bool> TryHandleGiftRecipientMessageAsync(TelegramMessage message, CancellationToken cancellationToken)
     {
         if (message.From is null || !_giftRecipientDrafts.TryGet(message.From.Id, out var draft))
@@ -240,16 +351,56 @@ public sealed partial class TelegramWebhookController
         }
         await _salesListRequestRepository.SetGiftRecipientAsync(
             draft.RequestId, message.From.Id.ToString(), identity, cancellationToken);
+        var request = await _salesListRequestRepository.GetAsync(draft.RequestId, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        var recipientIsOwner = await _salesListRequestRepository.IsGiftRecipientBottleOwnerAsync(
+            request.Id, cancellationToken);
+        string bottleText;
+        if (recipientIsOwner)
+        {
+            request.BottleId = null;
+            request.BottlePrice = 0;
+            bottleText = "هدیه برای صاحب باتل — شیشه رایگان";
+            await _salesListRequestRepository.SaveChangesAsync(cancellationToken);
+        }
+        else if (request.BottleId.HasValue)
+        {
+            bottleText = $"{BottleLabel(request.Bottle?.Type.ToString() ?? nameof(BottleType.Normal))} — " +
+                $"{request.BottlePrice:N0} تومان";
+        }
+        else
+            throw new InvalidOperationException("نوع شیشه هدیه مشخص نشده است؛ ثبت هدیه را دوباره شروع کنید.");
+        await _salesListRequestRepository.ConfirmCurrentBottleAsync(
+            request.Id, message.From.Id.ToString(), cancellationToken);
+        await RefreshChannelSalesListAsync(request.SalesListId, cancellationToken);
         _giftRecipientDrafts.Remove(message.From.Id);
         await _sender.DeleteMessageAsync(
             _options.SalesDiscussionChatId, draft.PromptMessageId, cancellationToken);
         if (message.MessageId > 0)
             await _sender.DeleteMessageAsync(
                 _options.SalesDiscussionChatId, message.MessageId, cancellationToken);
-        var request = await _salesListRequestRepository.GetAsync(draft.RequestId, cancellationToken)
-            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
-        var callback = new TelegramCallbackQuery(string.Empty, message.From, message, $"slp:{EncodeCompactGuid(request.Id)}:self");
-        await ShowChannelBottleSelectionAsync(callback, request.Id, cancellationToken);
+        var confirmed = await _salesListRequestRepository.GetAsync(request.Id, cancellationToken) ?? request;
+        var total = confirmed.VolumeMl * confirmed.PerfumePricePerMl + confirmed.BottlePrice;
+        var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
+        var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+            ? _options.AdminChatId : _options.SalesAuditChatId;
+        await _sender.SendAsync(auditChatId,
+            "🎁 هدیه جدید در لیست فروش\n" +
+            $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
+            $"هدیه‌دهنده: {DisplayTelegramUser(message.From)}\n" +
+            $"هدیه‌گیرنده: {GiftRecipientLabel(confirmed)}\n" +
+            $"کد لیست: {confirmed.SalesList.PublicCode}\n" +
+            $"عطر: {confirmed.SalesList.EnglishName}\n" +
+            $"مقدار: {confirmed.VolumeMl} میل\n" +
+            $"شیشه: {bottleText}\n" +
+            $"مبلغ کل: {total:N0} تومان", cancellationToken);
+        var confirmation = await _sender.SendAsync(
+            _options.SalesDiscussionChatId,
+            $"هدیه {confirmed.VolumeMl} میل برای {GiftRecipientLabel(confirmed)} ثبت شد ✅",
+            cancellationToken);
+        if (confirmation.IsSuccessful && confirmation.MessageId.HasValue)
+            _temporaryMessageCleaner.ScheduleDelete(
+                _options.SalesDiscussionChatId, confirmation.MessageId.Value, TimeSpan.FromSeconds(5));
         return true;
     }
 
