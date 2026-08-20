@@ -409,7 +409,7 @@ public sealed partial class TelegramWebhookController
             cancellationToken);
         if (confirmation.IsSuccessful && confirmation.MessageId.HasValue)
             _temporaryMessageCleaner.ScheduleDelete(
-                _options.SalesDiscussionChatId, confirmation.MessageId.Value, TimeSpan.FromSeconds(7));
+                _options.SalesDiscussionChatId, confirmation.MessageId.Value, TimeSpan.FromSeconds(10));
         return true;
     }
 

@@ -27,6 +27,11 @@ services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: ${MSSQL_PID:?MSSQL_PID is required}
@@ -104,7 +109,14 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
+      Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command: Warning
       TZ: UTC
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true
