@@ -128,7 +128,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         if (!_temporaryMessageCleaner.TryAcquireInteraction(
                 salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
-                callback.From.Id, TimeSpan.FromSeconds(45)))
+                callback.From.Id, TimeSpan.FromSeconds(20)))
             throw new InvalidOperationException("کاربر دیگری در حال ثبت می‌باشد؛ لطفاً منتظر بمانید.");
         if (!string.IsNullOrWhiteSpace(callback.Id))
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
