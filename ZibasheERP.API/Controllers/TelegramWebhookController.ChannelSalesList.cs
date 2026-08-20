@@ -187,12 +187,22 @@ public sealed partial class TelegramWebhookController
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.TelegramUserId != callback.From.Id.ToString())
             throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
-        _giftRecipientDrafts.Set(new TelegramGiftRecipientDraft(
-            request.Id, request.SalesListId, callback.From.Id, DateTime.UtcNow.AddMinutes(2)));
-        await _sender.AnswerCallbackAsync(callback.Id, "شناسه گیرنده را در گروه گفتگو بفرستید.", cancellationToken);
-        await _sender.SendAsync(_options.SalesDiscussionChatId,
-            $"🎁 {DisplayTelegramUser(callback.From)} شناسه هدیه‌گیرنده را به‌صورت @username یا Telegram ID بفرستید.\n" +
+        await _sender.AnswerCallbackAsync(
+            callback.Id,
+            $"هدیه {request.VolumeMl} میل از «{request.SalesList.EnglishName}» — کد لیست {request.SalesList.PublicCode}\n" +
+            "به انتهای گروه گفت‌وگو بروید و فقط پیام مخصوص همین درخواست را Reply کنید.",
+            cancellationToken: cancellationToken,
+            showAlert: true);
+        var prompt = await _sender.SendForceReplyAsync(_options.SalesDiscussionChatId,
+            $"🎁 ثبت هدیه — درخواست {request.Id.ToString("N")[..8]}\n" +
+            $"عطر: {request.SalesList.EnglishName}\nکد لیست: {request.SalesList.PublicCode}\nمقدار: {request.VolumeMl} میل\n" +
+            $"هدیه‌دهنده: {DisplayTelegramUser(callback.From)}\n\n" +
+            "شناسه هدیه‌گیرنده را به‌صورت @username یا Telegram ID فقط در پاسخ به همین پیام وارد کنید.\n" +
             "مهلت ثبت: ۲ دقیقه", cancellationToken);
+        if (!prompt.IsSuccessful || !prompt.MessageId.HasValue)
+            throw new InvalidOperationException("ارسال فرم هدیه در گروه گفت‌وگو ناموفق بود.");
+        _giftRecipientDrafts.Set(new TelegramGiftRecipientDraft(
+            request.Id, request.SalesListId, callback.From.Id, prompt.MessageId.Value, DateTime.UtcNow.AddMinutes(2)));
     }
 
     private async Task<bool> TryHandleGiftRecipientMessageAsync(TelegramMessage message, CancellationToken cancellationToken)
@@ -201,6 +211,13 @@ public sealed partial class TelegramWebhookController
             return false;
         if (message.Chat.Id.ToString() != _options.SalesDiscussionChatId)
             return false;
+        if (message.ReplyToMessage?.MessageId != draft.PromptMessageId)
+        {
+            await ReplyAsync(message.Chat.Id,
+                "برای جلوگیری از ثبت روی عطر اشتباه، شناسه هدیه‌گیرنده را فقط با Reply روی پیام مخصوص همان درخواست ارسال کنید.",
+                cancellationToken);
+            return true;
+        }
         var identity = message.Text?.Trim() ?? string.Empty;
         var valid = identity.StartsWith('@') && identity.Length > 1 ||
                     !identity.StartsWith('@') && new string(identity.Where(char.IsDigit).ToArray()).Length >= 5;

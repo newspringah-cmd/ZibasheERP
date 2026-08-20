@@ -409,6 +409,9 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("✍️ ثبت مقدار سفارشی", "adminrequest:start:custom")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("🎁 ثبت دستی هدیه", "adminrequest:start:gift")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("✏️ ویرایش لیست فروش", "adminrequest:start:edit")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
@@ -585,6 +588,7 @@ public sealed partial class TelegramWebhookController
                 "edit" => TelegramAdminRequestKind.EditList,
                 "cleanup" => TelegramAdminRequestKind.CleanupList,
                 "queue" => TelegramAdminRequestKind.ManageBottleQueue,
+                "gift" => TelegramAdminRequestKind.GiftRequest,
                 _ => TelegramAdminRequestKind.CustomRequest
             };
             _adminRequestDrafts.Set(new TelegramAdminRequestDraft
@@ -641,8 +645,9 @@ public sealed partial class TelegramWebhookController
                 return;
             }
             await ReplyAsync(chatId,
-                "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید.\n" +
-                "برای هدیه: @هدیه‌دهنده for @هدیه‌گیرنده", ct);
+                draft.Kind == TelegramAdminRequestKind.GiftRequest
+                    ? "شناسه هدیه‌دهنده را به‌صورت @username یا Telegram ID وارد کنید:"
+                    : "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید.", ct);
             return;
         }
 
@@ -678,6 +683,20 @@ public sealed partial class TelegramWebhookController
                 await ReplyAsync(chatId, "مقدار جدید را به میل وارد کنید:", ct);
                 return;
             }
+            if (parts[2] == "identity")
+            {
+                if (!_adminRequestDrafts.TryGet(chatId, userId, out var identityDraft))
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                    return;
+                }
+                identityDraft.SelectedRequestId = requestId;
+                identityDraft.Stage = TelegramAdminRequestStage.AwaitingQueueIdentity;
+                _adminRequestDrafts.Set(identityDraft);
+                await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+                await ReplyAsync(chatId, "شناسه جدید صاحب باتل را به‌صورت @username یا Telegram ID وارد کنید:", ct);
+                return;
+            }
             try
             {
                 if (parts[2] == "promote")
@@ -710,7 +729,7 @@ public sealed partial class TelegramWebhookController
         if (parts.Length == 3 && parts[1] == "bottle")
         {
             if (!_adminRequestDrafts.TryGet(chatId, userId, out var draft) ||
-                draft.Kind != TelegramAdminRequestKind.CustomRequest)
+                draft.Kind is not (TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest))
             {
                 await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
                 return;
@@ -789,6 +808,7 @@ public sealed partial class TelegramWebhookController
                 TelegramAdminRequestKind.EditList => "e",
                 TelegramAdminRequestKind.CleanupList => "x",
                 TelegramAdminRequestKind.ManageBottleQueue => "q",
+                TelegramAdminRequestKind.GiftRequest => "g",
                 _ => "c"
             };
             var rows = lists.Select(x => (IReadOnlyCollection<TelegramInlineButton>)new[]
@@ -844,6 +864,27 @@ public sealed partial class TelegramWebhookController
             }
             return true;
         }
+        if (draft.Stage == TelegramAdminRequestStage.AwaitingQueueIdentity)
+        {
+            try
+            {
+                await _salesListRequestRepository.UpdateBottleOwnerIdentityAsync(draft.SelectedRequestId, input, ct);
+                var changed = await _salesListRequestRepository.GetAsync(draft.SelectedRequestId, ct);
+                if (changed is not null)
+                {
+                    await RefreshChannelSalesListAsync(changed.SalesListId, ct);
+                    draft.Stage = TelegramAdminRequestStage.AwaitingIdentity;
+                    _adminRequestDrafts.Set(draft);
+                    await ReplyAsync(message.Chat.Id, "شناسه صاحب باتل ویرایش شد ✅", ct);
+                    await SendBottleQueueManagementAsync(message.Chat.Id, changed.SalesList, ct);
+                }
+            }
+            catch (InvalidOperationException exception)
+            {
+                await ReplyAsync(message.Chat.Id, exception.Message, ct);
+            }
+            return true;
+        }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingIdentity)
         {
             var identities = System.Text.RegularExpressions.Regex.Split(
@@ -857,8 +898,16 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             draft.Identity = normalized;
-            draft.IsGift = identities.Length == 2;
-            draft.GiftRecipientIdentity = draft.IsGift ? identities[1].Trim() : string.Empty;
+            draft.IsGift = draft.Kind == TelegramAdminRequestKind.GiftRequest || identities.Length == 2;
+            draft.GiftRecipientIdentity = identities.Length == 2 ? identities[1].Trim() : string.Empty;
+            if (draft.Kind == TelegramAdminRequestKind.GiftRequest)
+            {
+                draft.GiftRecipientIdentity = string.Empty;
+                draft.Stage = TelegramAdminRequestStage.AwaitingGiftRecipient;
+                _adminRequestDrafts.Set(draft);
+                await ReplyAsync(message.Chat.Id, "شناسه هدیه‌گیرنده را به‌صورت @username یا Telegram ID وارد کنید:", ct);
+                return true;
+            }
             if (draft.IsGift && string.IsNullOrWhiteSpace(draft.GiftRecipientIdentity))
             {
                 await ReplyAsync(message.Chat.Id, "شناسه هدیه‌گیرنده خالی است؛ مثال: @giver for @recipient", ct);
@@ -870,6 +919,21 @@ public sealed partial class TelegramWebhookController
                 draft.Kind == TelegramAdminRequestKind.NextBottle
                     ? "این مشتری چند میل از باتل اصلی می‌خواهد؟ مقدار را به میل وارد کنید؛ مثال: 30"
                     : "مقدار درخواستی را به میل وارد کنید؛ مثال: 5", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramAdminRequestStage.AwaitingGiftRecipient)
+        {
+            var recipient = input.Trim();
+            if (!(recipient.StartsWith('@') && recipient.Length > 1) &&
+                new string(recipient.Where(char.IsDigit).ToArray()).Length < 5)
+            {
+                await ReplyAsync(message.Chat.Id, "شناسه هدیه‌گیرنده نامعتبر است.", ct);
+                return true;
+            }
+            draft.GiftRecipientIdentity = recipient;
+            draft.Stage = TelegramAdminRequestStage.AwaitingVolume;
+            _adminRequestDrafts.Set(draft);
+            await ReplyAsync(message.Chat.Id, "مقدار هدیه را به میل وارد کنید؛ مثال: 5", ct);
             return true;
         }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingVolume)
@@ -948,6 +1012,7 @@ public sealed partial class TelegramWebhookController
         foreach (var request in requests.Where(value => value.IsBottleOwner))
             rows.Add(new[]
             {
+                new TelegramInlineButton("🆔 ویرایش شناسه", $"adminrequest:queue:identity:{request.Id:N}"),
                 new TelegramInlineButton("✏️ ویرایش مقدار", $"adminrequest:queue:edit:{request.Id:N}"),
                 new TelegramInlineButton($"🗑 حذف صاحب: {DisplayUser(request)} — {request.VolumeMl} میل",
                     $"adminrequest:queue:remove:{request.Id:N}")
@@ -993,7 +1058,7 @@ public sealed partial class TelegramWebhookController
         var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
         var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
         Bottle? bottle = null;
-        if (draft.Kind == TelegramAdminRequestKind.CustomRequest && !draft.IsBottleOwner)
+        if (draft.Kind is (TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest) && !draft.IsBottleOwner)
         {
             var bottles = await _mediator.Send(
                 new ZibasheERP.Application.Features.Bottles.GetAvailableBottles.GetAvailableBottlesQuery(draft.VolumeMl), ct);
@@ -1033,7 +1098,7 @@ public sealed partial class TelegramWebhookController
         };
         await _salesListRequestRepository.AddAsync(request, ct);
         await _salesListRequestRepository.SaveChangesAsync(ct);
-        if (draft.Kind == TelegramAdminRequestKind.CustomRequest)
+        if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
             await _salesListRequestRepository.ConfirmCurrentBottleAsync(request.Id, telegramId, ct);
         await RefreshChannelSalesListAsync(list.Id, ct);
         var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
@@ -1041,7 +1106,7 @@ public sealed partial class TelegramWebhookController
             : _options.SalesAuditChatId;
         var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
         var adminIdentity = DisplayTelegramUser(callback.From);
-        if (draft.Kind == TelegramAdminRequestKind.CustomRequest)
+        if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
         {
             var bottleLabel = draft.IsBottleOwner
                 ? "صاحب باتل — رایگان"
@@ -1050,7 +1115,7 @@ public sealed partial class TelegramWebhookController
                 : $"{BottleLabel(bottle.Type.ToString())} — {bottle.SalePrice:N0} تومان";
             var total = draft.VolumeMl * list.PricePerMl + (bottle?.SalePrice ?? 0);
             await _sender.SendAsync(auditChatId,
-                "✍️ ثبت دستی در لیست فروش\n" +
+                (draft.IsGift ? "🎁 ثبت دستی هدیه در لیست فروش\n" : "✍️ ثبت دستی در لیست فروش\n") +
                 $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
                 $"ثبت‌کننده: {adminIdentity}\n" +
                 $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\n" +

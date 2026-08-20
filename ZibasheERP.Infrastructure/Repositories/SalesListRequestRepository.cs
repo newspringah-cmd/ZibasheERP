@@ -231,6 +231,31 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task UpdateBottleOwnerIdentityAsync(
+        Guid requestId, string identity, CancellationToken cancellationToken = default)
+    {
+        var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(value =>
+            value.Id == requestId && !value.IsDeleted && value.IsBottleOwner &&
+            value.Status == SalesListRequestStatus.Confirmed, cancellationToken)
+            ?? throw new InvalidOperationException("صاحب باتل فعال پیدا نشد.");
+        var normalized = identity.Trim();
+        if (normalized.StartsWith('@') && normalized.Length > 1)
+        {
+            request.TelegramUsername = normalized.TrimStart('@');
+            request.TelegramUserId = $"admin-username:{request.TelegramUsername.ToLowerInvariant()}";
+        }
+        else
+        {
+            var telegramId = new string(normalized.Where(char.IsDigit).ToArray());
+            if (telegramId.Length < 5)
+                throw new InvalidOperationException("شناسه نامعتبر است.");
+            request.TelegramUserId = telegramId;
+            request.TelegramUsername = null;
+        }
+        request.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public Task SaveChangesAsync(CancellationToken cancellationToken = default) =>
         _dbContext.SaveChangesAsync(cancellationToken);
 }

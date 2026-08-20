@@ -507,10 +507,11 @@ public sealed partial class TelegramWebhookController
             var salesList = await _salesListRepository.GetByIdAsync(draft.SalesListId.Value, cancellationToken);
             if (salesList is null)
                 throw new InvalidOperationException("لیست فروش ساخته شد اما قابل بازیابی نیست.");
+            var initialRequests = await _salesListRequestRepository.GetConfirmedAsync(salesList.Id, cancellationToken);
             var result = await _sender.SendPhotoWithKeyboardAsync(
                 _options.SalesChannelId,
                 draft.PhotoFileId,
-                FormatChannelSalesList(salesList, Array.Empty<ZibasheERP.Domain.Entities.SalesListRequest>()),
+                FormatChannelSalesList(salesList, initialRequests),
                 BuildChannelVolumeButtons(salesList),
                 cancellationToken);
             if (!result.IsSuccessful)

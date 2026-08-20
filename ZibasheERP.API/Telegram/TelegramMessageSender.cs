@@ -65,7 +65,8 @@ public interface ITelegramMessageSender
     Task<TelegramSendResult> AnswerCallbackAsync(
         string callbackQueryId,
         string? message = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool showAlert = false);
 
     Task<bool> IsChatAdministratorAsync(
         string chatId,
@@ -262,10 +263,11 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
     public async Task<TelegramSendResult> AnswerCallbackAsync(
         string callbackQueryId,
         string? message = null,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        bool showAlert = false) =>
         await SendRequestAsync(
             "answerCallbackQuery",
-            new { callback_query_id = callbackQueryId, text = message },
+            new { callback_query_id = callbackQueryId, text = message, show_alert = showAlert },
             cancellationToken);
 
     public async Task<bool> IsChatAdministratorAsync(
