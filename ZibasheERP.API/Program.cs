@@ -122,9 +122,10 @@ builder.Services.AddRateLimiter(options =>
             httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 120,
+                PermitLimit = 3000,
                 Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
+                QueueLimit = 500,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 AutoReplenishment = true
             }));
 });

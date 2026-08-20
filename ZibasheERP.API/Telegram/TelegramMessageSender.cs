@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.Extensions.Options;
 
 namespace ZibasheERP.API.Telegram;
@@ -86,12 +87,22 @@ public sealed record TelegramSendResult(
 public sealed record TelegramInlineButton(
     string Text,
     string? CallbackData = null,
-    string? CopyText = null);
+    string? CopyText = null,
+    string? Url = null);
 
 public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _botToken;
+    private readonly TokenBucketRateLimiter _rateLimiter = new(new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = 25,
+        TokensPerPeriod = 25,
+        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        AutoReplenishment = true,
+        QueueLimit = 500,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+    });
 
     public TelegramMessageSender(IOptions<TelegramOptions> options)
     {
@@ -174,6 +185,8 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             value["callback_data"] = button.CallbackData;
         if (!string.IsNullOrWhiteSpace(button.CopyText))
             value["copy_text"] = new { text = button.CopyText };
+        if (!string.IsNullOrWhiteSpace(button.Url))
+            value["url"] = button.Url;
         return value;
     }
 
@@ -338,35 +351,52 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         if (string.IsNullOrWhiteSpace(_botToken))
             return new TelegramSendResult(false, "Telegram bot token is not configured.");
 
-        try
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            using var response = await _httpClient.PostAsJsonAsync(
-                $"./bot{_botToken}/{method}",
-                request,
-                cancellationToken);
-            var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
-                cancellationToken: cancellationToken);
-
-            return response.IsSuccessStatusCode && body?.Ok == true
-                ? new TelegramSendResult(true, MessageId: ReadMessageId(body.Result))
-                : new TelegramSendResult(false, body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.");
+            using var lease = await _rateLimiter.AcquireAsync(1, cancellationToken);
+            if (!lease.IsAcquired)
+                return new TelegramSendResult(false, "Telegram send queue is full.");
+            try
+            {
+                using var response = await _httpClient.PostAsJsonAsync(
+                    $"./bot{_botToken}/{method}", request, cancellationToken);
+                var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
+                    cancellationToken: cancellationToken);
+                if (response.IsSuccessStatusCode && body?.Ok == true)
+                    return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result));
+                var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
+                if (!retryable || attempt == 2)
+                    return new TelegramSendResult(false,
+                        body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.");
+                var delay = TimeSpan.FromSeconds(Math.Clamp(body?.Parameters?.RetryAfter ?? attempt + 1, 1, 10));
+                await Task.Delay(delay, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                return new TelegramSendResult(false, exception.Message);
+            }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
-        {
-            return new TelegramSendResult(false, exception.Message);
-        }
+        return new TelegramSendResult(false, "Telegram request failed after retries.");
     }
 
-    public void Dispose() => _httpClient.Dispose();
+    public void Dispose()
+    {
+        _rateLimiter.Dispose();
+        _httpClient.Dispose();
+    }
 
     private sealed record TelegramApiResponse(
         [property: JsonPropertyName("ok")] bool Ok,
         [property: JsonPropertyName("description")] string? Description,
-        [property: JsonPropertyName("result")] JsonElement? Result);
+        [property: JsonPropertyName("result")] JsonElement? Result,
+        [property: JsonPropertyName("parameters")] TelegramApiParameters? Parameters);
+
+    private sealed record TelegramApiParameters(
+        [property: JsonPropertyName("retry_after")] int? RetryAfter);
 
     private static long? ReadMessageId(JsonElement? result) =>
         result is { ValueKind: JsonValueKind.Object } value &&
