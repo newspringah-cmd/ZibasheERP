@@ -68,6 +68,11 @@ public sealed partial class TelegramWebhookController
             }
             if (parts[0] == "slr" && parts.Length == 2 && TryDecodeCompactGuid(parts[1], out listId))
             {
+                var canRefresh = IsPrimaryOwner(callback.From.Id) ||
+                    await _sender.IsChatAdministratorAsync(
+                        _options.AdminChatId, callback.From.Id.ToString(), cancellationToken);
+                if (!canRefresh)
+                    throw new InvalidOperationException("رفرش دستی فقط برای مدیران فعال است؛ تغییرات لیست به‌صورت خودکار نمایش داده می‌شود.");
                 await RefreshChannelSalesListAsync(listId, cancellationToken);
                 await _sender.AnswerCallbackAsync(callback.Id, "لیست به‌روز شد.", cancellationToken);
                 return true;
@@ -82,7 +87,7 @@ public sealed partial class TelegramWebhookController
         {
             await _sender.AnswerCallbackAsync(
                 callback.Id,
-                "لیست هم‌زمان تغییر کرد؛ دکمه Refresh را بزنید و دوباره انتخاب کنید.",
+                "لیست هم‌زمان تغییر کرد و خودکار به‌روز می‌شود؛ چند لحظه بعد دوباره انتخاب کنید.",
                 cancellationToken);
             return true;
         }
@@ -189,14 +194,17 @@ public sealed partial class TelegramWebhookController
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.TelegramUserId != callback.From.Id.ToString())
             throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
-        var prompt = await _sender.SendForceReplyAsync(_options.SalesDiscussionChatId,
+        if (string.IsNullOrWhiteSpace(_options.SalesDiscussionChatId))
+            throw new InvalidOperationException("گروه گفت‌وگوی فروش تنظیم نشده است.");
+        var prompt = await _sender.SendAsync(_options.SalesDiscussionChatId,
             $"🎁 ثبت هدیه — درخواست {request.Id.ToString("N")[..8]}\n" +
             $"عطر: {request.SalesList.EnglishName}\nکد لیست: {request.SalesList.PublicCode}\nمقدار: {request.VolumeMl} میل\n" +
             $"هدیه‌دهنده: {DisplayTelegramUser(callback.From)}\n\n" +
             "شناسه هدیه‌گیرنده را به‌صورت @username یا Telegram ID ارسال کنید؛ نیازی به Reply نیست.\n" +
             "مهلت ثبت: ۲ دقیقه", cancellationToken);
         if (!prompt.IsSuccessful || !prompt.MessageId.HasValue)
-            throw new InvalidOperationException("ارسال فرم هدیه در گروه گفت‌وگو ناموفق بود.");
+            throw new InvalidOperationException(
+                $"ارسال فرم هدیه در گروه گفت‌وگو ناموفق بود: {prompt.Error ?? "شناسه پیام دریافت نشد"}");
         _giftRecipientDrafts.Set(new TelegramGiftRecipientDraft(
             request.Id, request.SalesListId, callback.From.Id, prompt.MessageId.Value, DateTime.UtcNow.AddMinutes(2)));
         var discussionUrl = BuildTelegramDiscussionMessageUrl(_options.SalesDiscussionChatId, prompt.MessageId.Value);
@@ -504,7 +512,7 @@ public sealed partial class TelegramWebhookController
             .Select(valuesRow => (IReadOnlyCollection<TelegramInlineButton>)valuesRow.Select(value =>
                 new TelegramInlineButton($"{value} ml", $"slv:{EncodeCompactGuid(list.Id)}:{value}")).ToArray())
             .ToList();
-        rows.Add(new[] { new TelegramInlineButton("🔄 Refresh", $"slr:{EncodeCompactGuid(list.Id)}") });
+        rows.Add(new[] { new TelegramInlineButton("🔄 رفرش (ادمین)", $"slr:{EncodeCompactGuid(list.Id)}") });
         return rows;
     }
 
