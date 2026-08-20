@@ -100,6 +100,9 @@ public class SalesList : BaseEntity
 
     public long? TelegramDiscussionMessageId { get; set; }
 
+    // Optional second photo post used when the main caption cannot hold the complete roster.
+    public long? TelegramContinuationMessageId { get; set; }
+
     [MaxLength(500)]
     public string? TelegramPhotoFileId { get; set; }
 

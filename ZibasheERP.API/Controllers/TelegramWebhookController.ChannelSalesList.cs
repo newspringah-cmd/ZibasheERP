@@ -223,12 +223,7 @@ public sealed partial class TelegramWebhookController
         _giftRecipientDrafts.Set(new TelegramGiftRecipientDraft(
             request.Id, request.SalesListId, callback.From.Id, prompt.MessageId.Value, DateTime.UtcNow.AddMinutes(2)));
         var discussionUrl = BuildTelegramDiscussionMessageUrl(_options.SalesDiscussionChatId, prompt.MessageId.Value);
-        await _sender.AnswerCallbackAsync(
-            callback.Id,
-            $"هدیه {request.VolumeMl} میل از «{request.SalesList.EnglishName}» — کد لیست {request.SalesList.PublicCode}\n" +
-            "دکمه روی پست را بزنید و شناسه هدیه‌گیرنده را در گروه گفتگو ارسال کنید.",
-            cancellationToken: cancellationToken,
-            showAlert: true);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
         await EditRequestPromptAsync(request,
             $"🎁 ثبت هدیه {request.VolumeMl} میل\nعطر: {request.SalesList.EnglishName}\nکد لیست: {request.SalesList.PublicCode}\n" +
             "دکمه زیر را بزنید و شناسه هدیه‌گیرنده را در گروه گفتگو ارسال کنید:",
@@ -552,11 +547,13 @@ public sealed partial class TelegramWebhookController
             if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
                 return;
             var requests = await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
+            var captions = FormatChannelSalesListPages(salesList, requests);
+            await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
             await _sender.EditPhotoCaptionAsync(
                 salesList.TelegramChannelId,
                 salesList.TelegramMessageId.Value,
-                FormatChannelSalesList(salesList, requests),
-                BuildChannelVolumeButtons(salesList),
+                captions.Main,
+                BuildChannelVolumeButtons(salesList, salesList.TelegramContinuationMessageId),
                 cancellationToken);
             if (salesList.Status == SalesListStatus.Full)
                 await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
@@ -565,6 +562,44 @@ public sealed partial class TelegramWebhookController
         {
             refreshLock.Release();
         }
+    }
+
+    private async Task SynchronizeContinuationPostAsync(
+        SalesList list, string? continuationCaption, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(list.TelegramChannelId) || !list.TelegramMessageId.HasValue)
+            return;
+        if (string.IsNullOrWhiteSpace(continuationCaption))
+        {
+            if (!list.TelegramContinuationMessageId.HasValue) return;
+            await _sender.DeleteMessageAsync(
+                list.TelegramChannelId, list.TelegramContinuationMessageId.Value, cancellationToken);
+            list.TelegramContinuationMessageId = null;
+            await _salesListRepository.UpdateAsync(list, cancellationToken);
+            await _salesListRepository.SaveChangesAsync(cancellationToken);
+            return;
+        }
+        var mainUrl = BuildTelegramDiscussionMessageUrl(list.TelegramChannelId, list.TelegramMessageId.Value);
+        var navigation = new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[] { new TelegramInlineButton("⬅️ بازگشت به پست اصلی", Url: mainUrl) }
+        };
+        if (list.TelegramContinuationMessageId.HasValue)
+        {
+            await _sender.EditPhotoCaptionAsync(
+                list.TelegramChannelId, list.TelegramContinuationMessageId.Value,
+                continuationCaption, navigation, cancellationToken);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)) return;
+        var result = await _sender.SendPhotoWithKeyboardAsync(
+            list.TelegramChannelId, list.TelegramPhotoFileId,
+            continuationCaption, navigation, cancellationToken);
+        if (!result.IsSuccessful || !result.MessageId.HasValue)
+            throw new InvalidOperationException($"ساخت پست ادامه لیست ناموفق بود: {result.Error}");
+        list.TelegramContinuationMessageId = result.MessageId.Value;
+        await _salesListRepository.UpdateAsync(list, cancellationToken);
+        await _salesListRepository.SaveChangesAsync(cancellationToken);
     }
 
     private async Task CompleteAndRollSalesListAsync(
@@ -586,6 +621,8 @@ public sealed partial class TelegramWebhookController
         {
             if (completed.TelegramDiscussionMessageId.HasValue)
                 await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramDiscussionMessageId.Value, ct);
+            if (completed.TelegramContinuationMessageId.HasValue)
+                await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramContinuationMessageId.Value, ct);
             if (completed.TelegramMessageId.HasValue)
                 await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramMessageId.Value, ct);
         }
@@ -654,8 +691,10 @@ public sealed partial class TelegramWebhookController
             $"لیست بعدی به‌صورت خودکار منتشر شد ✅\nکد جدید: {nextList.PublicCode}\nصاحب باتل: {DisplayUser(queue[0])} — {queue[0].VolumeMl} میل", ct);
     }
 
-    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(SalesList list)
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(
+        SalesList list, long? continuationMessageId = null)
     {
+        continuationMessageId ??= list.TelegramContinuationMessageId;
         var values = ChannelVolumes
             .Where(value => value >= list.MinimumRequestVolumeMl && value <= list.RemainingVolume)
             .ToArray();
@@ -664,10 +703,20 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton($"{value} ml", $"slv:{EncodeCompactGuid(list.Id)}:{value}")).ToArray())
             .ToList();
         rows.Add(new[] { new TelegramInlineButton("🔄 رفرش (ادمین)", $"slr:{EncodeCompactGuid(list.Id)}") });
+        if (continuationMessageId.HasValue && !string.IsNullOrWhiteSpace(list.TelegramChannelId))
+            rows.Add(new[]
+            {
+                new TelegramInlineButton("ادامه فهرست سفارش‌ها ➡️",
+                    Url: BuildTelegramDiscussionMessageUrl(list.TelegramChannelId, continuationMessageId.Value))
+            });
         return rows;
     }
 
     private static string FormatChannelSalesList(
+        SalesList list, IReadOnlyCollection<SalesListRequest> requests)
+        => FormatChannelSalesListPages(list, requests).Main;
+
+    private static (string Main, string? Continuation) FormatChannelSalesListPages(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests)
     {
         const int safeCaptionLength = 1000;
@@ -710,40 +759,53 @@ public sealed partial class TelegramWebhookController
                 $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n" +
                 $"حداقل: {list.MinimumRequestVolumeMl} | باقی‌مانده: {list.RemainingVolume} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);
-        var roster = BuildCompactRoster(rosterGroups, availableForRoster);
-        return string.Join("\n\n", new[] { header, roster, nextSection }.Where(value => value.Length > 0));
-    }
-
-    private static string BuildCompactRoster(
-        IReadOnlyCollection<(int Volume, string[] Users)> groups, int maximumLength)
-    {
-        if (maximumLength <= 0 || groups.Count == 0) return string.Empty;
-        var lines = new List<string>();
-        var omitted = 0;
-        foreach (var group in groups)
+        var rosterLines = rosterGroups.SelectMany(group =>
+            new[] { $"{group.Volume} ml:" }.Concat(group.Users)).ToArray();
+        var mainLines = new List<string>();
+        var continuationLines = new List<string>();
+        string? currentVolumeHeading = null;
+        var headingAddedToContinuation = false;
+        foreach (var line in rosterLines)
         {
-            var prefix = $"{group.Volume} ml: ";
-            var users = new List<string>();
-            foreach (var user in group.Users)
+            if (line.EndsWith(" ml:", StringComparison.Ordinal))
             {
-                var candidate = prefix + string.Join("، ", users.Append(user));
-                var total = string.Join("\n", lines.Append(candidate)).Length;
-                if (total > maximumLength - 14)
-                {
-                    omitted++;
-                    continue;
-                }
-                users.Add(user);
+                currentVolumeHeading = line;
+                headingAddedToContinuation = false;
             }
-            if (users.Count > 0) lines.Add(prefix + string.Join("، ", users));
+            var candidate = string.Join("\n", mainLines.Append(line));
+            if (candidate.Length <= availableForRoster)
+                mainLines.Add(line);
+            else
+            {
+                if (!line.EndsWith(" ml:", StringComparison.Ordinal) &&
+                    currentVolumeHeading is not null &&
+                    !headingAddedToContinuation)
+                {
+                    continuationLines.Add(currentVolumeHeading);
+                    headingAddedToContinuation = true;
+                }
+                continuationLines.Add(line);
+                if (line.EndsWith(" ml:", StringComparison.Ordinal))
+                    headingAddedToContinuation = true;
+            }
         }
-        if (omitted > 0)
+        var main = string.Join("\n\n", new[]
         {
-            var suffix = $"… +{omitted} نفر";
-            if (string.Join("\n", lines.Append(suffix)).Length <= maximumLength)
-                lines.Add(suffix);
+            header, string.Join("\n", mainLines), nextSection
+        }.Where(value => value.Length > 0));
+        if (continuationLines.Count == 0) return (main, null);
+        var continuationHeader = $"ادامه فهرست سفارش‌ها — کد <b>{list.PublicCode}</b>\n{HtmlClipped(list.EnglishName, 60)}\n\n";
+        var shown = new List<string>();
+        foreach (var line in continuationLines)
+        {
+            if ((continuationHeader + string.Join("\n", shown.Append(line))).Length > safeCaptionLength - 16)
+                break;
+            shown.Add(line);
         }
-        return string.Join("\n", lines);
+        var omitted = continuationLines.Count - shown.Count;
+        var continuation = continuationHeader + string.Join("\n", shown) +
+            (omitted > 0 ? $"\n… +{omitted} مورد" : string.Empty);
+        return (main, continuation);
     }
 
     private static string BuildCompactUserLine(string label, string[] users, int maximumLength)
