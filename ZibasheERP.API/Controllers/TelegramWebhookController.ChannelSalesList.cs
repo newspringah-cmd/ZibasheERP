@@ -215,7 +215,8 @@ public sealed partial class TelegramWebhookController
             $"🎁 ثبت هدیه — درخواست {request.Id.ToString("N")[..8]}\n" +
             $"عطر: {request.SalesList.EnglishName}\nکد لیست: {request.SalesList.PublicCode}\nمقدار: {request.VolumeMl} میل\n" +
             $"هدیه‌دهنده: {DisplayTelegramUser(callback.From)}\n\n" +
-            "شناسه هدیه‌گیرنده را به‌صورت @username یا Telegram ID ارسال کنید؛ نیازی به Reply نیست.\n" +
+            "⬅️ آیدی هدیه‌گیرنده را همین‌جا به‌صورت @username یا Telegram ID وارد کنید.\n" +
+            "نیازی به Reply نیست؛ فقط آیدی را به‌صورت یک پیام جدید بفرستید.\n" +
             "مهلت ثبت: ۲ دقیقه", cancellationToken);
         if (!prompt.IsSuccessful || !prompt.MessageId.HasValue)
             throw new InvalidOperationException(
@@ -826,7 +827,8 @@ public sealed partial class TelegramWebhookController
             ? $"کاربر {request.TelegramUserId}"
             : $"@{request.TelegramUsername.TrimStart('@')}") +
         (request.IsGift ? $" for {GiftRecipientLabel(request)}" : string.Empty) +
-        (request.IsBottleOwner ? " 👑" : string.Empty);
+        (request.IsBottleOwner ? " 👑" : string.Empty) +
+        (request.Bottle?.Type == BottleType.Fancy ? " F" : string.Empty);
     private static string DisplayTelegramUser(TelegramUser user)
     {
         var fullName = string.Join(' ', new[] { user.FirstName, user.LastName }

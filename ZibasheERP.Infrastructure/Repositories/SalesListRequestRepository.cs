@@ -19,6 +19,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     public async Task<IReadOnlyCollection<SalesListRequest>> GetConfirmedAsync(
         Guid salesListId, CancellationToken cancellationToken = default) =>
         await _dbContext.SalesListRequests.AsNoTracking()
+            .Include(value => value.Bottle)
             .Where(value => value.SalesListId == salesListId && !value.IsDeleted &&
                 value.Status == SalesListRequestStatus.Confirmed)
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt)
