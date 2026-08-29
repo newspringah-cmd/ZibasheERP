@@ -16,6 +16,7 @@ using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Infrastructure.Persistence;
 using ZibasheERP.Infrastructure.Repositories;
+using ZibasheERP.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -62,6 +63,7 @@ builder.Services.AddScoped<IAddressRepository, AddressRepository>();
 builder.Services.AddScoped<ITelegramOrderDraftRepository, TelegramOrderDraftRepository>();
 builder.Services.AddScoped<IOrderArtifactRepository, OrderArtifactRepository>();
 builder.Services.AddScoped<IInvoicePaymentAccountRepository, InvoicePaymentAccountRepository>();
+builder.Services.AddScoped<IInvoiceIssuanceService, InvoiceIssuanceService>();
 
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
@@ -76,6 +78,14 @@ builder.Services.AddOptions<TelegramOptions>()
          (long.TryParse(options.AdminChatId, out var adminChatId) && adminChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.SalesAuditChatId) ||
          (long.TryParse(options.SalesAuditChatId, out var salesAuditChatId) && salesAuditChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.CompletedSalesListsChatId) ||
+         (long.TryParse(options.CompletedSalesListsChatId, out var completedListsChatId) && completedListsChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.InvoiceFailureChatId) ||
+         (long.TryParse(options.InvoiceFailureChatId, out var invoiceFailureChatId) && invoiceFailureChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.DecantChatId) ||
+         (long.TryParse(options.DecantChatId, out var decantChatId) && decantChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.LabelPrintChatId) ||
+         (long.TryParse(options.LabelPrintChatId, out var labelPrintChatId) && labelPrintChatId != 0)) &&
         options.PollIntervalSeconds is >= 1 and <= 300 &&
          options.BatchSize is >= 1 and <= 100 &&
          options.MaxAttempts is >= 1 and <= 20),
@@ -103,6 +113,8 @@ builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDedupli
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
 builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();
 builder.Services.AddSingleton<TelegramAdminRequestDraftStore>();
+builder.Services.AddSingleton<TelegramInvoiceIssuanceDraftStore>();
+builder.Services.AddSingleton<TelegramManualInvoiceDraftStore>();
 builder.Services.AddSingleton<TelegramTemporaryMessageCleaner>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramTemporaryMessageCleaner>());

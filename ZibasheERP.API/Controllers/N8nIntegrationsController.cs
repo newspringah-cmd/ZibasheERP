@@ -117,7 +117,23 @@ public sealed class N8nIntegrationsController : ControllerBase
         };
         _context.IntegrationDeliveryFailures.Add(failure);
 
-        var adminChatId = _telegramOptions.AdminChatId.Trim();
+        if (sourceEvent.OrderId.HasValue)
+        {
+            var invoice = await _context.Invoices.FirstOrDefaultAsync(
+                value => value.OrderId == sourceEvent.OrderId.Value && !value.IsDeleted,
+                cancellationToken);
+            if (invoice is not null)
+            {
+                invoice.DeliveryStatus = InvoiceDeliveryStatus.NeedsManualAction;
+                invoice.DeliveryStatusChangedAt = now;
+                invoice.DeliveryStatusNote = failure.Error;
+                invoice.UpdatedAt = now;
+            }
+        }
+
+        var adminChatId = string.IsNullOrWhiteSpace(_telegramOptions.InvoiceFailureChatId)
+            ? _telegramOptions.AdminChatId.Trim()
+            : _telegramOptions.InvoiceFailureChatId.Trim();
         if (!string.IsNullOrWhiteSpace(adminChatId))
         {
             var alert = new NotificationOutbox

@@ -1,8 +1,10 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.API.Telegram;
 
@@ -54,6 +56,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<INotificationOutboxRepository>();
         var groupTracker = scope.ServiceProvider.GetRequiredService<ITelegramGroupMembershipTracker>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var pending = await repository.GetPendingAsync(
             "Telegram",
             Math.Clamp(_options.BatchSize, 1, 100),
@@ -71,8 +74,10 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 var message = TelegramNotificationMessageFormatter.Format(
                     notification.EventType,
                     notification.Payload);
-                var recipient = notification.EventType == "TelegramCustomerGroupRequired"
-                    ? _options.AdminChatId.Trim()
+                var recipient = notification.EventType is "TelegramCustomerGroupRequired" or "InvoiceDeliveryRequiresManualAction" or "TelegramGroupDeliveryFailed"
+                    ? (string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
+                        ? _options.AdminChatId.Trim()
+                        : _options.InvoiceFailureChatId.Trim())
                     : notification.Recipient;
                 if (string.IsNullOrWhiteSpace(recipient))
                 {
@@ -122,6 +127,19 @@ public sealed class TelegramOutboxWorker : BackgroundService
                     notification.NextAttemptAt = now + NotificationRetryPolicy.DelayAfter(notification.Attempts);
                 if (permanentGroupFailure)
                 {
+                    if (notification.EventType == "InvoiceIssued" && notification.OrderId.HasValue)
+                    {
+                        var invoice = await db.Invoices.FirstOrDefaultAsync(
+                            value => value.OrderId == notification.OrderId.Value && !value.IsDeleted,
+                            cancellationToken);
+                        if (invoice is not null)
+                        {
+                            invoice.DeliveryStatus = InvoiceDeliveryStatus.NeedsManualAction;
+                            invoice.DeliveryStatusChangedAt = now;
+                            invoice.DeliveryStatusNote = notification.LastError;
+                            invoice.UpdatedAt = now;
+                        }
+                    }
                     await groupTracker.MarkUnavailableAsync(
                         notification.Recipient,
                         cancellationToken);
@@ -163,7 +181,9 @@ public sealed class TelegramOutboxWorker : BackgroundService
         DateTime now,
         CancellationToken cancellationToken)
     {
-        var adminChatId = _options.AdminChatId.Trim();
+        var adminChatId = string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
+            ? _options.AdminChatId.Trim()
+            : _options.InvoiceFailureChatId.Trim();
         if (string.IsNullOrWhiteSpace(adminChatId))
         {
             _logger.LogWarning(

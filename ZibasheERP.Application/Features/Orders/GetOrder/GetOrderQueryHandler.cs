@@ -42,7 +42,7 @@ public sealed class GetOrderQueryHandler
                 .Select(item => new GetOrderItemResponse(
                     item.Id,
                     item.SalesListId,
-                    item.Perfume?.Name ?? string.Empty,
+                    item.Perfume?.Name ?? item.ManualDescription ?? string.Empty,
                     item.Perfume?.Brand ?? string.Empty,
                     item.RequestedVolumeMl,
                     item.PerfumePricePerMl,

@@ -40,7 +40,7 @@ public sealed class GetBusinessReportQueryHandler
             .Where(item => !item.IsDeleted && item.Perfume is not null)
             .GroupBy(item => new { item.PerfumeId, item.Perfume!.Name })
             .Select(group => new TopPerfumeResponse(
-                group.Key.PerfumeId,
+                group.Key.PerfumeId!.Value,
                 group.Key.Name,
                 group.Sum(item => item.RequestedVolumeMl),
                 group.Sum(item => item.PerfumeAmount)))

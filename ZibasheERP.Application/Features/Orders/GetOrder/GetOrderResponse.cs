@@ -21,7 +21,7 @@ public sealed record OrderCustomerResponse(
 
 public sealed record GetOrderItemResponse(
     Guid Id,
-    Guid SalesListId,
+    Guid? SalesListId,
     string PerfumeName,
     string PerfumeBrand,
     int RequestedVolumeMl,

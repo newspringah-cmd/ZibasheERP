@@ -14,6 +14,12 @@ public enum OrderStatus
     Delivered = 10         // تحویل به مشتری
 }
 
+public enum OrderSource
+{
+    SalesListInvoice = 0,
+    ManualInvoice = 1
+}
+
 public class Order : BaseEntity
 {
     public Guid CustomerId { get; set; }
@@ -68,9 +74,12 @@ public class Order : BaseEntity
 
     public ICollection<Payment> Payments { get; set; }
         = new List<Payment>();
-    public Guid SalesListId { get; set; }
+    public Guid? SalesListId { get; set; }
 
     public SalesList? SalesList { get; set; }
+    public OrderSource Source { get; set; } = OrderSource.SalesListInvoice;
+    public Guid? InvoiceIssuanceBatchId { get; set; }
+    public InvoiceIssuanceBatch? InvoiceIssuanceBatch { get; set; }
     public ICollection<Shipment> Shipments { get; set; }
         = new List<Shipment>();
 }

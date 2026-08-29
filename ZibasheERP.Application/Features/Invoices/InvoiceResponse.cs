@@ -7,6 +7,7 @@ public sealed record InvoiceResponse(
     Guid OrderId,
     string InvoiceNumber,
     string Status,
+    string DeliveryStatus,
     DateTime IssuedAt,
     decimal PerfumeTotal,
     decimal BottleTotal,
@@ -26,6 +27,7 @@ public sealed record InvoiceResponse(
             invoice.OrderId,
             invoice.InvoiceNumber,
             invoice.Status.ToString(),
+            invoice.DeliveryStatus.ToString(),
             invoice.IssuedAt,
             invoice.PerfumeTotal,
             invoice.BottleTotal,
@@ -39,7 +41,7 @@ public sealed record InvoiceResponse(
                 .OrderBy(item => item.RowNumber)
                 .Select(item => new InvoiceLineResponse(
                     item.Id,
-                    item.Perfume?.Name ?? string.Empty,
+                    item.Perfume?.Name ?? item.ManualDescription ?? string.Empty,
                     item.Perfume?.Brand ?? string.Empty,
                     item.RequestedVolumeMl,
                     item.PerfumePricePerMl,

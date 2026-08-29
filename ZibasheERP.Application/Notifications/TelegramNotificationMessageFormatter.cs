@@ -27,14 +27,14 @@ public static class TelegramNotificationMessageFormatter
                    $"شناسه اعلان: {ReadString(root, "NotificationId") ?? "نامشخص"}\n" +
                    $"خطا: {ReadString(root, "Error") ?? "ثبت نشده"}";
         }
-        if (eventType == "TelegramCustomerGroupRequired")
+        if (eventType is "TelegramCustomerGroupRequired" or "InvoiceDeliveryRequiresManualAction")
         {
             var username = ReadString(root, "Username");
             var usernameText = string.IsNullOrWhiteSpace(username)
                 ? "ثبت نشده"
                 : $"@{username.Trim().TrimStart('@')}";
             var invoiceNumber = ReadString(root, "InvoiceNumber") ?? "نامشخص";
-            return $"🆕 مشتری جدید بدون گروه حسابداری\n" +
+            return $"⚠️ فاکتور نیازمند اقدام حسابدار\n" +
                    $"نام مشتری: {ReadString(root, "FullName") ?? "نامشخص"}\n" +
                    $"Username: {usernameText}\n" +
                    $"شماره سفارش: {ReadString(root, "OrderNumber") ?? "نامشخص"}\n" +
@@ -81,7 +81,7 @@ public static class TelegramNotificationMessageFormatter
                 var perfume = string.Join(' ', new[] { brand, name }
                     .Where(value => !string.IsNullOrWhiteSpace(value)));
                 if (string.IsNullOrWhiteSpace(perfume))
-                    perfume = "عطر";
+                    perfume = "آیتم دستی";
 
                 builder.AppendLine(
                     $"{rowNumber}. {perfume} — {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر — " +

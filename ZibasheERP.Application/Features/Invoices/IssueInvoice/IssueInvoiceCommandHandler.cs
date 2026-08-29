@@ -47,6 +47,9 @@ public sealed class IssueInvoiceCommandHandler
 
         var now = DateTime.UtcNow;
         var paymentAccounts = await _paymentAccountRepository.GetActiveAsync(cancellationToken);
+        var telegramGroup = order.Customer.TelegramGroup;
+        var hasDeliveryGroup = telegramGroup is not null && !telegramGroup.IsDeleted &&
+            telegramGroup.IsActive && !string.IsNullOrWhiteSpace(telegramGroup.ChatId);
         var invoice = new Invoice
         {
             Id = Guid.NewGuid(),
@@ -58,7 +61,12 @@ public sealed class IssueInvoiceCommandHandler
             PerfumeTotal = order.PerfumeTotal,
             BottleTotal = order.BottleTotal,
             TotalAmount = order.FinalAmount,
-            IssuedAt = now
+            IssuedAt = now,
+            DeliveryStatus = hasDeliveryGroup
+                ? InvoiceDeliveryStatus.Pending
+                : InvoiceDeliveryStatus.NeedsManualAction,
+            DeliveryStatusChangedAt = now,
+            DeliveryStatusNote = hasDeliveryGroup ? null : "گروه فعال مشتری برای ارسال فاکتور شناسایی نشده است."
         };
 
         if (order.Status != OrderState.Paid)
@@ -87,7 +95,7 @@ public sealed class IssueInvoiceCommandHandler
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
-                    PerfumeName = item.Perfume?.Name,
+                    PerfumeName = item.Perfume?.Name ?? item.ManualDescription,
                     PerfumeBrand = item.Perfume?.Brand,
                     item.RequestedVolumeMl,
                     item.PerfumeAmount,
@@ -99,10 +107,15 @@ public sealed class IssueInvoiceCommandHandler
             },
             now);
         if (notification is not null)
+        {
+            if (hasDeliveryGroup)
+                notification.Recipient = telegramGroup!.ChatId.Trim();
+            else
+                notification = null;
+        }
+        if (notification is not null)
             await _outboxRepository.AddAsync(notification, cancellationToken);
-        var telegramGroup = order.Customer.TelegramGroup;
-        if (telegramGroup is null || telegramGroup.IsDeleted || !telegramGroup.IsActive ||
-            string.IsNullOrWhiteSpace(telegramGroup.ChatId))
+        if (!hasDeliveryGroup)
         {
             await _outboxRepository.AddAsync(new NotificationOutbox
             {
@@ -111,7 +124,7 @@ public sealed class IssueInvoiceCommandHandler
                 CustomerId = order.CustomerId,
                 OrderId = order.Id,
                 Channel = "Telegram",
-                EventType = "TelegramCustomerGroupRequired",
+                EventType = "InvoiceDeliveryRequiresManualAction",
                 Recipient = "admin",
                 Payload = System.Text.Json.JsonSerializer.Serialize(new
                 {
@@ -153,7 +166,7 @@ public sealed class IssueInvoiceCommandHandler
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
-                    PerfumeName = item.Perfume?.Name,
+                    PerfumeName = item.Perfume?.Name ?? item.ManualDescription,
                     PerfumeBrand = item.Perfume?.Brand,
                     item.RequestedVolumeMl,
                     item.PerfumePricePerMl,

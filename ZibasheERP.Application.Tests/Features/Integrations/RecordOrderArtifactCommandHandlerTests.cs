@@ -21,7 +21,8 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         var artifacts = new ArtifactRepositoryStub();
         var handler = new RecordOrderArtifactCommandHandler(
             artifacts,
-            new OutboxRepositoryStub(source));
+            new OutboxRepositoryStub(source),
+            new InvoiceRepositoryStub());
         var command = new RecordOrderArtifactCommand(
             source.Id,
             orderId,
@@ -51,7 +52,8 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         };
         var handler = new RecordOrderArtifactCommandHandler(
             new ArtifactRepositoryStub(),
-            new OutboxRepositoryStub(source));
+            new OutboxRepositoryStub(source),
+            new InvoiceRepositoryStub());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => handler.Handle(
             new RecordOrderArtifactCommand(
@@ -89,6 +91,17 @@ public sealed class RecordOrderArtifactCommandHandlerTests
             Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
         public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
             Task.FromResult<NotificationOutbox?>(source.Id == id ? source : null);
+        public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class InvoiceRepositoryStub : IInvoiceRepository
+    {
+        public Task<Invoice?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(null);
+        public Task<Invoice?> GetByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(null);
+        public Task<Invoice?> GetForUpdateByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(null);
+        public Task<Order?> GetOrderForInvoiceAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
+        public Task<bool> InvoiceNumberExistsAsync(string invoiceNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task AddAsync(Invoice invoice, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

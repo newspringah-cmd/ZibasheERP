@@ -9,7 +9,8 @@ public enum SalesListStatus
     Purchased = 3,     // عطر خریداری شده
     Invoiced = 4,      // فاکتور صادر شده
     Closed = 5,        // پایان کار
-    Cancelled = 6      // لغو شده
+    Cancelled = 6,     // لغو شده
+    QueuedForInvoice = 7
 }
 
 public enum PerfumeGender

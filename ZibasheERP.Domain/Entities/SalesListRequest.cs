@@ -12,7 +12,9 @@ public enum SalesListRequestStatus
     Confirmed = 2,
     Cancelled = 3,
     Expired = 4,
-    Promoted = 5
+    Promoted = 5,
+    QueuedForInvoice = 6,
+    Invoiced = 7
 }
 
 /// <summary>

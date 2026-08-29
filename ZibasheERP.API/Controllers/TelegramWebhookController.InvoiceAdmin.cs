@@ -1,4 +1,5 @@
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.API.Controllers;
@@ -241,6 +242,7 @@ public sealed partial class TelegramWebhookController
     {
         if (callback.Message is null || callback.Data is null ||
             !(callback.Data.StartsWith("invoiceadmin:", StringComparison.Ordinal) ||
+              callback.Data.StartsWith("invoicebatch:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal)))
             return false;
@@ -348,6 +350,28 @@ public sealed partial class TelegramWebhookController
             await HandleAdminRequestCallbackAsync(callback, ct);
             return true;
         }
+        if (callback.Data.StartsWith("invoicebatch:", StringComparison.Ordinal))
+        {
+            await HandleInvoiceBatchCallbackAsync(callback, ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:batch")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendInvoiceBatchSelectionAsync(callback.Message.Chat.Id, callback.From.Id, ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:manual")
+        {
+            _manualInvoiceDrafts.Set(new TelegramManualInvoiceDraft
+            {
+                ChatId = callback.Message.Chat.Id, UserId = callback.From.Id
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "🧾 صدور فاکتور دستی\n\nشناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
+            return true;
+        }
         if (callback.Data == "invoiceadmin:pricing")
         {
             if (!IsPrimaryOwner(callback.From.Id))
@@ -403,6 +427,12 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("🧴 لیست فروش جدید", "adminlist:new")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("🧾 صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("⏭ ثبت صف بطری بعدی", "adminrequest:start:next")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
@@ -431,6 +461,266 @@ public sealed partial class TelegramWebhookController
         message += "\n\nثبت صف بطری بعدی (فقط ادمین):\n/nextbottle کدلیست | @username | مقدارمیل";
         message += "\n\nثبت مقدار سفارشی از کامنت:\n/listrequest کدلیست | @username | مقدارمیل | نرمال یا فانتزی";
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons.ToArray(), ct);
+    }
+
+    private async Task HandleInvoiceBatchCallbackAsync(TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        var chatId = callback.Message!.Chat.Id;
+        var userId = callback.From.Id;
+        if (callback.Data == "invoicebatch:manualcancel")
+        {
+            _manualInvoiceDrafts.Remove(chatId, userId);
+            await _sender.AnswerCallbackAsync(callback.Id, "فاکتور دستی لغو شد.", ct);
+            return;
+        }
+        if (callback.Data == "invoicebatch:manualconfirm")
+        {
+            if (!_manualInvoiceDrafts.TryGet(chatId, userId, out var manualDraft) ||
+                manualDraft.Stage != TelegramManualInvoiceStage.AwaitingConfirmation)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نمایش منقضی شده است.", ct);
+                return;
+            }
+            try
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فاکتور در حال صدور است…", ct);
+                var result = await _invoiceIssuanceService.IssueManualAsync(
+                    manualDraft.CustomerIdentity, manualDraft.Lines, userId.ToString(), ct);
+                _manualInvoiceDrafts.Remove(chatId, userId);
+                await ReplyAsync(chatId,
+                    $"✅ فاکتور دستی {result.InvoiceNumbers.Single()} صادر شد.\n" +
+                    "ارسال خودکار انجام می‌شود؛ در صورت نبود گروه مشتری یا خطای دائمی، مورد به گروه خطاهای فاکتور می‌رود.", ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct);
+            }
+            return;
+        }
+        if (callback.Data == "invoicebatch:cancel")
+        {
+            _invoiceIssuanceDrafts.Remove(chatId, userId);
+            await _sender.AnswerCallbackAsync(callback.Id, "انتخاب لیست‌ها لغو شد.", ct);
+            return;
+        }
+        if (callback.Data == "invoicebatch:issue")
+        {
+            if (!_invoiceIssuanceDrafts.TryGet(chatId, userId, out var selected) || selected.Count == 0)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "لیستی برای صدور انتخاب نشده است.", ct);
+                return;
+            }
+            try
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "صدور فاکتورها شروع شد…", ct);
+                var result = await _invoiceIssuanceService.IssueCompletedListsAsync(
+                    selected.ToArray(), userId.ToString(), ct);
+                _invoiceIssuanceDrafts.Remove(chatId, userId);
+                var productionDispatchFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
+                var productionDispatchStatus = productionDispatchFailures.Count == 0
+                    ? $"نسخهٔ عملیاتی {result.ProductionCopies.Count} لیست به گروه دکانت و گروه چاپ لیبل ارسال شد ✅"
+                    : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionDispatchFailures);
+                await ReplyAsync(chatId,
+                    $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
+                    $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
+                    productionDispatchStatus + "\n\n" +
+                    "ارسال خودکار فاکتور انجام می‌شود؛ موارد بدون گروه یا با خطای دائمی در گروه خطاهای فاکتور ثبت خواهند شد.", ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct);
+                await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
+            }
+            return;
+        }
+        const string togglePrefix = "invoicebatch:toggle:";
+        if (!callback.Data!.StartsWith(togglePrefix, StringComparison.Ordinal) ||
+            !Guid.TryParseExact(callback.Data[togglePrefix.Length..], "N", out var salesListId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "عملیات معتبر نیست.", ct);
+            return;
+        }
+        var draft = _invoiceIssuanceDrafts.GetOrCreate(chatId, userId);
+        if (!draft.Add(salesListId)) draft.Remove(salesListId);
+        await _sender.AnswerCallbackAsync(callback.Id, "انتخاب به‌روزرسانی شد.", ct);
+        await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
+    }
+
+    private async Task<IReadOnlyCollection<string>> SendProductionCopiesAsync(
+        IReadOnlyCollection<SalesListProductionCopy> copies,
+        CancellationToken ct)
+    {
+        var failures = new List<string>();
+        if (copies.Count == 0)
+            return failures;
+
+        await SendProductionCopiesToChatAsync(
+            _options.DecantChatId,
+            "گروه دکانت",
+            copies,
+            copy => copy.DecantMessage,
+            failures,
+            ct);
+        await SendProductionCopiesToChatAsync(
+            _options.LabelPrintChatId,
+            "گروه چاپ لیبل",
+            copies,
+            copy => copy.LabelPrintMessage,
+            failures,
+            ct);
+        return failures;
+    }
+
+    private async Task SendProductionCopiesToChatAsync(
+        string destinationChatId,
+        string destinationName,
+        IReadOnlyCollection<SalesListProductionCopy> copies,
+        Func<SalesListProductionCopy, string> messageSelector,
+        ICollection<string> failures,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(destinationChatId))
+        {
+            failures.Add($"شناسهٔ {destinationName} تنظیم نشده است.");
+            return;
+        }
+
+        foreach (var copy in copies)
+        {
+            var part = 0;
+            foreach (var message in SplitTelegramMessage(messageSelector(copy)))
+            {
+                part++;
+                var result = await _sender.SendAsync(destinationChatId, message, ct);
+                if (result.IsSuccessful)
+                    continue;
+
+                var suffix = part == 1 ? string.Empty : $" (بخش {part})";
+                failures.Add($"{destinationName}، لیست {copy.PublicCode}{suffix}: {result.Error ?? "خطای نامشخص"}");
+                break;
+            }
+        }
+    }
+
+    private static IReadOnlyCollection<string> SplitTelegramMessage(string message)
+    {
+        const int maxLength = 3900;
+        if (message.Length <= maxLength)
+            return new[] { message };
+
+        var lines = message.Split('\n');
+        var parts = new List<string>();
+        var current = new System.Text.StringBuilder();
+        foreach (var line in lines)
+        {
+            if (current.Length > 0 && current.Length + line.Length + 1 > maxLength)
+            {
+                parts.Add(current.ToString());
+                current.Clear();
+            }
+            if (line.Length > maxLength)
+            {
+                for (var index = 0; index < line.Length; index += maxLength)
+                    parts.Add(line.Substring(index, Math.Min(maxLength, line.Length - index)));
+                continue;
+            }
+            if (current.Length > 0)
+                current.Append('\n');
+            current.Append(line);
+        }
+        if (current.Length > 0)
+            parts.Add(current.ToString());
+        return parts;
+    }
+
+    private async Task SendInvoiceBatchSelectionAsync(long chatId, long userId, CancellationToken ct)
+    {
+        var available = await _invoiceIssuanceService.GetCompletedListsAsync(50, ct);
+        var selected = _invoiceIssuanceDrafts.GetOrCreate(chatId, userId);
+        selected.IntersectWith(available.Select(list => list.SalesListId));
+        if (available.Count == 0)
+        {
+            await ReplyAsync(chatId, "لیست تکمیل‌شدهٔ آماده برای صدور فاکتور وجود ندارد.", ct);
+            return;
+        }
+        var rows = available.Select(list => (IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton(
+                $"{(selected.Contains(list.SalesListId) ? "✅" : "⬜")} {list.PublicCode} — {list.PerfumeName} ({list.ConfirmedRequestCount} درخواست)",
+                $"invoicebatch:toggle:{list.SalesListId:N}")
+        }).ToList();
+        rows.Add(new[] { new TelegramInlineButton($"🧾 صدور فاکتور برای {selected.Count} لیست انتخابی", "invoicebatch:issue") });
+        rows.Add(new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:cancel") });
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+            "🧾 لیست‌های تکمیل‌شده\n\nلیست‌هایی را که باید هم‌زمان فاکتور شوند انتخاب کنید. " +
+            "برای هر مشتری فقط یک فاکتور تجمیعی با همه آیتم‌های همان لیست‌ها صادر می‌شود.", rows, ct);
+    }
+
+    private async Task<bool> TryHandleManualInvoiceMessageAsync(TelegramMessage message, CancellationToken ct)
+    {
+        if (!_manualInvoiceDrafts.TryGet(message.Chat.Id, message.From!.Id, out var draft))
+            return false;
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            _manualInvoiceDrafts.Remove(message.Chat.Id, message.From.Id);
+            return false;
+        }
+        var text = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        if (text.Equals("لغو", StringComparison.OrdinalIgnoreCase) || text.Equals("/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            _manualInvoiceDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "صدور فاکتور دستی لغو شد.", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramManualInvoiceStage.AwaitingCustomer)
+        {
+            draft.CustomerIdentity = text;
+            draft.Stage = TelegramManualInvoiceStage.AwaitingLine;
+            _manualInvoiceDrafts.Set(draft);
+            await ReplyAsync(message.Chat.Id,
+                "ردیف اول را وارد کنید:\nشرح | تعداد/میل | مبلغ هر واحد | مبلغ شیشه\n\nنمونه: عطر تست | 5 | 250000 | 30000\n" +
+                "برای پایان افزودن ردیف‌ها، «ثبت» را بفرستید.", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramManualInvoiceStage.AwaitingLine)
+        {
+            if (text.Equals("ثبت", StringComparison.OrdinalIgnoreCase))
+            {
+                if (draft.Lines.Count == 0)
+                {
+                    await ReplyAsync(message.Chat.Id, "حداقل یک ردیف اضافه کنید.", ct);
+                    return true;
+                }
+                draft.Stage = TelegramManualInvoiceStage.AwaitingConfirmation;
+                _manualInvoiceDrafts.Set(draft);
+                var total = draft.Lines.Sum(line => line.Quantity * line.UnitAmount + line.BottleAmount);
+                await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+                    $"پیش‌نمایش فاکتور دستی\nمشتری: {draft.CustomerIdentity}\nتعداد ردیف: {draft.Lines.Count}\nمبلغ کل: {total:N0} تومان",
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[] { new TelegramInlineButton("✅ صدور نهایی", "invoicebatch:manualconfirm") },
+                        new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
+                    }, ct);
+                return true;
+            }
+            var values = text.Split('|', StringSplitOptions.TrimEntries);
+            if (values.Length is < 3 or > 4 || !TryParsePositiveInt(values[1], out var quantity) ||
+                !decimal.TryParse(NormalizeNumber(values[2]), System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var unitAmount) || unitAmount < 0 ||
+                (values.Length == 4 && (!decimal.TryParse(NormalizeNumber(values[3]), System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsedBottle) || parsedBottle < 0)))
+            {
+                await ReplyAsync(message.Chat.Id, "فرمت معتبر نیست. نمونه: عطر تست | 5 | 250000 | 30000", ct);
+                return true;
+            }
+            var bottleAmount = values.Length == 4 ? decimal.Parse(NormalizeNumber(values[3]), System.Globalization.CultureInfo.InvariantCulture) : 0;
+            draft.Lines.Add(new ManualInvoiceLineInput(values[0], quantity, unitAmount, bottleAmount));
+            _manualInvoiceDrafts.Set(draft);
+            await ReplyAsync(message.Chat.Id, $"ردیف {draft.Lines.Count} اضافه شد ✅ ردیف بعدی یا «ثبت» را بفرستید.", ct);
+            return true;
+        }
+        return true;
     }
 
     private async Task<bool> IsAuthorizedInvoiceAdminAsync(long chatId, long userId, CancellationToken ct) =>

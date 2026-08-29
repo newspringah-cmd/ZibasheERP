@@ -1,5 +1,15 @@
 ﻿namespace ZibasheERP.Domain.Entities;
 
+public enum InvoiceDeliveryStatus
+{
+    Pending = 0,
+    Delivered = 1,
+    RetryScheduled = 2,
+    NeedsManualAction = 3,
+    ManuallySent = 4,
+    Failed = 5
+}
+
 public class Invoice : BaseEntity
 {
     public Guid OrderId { get; set; }
@@ -24,4 +34,8 @@ public class Invoice : BaseEntity
     public bool IsSentToCustomer { get; set; }
 
     public DateTime? SentToCustomerAt { get; set; }
+
+    public InvoiceDeliveryStatus DeliveryStatus { get; set; } = InvoiceDeliveryStatus.Pending;
+    public DateTime? DeliveryStatusChangedAt { get; set; }
+    public string? DeliveryStatusNote { get; set; }
 }

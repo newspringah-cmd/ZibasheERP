@@ -7,13 +7,15 @@ public class OrderItem : BaseEntity
     public Order? Order { get; set; }
 
     // لیست فروشی که این آیتم از آن ثبت شده است
-    public Guid SalesListId { get; set; }
+    public Guid? SalesListId { get; set; }
 
     public SalesList? SalesList { get; set; }
 
-    public Guid PerfumeId { get; set; }
+    public Guid? PerfumeId { get; set; }
 
     public Perfume? Perfume { get; set; }
+
+    public string? ManualDescription { get; set; }
 
     // حجم درخواستی
     public int RequestedVolumeMl { get; set; }

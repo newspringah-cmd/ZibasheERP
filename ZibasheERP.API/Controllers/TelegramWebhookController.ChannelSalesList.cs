@@ -426,10 +426,12 @@ public sealed partial class TelegramWebhookController
         SalesList completed, IReadOnlyCollection<SalesListRequest> requests, CancellationToken ct)
     {
         var finalCaption = "✅ لیست فروش تکمیل شد\n\n" + FormatChannelSalesList(completed, requests);
+        var completedListsChatId = string.IsNullOrWhiteSpace(_options.CompletedSalesListsChatId)
+            ? _options.AdminChatId : _options.CompletedSalesListsChatId;
         if (!string.IsNullOrWhiteSpace(completed.TelegramPhotoFileId))
-            await _sender.SendPhotoAsync(_options.AdminChatId, completed.TelegramPhotoFileId, finalCaption, ct);
+            await _sender.SendPhotoAsync(completedListsChatId, completed.TelegramPhotoFileId, finalCaption, ct);
         else
-            await ReplyAsync(long.Parse(_options.AdminChatId), finalCaption, ct);
+            await _sender.SendAsync(completedListsChatId, finalCaption, ct);
 
         completed.Status = SalesListStatus.Closed;
         completed.ClosedDate = DateTime.UtcNow;

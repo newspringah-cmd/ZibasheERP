@@ -9,13 +9,16 @@ public sealed class RecordOrderArtifactCommandHandler
 {
     private readonly IOrderArtifactRepository _artifactRepository;
     private readonly INotificationOutboxRepository _outboxRepository;
+    private readonly IInvoiceRepository _invoiceRepository;
 
     public RecordOrderArtifactCommandHandler(
         IOrderArtifactRepository artifactRepository,
-        INotificationOutboxRepository outboxRepository)
+        INotificationOutboxRepository outboxRepository,
+        IInvoiceRepository invoiceRepository)
     {
         _artifactRepository = artifactRepository;
         _outboxRepository = outboxRepository;
+        _invoiceRepository = invoiceRepository;
     }
 
     public async Task<OrderArtifactResponse> Handle(
@@ -65,6 +68,19 @@ public sealed class RecordOrderArtifactCommandHandler
         };
         await _artifactRepository.AddAsync(artifact, cancellationToken);
         await _artifactRepository.SaveChangesAsync(cancellationToken);
+        if (request.Type == OrderArtifactType.InvoicePdf)
+        {
+            var invoice = await _invoiceRepository.GetForUpdateByOrderIdAsync(request.OrderId, cancellationToken);
+            if (invoice is not null)
+            {
+                invoice.IsSentToCustomer = true;
+                invoice.SentToCustomerAt = now;
+                invoice.DeliveryStatus = InvoiceDeliveryStatus.Delivered;
+                invoice.DeliveryStatusChangedAt = now;
+                invoice.DeliveryStatusNote = null;
+                await _invoiceRepository.SaveChangesAsync(cancellationToken);
+            }
+        }
         return Map(artifact);
     }
 

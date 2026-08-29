@@ -49,6 +49,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramAdminSalesListDraftStore _adminSalesListDrafts;
     private readonly TelegramOwnerPricingDraftStore _ownerPricingDrafts;
     private readonly TelegramAdminRequestDraftStore _adminRequestDrafts;
+    private readonly TelegramInvoiceIssuanceDraftStore _invoiceIssuanceDrafts;
+    private readonly IInvoiceIssuanceService _invoiceIssuanceService;
+    private readonly TelegramManualInvoiceDraftStore _manualInvoiceDrafts;
     private readonly IBottleRepository _bottleRepository;
     private readonly IPerfumeRepository _perfumeRepository;
     private readonly TelegramTemporaryMessageCleaner _temporaryMessageCleaner;
@@ -65,6 +68,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramAdminSalesListDraftStore adminSalesListDrafts,
         TelegramOwnerPricingDraftStore ownerPricingDrafts,
         TelegramAdminRequestDraftStore adminRequestDrafts,
+        TelegramInvoiceIssuanceDraftStore invoiceIssuanceDrafts,
+        IInvoiceIssuanceService invoiceIssuanceService,
+        TelegramManualInvoiceDraftStore manualInvoiceDrafts,
         IBottleRepository bottleRepository,
         IPerfumeRepository perfumeRepository,
         TelegramTemporaryMessageCleaner temporaryMessageCleaner,
@@ -81,6 +87,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _adminSalesListDrafts = adminSalesListDrafts;
         _ownerPricingDrafts = ownerPricingDrafts;
         _adminRequestDrafts = adminRequestDrafts;
+        _invoiceIssuanceDrafts = invoiceIssuanceDrafts;
+        _invoiceIssuanceService = invoiceIssuanceService;
+        _manualInvoiceDrafts = manualInvoiceDrafts;
         _bottleRepository = bottleRepository;
         _perfumeRepository = perfumeRepository;
         _temporaryMessageCleaner = temporaryMessageCleaner;
@@ -764,6 +773,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandleOwnerPricingMessageAsync(message, cancellationToken))
             return;
 
+        if (await TryHandleManualInvoiceMessageAsync(message, cancellationToken))
+            return;
+
         if (await TryHandleAdminRequestMessageAsync(message, cancellationToken))
             return;
 
@@ -1277,7 +1289,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         });
         var message = $"فاکتور {invoice.InvoiceNumber}\n" +
             $"تاریخ صدور: {invoice.IssuedAt:yyyy/MM/dd HH:mm}\n" +
-            $"وضعیت: {TranslateInvoiceStatus(invoice.Status)}\n\n" +
+            $"وضعیت: {TranslateInvoiceStatus(invoice.Status)}\n" +
+            $"وضعیت ارسال: {TranslateInvoiceDeliveryStatus(invoice.DeliveryStatus)}\n\n" +
             $"{string.Join("\n\n", lines)}\n\n" +
             $"جمع عطر: {invoice.PerfumeTotal:N0} تومان\n" +
             $"جمع شیشه: {invoice.BottleTotal:N0} تومان\n" +
@@ -1531,6 +1544,17 @@ public sealed partial class TelegramWebhookController : ControllerBase
         "Issued" => "صادرشده",
         "Paid" => "پرداخت‌شده",
         "Cancelled" => "لغوشده",
+        _ => status
+    };
+
+    private static string TranslateInvoiceDeliveryStatus(string status) => status switch
+    {
+        "Pending" => "در انتظار ارسال",
+        "Delivered" => "ارسال‌شده",
+        "RetryScheduled" => "در صف تلاش مجدد",
+        "NeedsManualAction" => "نیازمند اقدام حسابدار",
+        "ManuallySent" => "ارسال دستی تأییدشده",
+        "Failed" => "خطای دائمی ارسال",
         _ => status
     };
 

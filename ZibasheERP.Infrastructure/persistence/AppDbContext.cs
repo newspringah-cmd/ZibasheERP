@@ -30,6 +30,8 @@ public class AppDbContext : DbContext
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Shipment> Shipments => Set<Shipment>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceIssuanceBatch> InvoiceIssuanceBatches => Set<InvoiceIssuanceBatch>();
+    public DbSet<InvoiceIssuanceBatchSalesList> InvoiceIssuanceBatchSalesLists => Set<InvoiceIssuanceBatchSalesList>();
     public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
     public DbSet<IntegrationDeliveryFailure> IntegrationDeliveryFailures => Set<IntegrationDeliveryFailure>();
     public DbSet<InvoicePaymentAccount> InvoicePaymentAccounts => Set<InvoicePaymentAccount>();
@@ -54,6 +56,7 @@ public class AppDbContext : DbContext
         ConfigurePayment(modelBuilder);
         ConfigureShipment(modelBuilder);
         ConfigureInvoice(modelBuilder);
+        ConfigureInvoiceIssuanceBatch(modelBuilder);
         ConfigureNotificationOutbox(modelBuilder);
         ConfigureIntegrationDeliveryFailure(modelBuilder);
         ConfigureInvoicePaymentAccount(modelBuilder);
@@ -209,6 +212,7 @@ public class AppDbContext : DbContext
             .Property(x => x.RowVersion)
             .IsRowVersion();
 
+
         modelBuilder.Entity<Order>()
             .HasOne(x => x.Customer)
             .WithMany(x => x.Orders)
@@ -233,6 +237,18 @@ public class AppDbContext : DbContext
             .HasIndex(x => x.ExternalReference)
             .IsUnique()
             .HasFilter("[ExternalReference] IS NOT NULL");
+
+        modelBuilder.Entity<Order>()
+            .HasOne(x => x.SalesList)
+            .WithMany()
+            .HasForeignKey(x => x.SalesListId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Order>()
+            .HasOne(x => x.InvoiceIssuanceBatch)
+            .WithMany(x => x.Orders)
+            .HasForeignKey(x => x.InvoiceIssuanceBatchId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSalesListRequest(ModelBuilder modelBuilder)
@@ -339,6 +355,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<OrderItem>()
             .Property(x => x.LineTotal)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<OrderItem>()
+            .Property(x => x.ManualDescription)
+            .HasMaxLength(300);
     }
 
     private static void ConfigurePayment(ModelBuilder modelBuilder)
@@ -407,6 +427,39 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Invoice>()
             .HasIndex(x => x.InvoiceNumber)
+            .IsUnique();
+
+        modelBuilder.Entity<Invoice>()
+            .Property(x => x.DeliveryStatusNote)
+            .HasMaxLength(1000);
+
+    }
+
+    private static void ConfigureInvoiceIssuanceBatch(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<InvoiceIssuanceBatch>()
+            .Property(value => value.CreatedByTelegramUserId)
+            .HasMaxLength(50);
+        modelBuilder.Entity<InvoiceIssuanceBatch>()
+            .Property(value => value.Notes)
+            .HasMaxLength(1000);
+        modelBuilder.Entity<InvoiceIssuanceBatch>()
+            .HasIndex(value => new { value.Status, value.CreatedAt });
+
+        modelBuilder.Entity<InvoiceIssuanceBatchSalesList>()
+            .HasKey(value => new { value.InvoiceIssuanceBatchId, value.SalesListId });
+        modelBuilder.Entity<InvoiceIssuanceBatchSalesList>()
+            .HasOne(value => value.InvoiceIssuanceBatch)
+            .WithMany(value => value.SalesLists)
+            .HasForeignKey(value => value.InvoiceIssuanceBatchId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<InvoiceIssuanceBatchSalesList>()
+            .HasOne(value => value.SalesList)
+            .WithMany()
+            .HasForeignKey(value => value.SalesListId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<InvoiceIssuanceBatchSalesList>()
+            .HasIndex(value => value.SalesListId)
             .IsUnique();
     }
 
