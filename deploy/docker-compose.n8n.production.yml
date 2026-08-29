@@ -20,7 +20,7 @@ services:
       - n8n-internal
 
   n8n:
-    image: docker.n8n.io/n8nio/n8n:2.30.5
+    image: docker.n8n.io/n8nio/n8n:2.31.6
     restart: unless-stopped
     environment:
       DB_TYPE: postgresdb
@@ -69,7 +69,7 @@ services:
       - n8n-egress
 
   n8n-runner:
-    image: n8nio/runners:2.30.5
+    image: n8nio/runners:2.31.6
     restart: unless-stopped
     environment:
       N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN is required}

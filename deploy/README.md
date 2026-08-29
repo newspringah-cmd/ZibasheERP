@@ -125,7 +125,7 @@ GET https://API_DOMAIN/health/ready
 
 ## استقرار مستقل n8n
 
-n8n و PostgreSQL آن در Compose جدا اجرا می‌شوند و SQL Server مربوط به ERP را تغییر نمی‌دهند. imageها برای Production روی n8n `2.30.5`، PostgreSQL `16.10` و Gotenberg Chromium `8.34.0` pin شده‌اند:
+n8n و PostgreSQL آن در Compose جدا اجرا می‌شوند و SQL Server مربوط به ERP را تغییر نمی‌دهند. imageها برای Production روی n8n و Runner نسخه `2.31.6`، PostgreSQL `16.10` و Gotenberg Chromium `8.34.0` pin شده‌اند:
 
 ```bash
 chmod 700 preflight-n8n.sh backup-n8n.sh
