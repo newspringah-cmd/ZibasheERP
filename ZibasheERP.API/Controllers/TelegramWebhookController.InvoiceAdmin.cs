@@ -495,6 +495,12 @@ public sealed partial class TelegramWebhookController
             {
                 await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct);
             }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Manual invoice issuance failed for Telegram user {TelegramUserId}.", userId);
+                await _sender.AnswerCallbackAsync(callback.Id, "صدور فاکتور ناموفق بود؛ جزئیات در لاگ ثبت شد.", ct, true);
+                await ReplyAsync(chatId, "⚠️ صدور فاکتور دستی ناموفق بود. مدیر فنی می‌تواند جزئیات را از لاگ بررسی کند.", ct);
+            }
             return;
         }
         if (callback.Data == "invoicebatch:cancel")
@@ -530,6 +536,16 @@ public sealed partial class TelegramWebhookController
             {
                 await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct);
                 await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception,
+                    "Completed sales-list invoice issuance failed for Telegram user {TelegramUserId} and {SalesListCount} selected lists.",
+                    userId,
+                    selected.Count);
+                await _sender.AnswerCallbackAsync(callback.Id, "صدور فاکتور ناموفق بود؛ جزئیات در لاگ ثبت شد.", ct, true);
+                await ReplyAsync(chatId,
+                    "⚠️ صدور فاکتور انجام نشد. هیچ فاکتور قطعی ثبت نشده است؛ جزئیات خطا برای بررسی ثبت شد.", ct);
             }
             return;
         }
