@@ -361,6 +361,12 @@ public sealed partial class TelegramWebhookController
             await SendInvoiceBatchSelectionAsync(callback.Message.Chat.Id, callback.From.Id, ct);
             return true;
         }
+        if (callback.Data == "invoiceadmin:waiting")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendWaitingInvoiceListsAsync(callback.Message.Chat.Id, ct);
+            return true;
+        }
         if (callback.Data == "invoiceadmin:manual")
         {
             _manualInvoiceDrafts.Set(new TelegramManualInvoiceDraft
@@ -430,6 +436,9 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("🧾 صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("📦 مخزن انتظار عطرها", "invoiceadmin:waiting")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
@@ -467,6 +476,80 @@ public sealed partial class TelegramWebhookController
     {
         var chatId = callback.Message!.Chat.Id;
         var userId = callback.From.Id;
+        const string waitPrefix = "invoicebatch:wait:";
+        if (callback.Data!.StartsWith(waitPrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[waitPrefix.Length..], "N", out var waitingId))
+        {
+            try
+            {
+                await _invoiceIssuanceService.MoveCompletedListToWaitingAsync(waitingId, ct);
+                if (_invoiceIssuanceDrafts.TryGet(chatId, userId, out var selection))
+                    selection.Remove(waitingId);
+                await _sender.AnswerCallbackAsync(callback.Id, "به مخزن انتظار منتقل شد.", ct);
+                await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            }
+            return;
+        }
+        const string restorePrefix = "invoicebatch:restore:";
+        if (callback.Data.StartsWith(restorePrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[restorePrefix.Length..], "N", out var restoreId))
+        {
+            try
+            {
+                await _invoiceIssuanceService.RestoreWaitingListAsync(restoreId, ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "به لیست‌های آماده بازگردانده شد.", ct);
+                await SendWaitingInvoiceListsAsync(chatId, ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            }
+            return;
+        }
+        const string deletePrefix = "invoicebatch:delete:";
+        if (callback.Data.StartsWith(deletePrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[deletePrefix.Length..], "N", out var deleteId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendInvoiceListDeleteConfirmationAsync(chatId, deleteId, false, ct);
+            return;
+        }
+        const string waitingDeletePrefix = "invoicebatch:waitdelete:";
+        if (callback.Data.StartsWith(waitingDeletePrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[waitingDeletePrefix.Length..], "N", out var waitingDeleteId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendInvoiceListDeleteConfirmationAsync(chatId, waitingDeleteId, true, ct);
+            return;
+        }
+        const string deleteConfirmPrefix = "invoicebatch:deleteconfirm:";
+        const string waitingDeleteConfirmPrefix = "invoicebatch:waitdeleteconfirm:";
+        var isWaitingDelete = callback.Data.StartsWith(waitingDeleteConfirmPrefix, StringComparison.Ordinal);
+        var confirmationPrefix = isWaitingDelete ? waitingDeleteConfirmPrefix : deleteConfirmPrefix;
+        if (callback.Data.StartsWith(confirmationPrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[confirmationPrefix.Length..], "N", out var confirmedDeleteId))
+        {
+            try
+            {
+                await _invoiceIssuanceService.CancelCompletedListAsync(confirmedDeleteId, ct);
+                if (_invoiceIssuanceDrafts.TryGet(chatId, userId, out var selection))
+                    selection.Remove(confirmedDeleteId);
+                await _sender.AnswerCallbackAsync(callback.Id, "از صف صدور فاکتور حذف شد.", ct);
+                if (isWaitingDelete)
+                    await SendWaitingInvoiceListsAsync(chatId, ct);
+                else
+                    await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            }
+            return;
+        }
         if (callback.Data == "invoicebatch:manualcancel")
         {
             _manualInvoiceDrafts.Remove(chatId, userId);
@@ -673,12 +756,61 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton(
                 $"{(selected.Contains(list.SalesListId) ? "✅" : "⬜")} {list.PublicCode} — {list.PerfumeName} ({list.ConfirmedRequestCount} درخواست)",
                 $"invoicebatch:toggle:{list.SalesListId:N}")
+        }).SelectMany((row, index) => new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            row,
+            new[]
+            {
+                new TelegramInlineButton("⏸ مخزن انتظار", $"invoicebatch:wait:{available.ElementAt(index).SalesListId:N}"),
+                new TelegramInlineButton("🗑 حذف", $"invoicebatch:delete:{available.ElementAt(index).SalesListId:N}")
+            }
         }).ToList();
         rows.Add(new[] { new TelegramInlineButton($"🧾 صدور فاکتور برای {selected.Count} لیست انتخابی", "invoicebatch:issue") });
         rows.Add(new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:cancel") });
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
             "🧾 لیست‌های تکمیل‌شده\n\nلیست‌هایی را که باید هم‌زمان فاکتور شوند انتخاب کنید. " +
             "برای هر مشتری فقط یک فاکتور تجمیعی با همه آیتم‌های همان لیست‌ها صادر می‌شود.", rows, ct);
+    }
+
+    private async Task SendWaitingInvoiceListsAsync(long chatId, CancellationToken ct)
+    {
+        var waiting = await _invoiceIssuanceService.GetWaitingListsAsync(50, ct);
+        if (waiting.Count == 0)
+        {
+            await ReplyAsync(chatId, "📦 مخزن انتظار خالی است.", ct);
+            return;
+        }
+        var rows = waiting.Select(list => (IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton(
+                $"↩ {list.PublicCode} — {list.PerfumeName}",
+                $"invoicebatch:restore:{list.SalesListId:N}"),
+            new TelegramInlineButton("🗑 حذف", $"invoicebatch:waitdelete:{list.SalesListId:N}")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton("🧾 لیست‌های آماده صدور", "invoiceadmin:batch")
+        }).ToArray();
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+            "📦 مخزن انتظار عطرها\n\nعطرهایی که فعلاً پیدا نشده‌اند اینجا می‌مانند. با دکمه بازگردانی دوباره وارد لیست صدور فاکتور می‌شوند.",
+            rows,
+            ct);
+    }
+
+    private async Task SendInvoiceListDeleteConfirmationAsync(
+        long chatId,
+        Guid salesListId,
+        bool fromWaiting,
+        CancellationToken ct)
+    {
+        var prefix = fromWaiting ? "invoicebatch:waitdeleteconfirm:" : "invoicebatch:deleteconfirm:";
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+            "⚠️ این لیست از صف صدور فاکتور حذف و لغوشده علامت‌گذاری می‌شود؛ اطلاعات آن برای سابقه باقی می‌ماند. مطمئن هستید؟",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("✅ تأیید حذف", $"{prefix}{salesListId:N}") },
+                new[] { new TelegramInlineButton("❌ انصراف", fromWaiting ? "invoiceadmin:waiting" : "invoiceadmin:batch") }
+            },
+            ct);
     }
 
     private async Task<bool> TryHandleManualInvoiceMessageAsync(TelegramMessage message, CancellationToken ct)

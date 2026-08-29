@@ -10,7 +10,8 @@ public enum SalesListStatus
     Invoiced = 4,      // فاکتور صادر شده
     Closed = 5,        // پایان کار
     Cancelled = 6,     // لغو شده
-    QueuedForInvoice = 7
+    QueuedForInvoice = 7,
+    AwaitingAvailability = 8 // تکمیل شده اما خرید عطر فعلاً ممکن نیست
 }
 
 public enum PerfumeGender

@@ -814,9 +814,11 @@ public sealed partial class TelegramWebhookController : ControllerBase
         var response = result.Status switch
         {
             TelegramGroupLinkStatus.Linked =>
-                $"گروه با موفقیت به حساب {result.CustomerName} متصل شد ✅\nاز این پس فاکتور و مدارک سفارش در همین گروه ارسال می‌شود.",
+                $"گروه با موفقیت به حساب {result.CustomerName} متصل شد ✅\nاز این پس فاکتور و مدارک سفارش در همین گروه ارسال می‌شود." +
+                FormatQueuedInvoiceNotice(result.QueuedInvoiceCount),
             TelegramGroupLinkStatus.AlreadyLinked =>
-                $"این گروه قبلاً به حساب {result.CustomerName} متصل شده است ✅",
+                $"این گروه قبلاً به حساب {result.CustomerName} متصل شده است ✅" +
+                FormatQueuedInvoiceNotice(result.QueuedInvoiceCount),
             TelegramGroupLinkStatus.InvoiceNotFound =>
                 "فاکتوری با این شماره پیدا نشد. شماره فاکتور را دقیقاً مطابق فاکتور وارد کنید.",
             TelegramGroupLinkStatus.GroupLinkedToAnotherCustomer =>
@@ -827,6 +829,10 @@ public sealed partial class TelegramWebhookController : ControllerBase
         };
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
     }
+
+    private static string FormatQueuedInvoiceNotice(int count) => count > 0
+        ? $"\n\n🧾 {count} فاکتور تحویل‌نشده به‌صورت خودکار در صف ارسال این گروه قرار گرفت."
+        : string.Empty;
 
     private static bool TryParseConnectCommand(string? text, out string invoiceNumber)
     {

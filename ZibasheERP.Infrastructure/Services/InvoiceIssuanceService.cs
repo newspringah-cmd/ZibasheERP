@@ -34,6 +34,55 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 list.TotalVolume))
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyCollection<CompletedSalesListForInvoice>> GetWaitingListsAsync(
+        int limit, CancellationToken cancellationToken = default) =>
+        await _db.SalesLists.AsNoTracking()
+            .Where(list => !list.IsDeleted &&
+                list.Status == SalesListStatus.AwaitingAvailability &&
+                !_db.InvoiceIssuanceBatchSalesLists.Any(link => link.SalesListId == list.Id))
+            .OrderBy(list => list.UpdatedAt ?? list.ClosedDate ?? list.OpenDate)
+            .Take(Math.Clamp(limit, 1, 50))
+            .Select(list => new CompletedSalesListForInvoice(
+                list.Id, list.PublicCode, list.EnglishName,
+                list.Requests.Count(request => !request.IsDeleted &&
+                    request.Kind == SalesListRequestKind.CurrentBottle &&
+                    request.Status == SalesListRequestStatus.Confirmed),
+                list.TotalVolume))
+            .ToArrayAsync(cancellationToken);
+
+    public async Task MoveCompletedListToWaitingAsync(
+        Guid salesListId, CancellationToken cancellationToken = default)
+    {
+        var list = await GetUnassignedListAsync(salesListId, cancellationToken);
+        if (list.Status is not (SalesListStatus.Closed or SalesListStatus.Full))
+            throw new InvalidOperationException("فقط لیست تکمیل‌شده را می‌توان به مخزن انتظار منتقل کرد.");
+        list.Status = SalesListStatus.AwaitingAvailability;
+        list.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task RestoreWaitingListAsync(
+        Guid salesListId, CancellationToken cancellationToken = default)
+    {
+        var list = await GetUnassignedListAsync(salesListId, cancellationToken);
+        if (list.Status != SalesListStatus.AwaitingAvailability)
+            throw new InvalidOperationException("این لیست در مخزن انتظار نیست.");
+        list.Status = list.RemainingVolume == 0 ? SalesListStatus.Full : SalesListStatus.Closed;
+        list.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task CancelCompletedListAsync(
+        Guid salesListId, CancellationToken cancellationToken = default)
+    {
+        var list = await GetUnassignedListAsync(salesListId, cancellationToken);
+        if (list.Status is not (SalesListStatus.Closed or SalesListStatus.Full or SalesListStatus.AwaitingAvailability))
+            throw new InvalidOperationException("این لیست دیگر امکان حذف از صف صدور فاکتور را ندارد.");
+        list.Status = SalesListStatus.Cancelled;
+        list.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<InvoiceIssuanceResult> IssueCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,
         string issuedByTelegramUserId,
@@ -214,6 +263,20 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         };
         await _db.Customers.AddAsync(customer, cancellationToken);
         return customer;
+    }
+
+    private async Task<SalesList> GetUnassignedListAsync(
+        Guid salesListId, CancellationToken cancellationToken)
+    {
+        var list = await _db.SalesLists.FirstOrDefaultAsync(
+            value => value.Id == salesListId && !value.IsDeleted,
+            cancellationToken)
+            ?? throw new InvalidOperationException("لیست پیدا نشد.");
+        if (await _db.InvoiceIssuanceBatchSalesLists.AnyAsync(
+                value => value.SalesListId == salesListId,
+                cancellationToken))
+            throw new InvalidOperationException("این لیست قبلاً وارد فرایند صدور فاکتور شده است.");
+        return list;
     }
 
     private async Task<string> GenerateOrderNumberAsync(DateTime now, CancellationToken cancellationToken)

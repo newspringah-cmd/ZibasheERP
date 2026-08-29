@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Features.Integrations.TrackTelegramGroupMembership;
+using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.API.Telegram;
@@ -25,7 +27,8 @@ public enum TelegramGroupLinkStatus
 
 public sealed record TelegramGroupLinkResult(
     TelegramGroupLinkStatus Status,
-    string? CustomerName = null);
+    string? CustomerName = null,
+    int QueuedInvoiceCount = 0);
 
 public sealed class TelegramGroupMembershipTracker(
     AppDbContext context,
@@ -135,9 +138,105 @@ public sealed class TelegramGroupMembershipTracker(
         group.UpdatedAt = now;
         await context.SaveChangesAsync(cancellationToken);
 
+        var queuedInvoiceCount = await QueueUndeliveredInvoicesAsync(
+            customer.Id,
+            chatId,
+            cancellationToken);
+
         return new TelegramGroupLinkResult(
             alreadyLinked ? TelegramGroupLinkStatus.AlreadyLinked : TelegramGroupLinkStatus.Linked,
-            customer.FullName);
+            customer.FullName,
+            queuedInvoiceCount);
+    }
+
+    private async Task<int> QueueUndeliveredInvoicesAsync(
+        Guid customerId,
+        string chatId,
+        CancellationToken cancellationToken)
+    {
+        var invoices = await context.Invoices
+            .Include(value => value.Order)
+                .ThenInclude(value => value!.Customer)
+            .Include(value => value.Order)
+                .ThenInclude(value => value!.Items)
+                    .ThenInclude(value => value.Perfume)
+            .Include(value => value.Order)
+                .ThenInclude(value => value!.Items)
+                    .ThenInclude(value => value.Bottle)
+            .Where(value => !value.IsDeleted && value.Order != null && !value.Order.IsDeleted &&
+                value.Order.CustomerId == customerId &&
+                (value.DeliveryStatus == InvoiceDeliveryStatus.NeedsManualAction ||
+                 value.DeliveryStatus == InvoiceDeliveryStatus.Failed))
+            .OrderBy(value => value.IssuedAt)
+            .ToArrayAsync(cancellationToken);
+        if (invoices.Length == 0)
+            return 0;
+
+        var orderIds = invoices.Select(value => value.OrderId).ToArray();
+        var alreadyQueuedOrderIds = await context.NotificationOutbox.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.Channel == "Telegram" &&
+                value.EventType == "InvoiceIssued" && value.OrderId.HasValue &&
+                orderIds.Contains(value.OrderId.Value) &&
+                (value.Status == NotificationOutboxStatus.Pending ||
+                 value.Status == NotificationOutboxStatus.Processing))
+            .Select(value => value.OrderId!.Value)
+            .ToArrayAsync(cancellationToken);
+        var queuedSet = alreadyQueuedOrderIds.ToHashSet();
+        var paymentAccounts = await context.InvoicePaymentAccounts.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive)
+            .OrderBy(value => value.DisplayOrder)
+            .Select(value => new { value.CardNumber, value.AccountHolder, value.BankName })
+            .ToArrayAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        var queued = 0;
+
+        foreach (var invoice in invoices.Where(value => !queuedSet.Contains(value.OrderId)))
+        {
+            var order = invoice.Order!;
+            context.NotificationOutbox.Add(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = now,
+                CustomerId = order.CustomerId,
+                OrderId = order.Id,
+                Channel = "Telegram",
+                EventType = "InvoiceIssued",
+                Recipient = chatId,
+                Payload = JsonSerializer.Serialize(new
+                {
+                    order.Id,
+                    order.OrderNumber,
+                    invoice.InvoiceNumber,
+                    invoice.PerfumeTotal,
+                    invoice.BottleTotal,
+                    invoice.TotalAmount,
+                    CustomerUsername = order.Customer?.Username,
+                    PaymentDeadlineHours = 24,
+                    PaymentAccounts = paymentAccounts,
+                    Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
+                    {
+                        item.RowNumber,
+                        PerfumeName = item.Perfume?.Name ?? item.ManualDescription,
+                        PerfumeBrand = item.Perfume?.Brand,
+                        item.RequestedVolumeMl,
+                        item.PerfumeAmount,
+                        item.IsBottleOwner,
+                        BottleName = item.Bottle?.Name,
+                        item.BottlePrice,
+                        item.LineTotal
+                    })
+                })
+            });
+            invoice.DeliveryStatus = InvoiceDeliveryStatus.RetryScheduled;
+            invoice.DeliveryStatusChangedAt = now;
+            invoice.DeliveryStatusNote = "ارسال مجدد پس از اتصال گروه مشتری در صف قرار گرفت.";
+            invoice.UpdatedAt = now;
+            queued++;
+        }
+
+        if (queued > 0)
+            await context.SaveChangesAsync(cancellationToken);
+        return queued;
     }
 
     private static bool IsGroup(string chatType) =>

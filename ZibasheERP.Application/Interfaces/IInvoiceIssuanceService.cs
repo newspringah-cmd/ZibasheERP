@@ -32,6 +32,22 @@ public interface IInvoiceIssuanceService
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<CompletedSalesListForInvoice>> GetWaitingListsAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task MoveCompletedListToWaitingAsync(
+        Guid salesListId,
+        CancellationToken cancellationToken = default);
+
+    Task RestoreWaitingListAsync(
+        Guid salesListId,
+        CancellationToken cancellationToken = default);
+
+    Task CancelCompletedListAsync(
+        Guid salesListId,
+        CancellationToken cancellationToken = default);
+
     Task<InvoiceIssuanceResult> IssueCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,
         string issuedByTelegramUserId,

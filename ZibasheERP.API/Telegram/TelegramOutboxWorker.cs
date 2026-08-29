@@ -115,6 +115,21 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 notification.Status = NotificationOutboxStatus.Processed;
                 notification.ProcessedAt = now;
                 notification.LastError = null;
+                if (notification.EventType == "InvoiceIssued" && notification.OrderId.HasValue)
+                {
+                    var invoice = await db.Invoices.FirstOrDefaultAsync(
+                        value => value.OrderId == notification.OrderId.Value && !value.IsDeleted,
+                        cancellationToken);
+                    if (invoice is not null)
+                    {
+                        invoice.DeliveryStatus = InvoiceDeliveryStatus.Delivered;
+                        invoice.DeliveryStatusChangedAt = now;
+                        invoice.DeliveryStatusNote = null;
+                        invoice.IsSentToCustomer = true;
+                        invoice.SentToCustomerAt ??= now;
+                        invoice.UpdatedAt = now;
+                    }
+                }
             }
             else
             {
