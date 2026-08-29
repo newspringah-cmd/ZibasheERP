@@ -25,8 +25,8 @@ require_secret() {
   [[ -n "$value" ]] || fail "$key is missing or empty."
   [[ "$value" != *REPLACE* ]] || fail "$key still contains a placeholder."
   (( ${#value} >= 32 )) || fail "$key must be at least 32 characters long."
-  [[ "$value" =~ ^[A-Za-z0-9_-]{32,256}$ ]] || \
-    fail "$key must use only letters, numbers, underscore, or hyphen and be at most 256 characters."
+  [[ "$value" =~ ^[^[:space:]]{32,256}$ ]] || \
+    fail "$key must not contain whitespace and must be at most 256 characters."
 }
 
 n8n_domain="$(value_of 'N8N_DOMAIN')"
