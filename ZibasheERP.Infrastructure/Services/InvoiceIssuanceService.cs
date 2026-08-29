@@ -156,8 +156,9 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         if (validLines.Length == 0)
             throw new InvalidOperationException("حداقل یک ردیف معتبر برای فاکتور دستی لازم است.");
 
+        var usernameWithAt = $"@{identity}";
         var customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-            (value.TelegramId == identity || (value.Username != null && value.Username.TrimStart('@') == identity)), cancellationToken)
+            (value.TelegramId == identity || value.Username == identity || value.Username == usernameWithAt), cancellationToken)
             ?? throw new InvalidOperationException("مشتری پیدا نشد؛ ابتدا مشتری را با Telegram ID یا @username شناسایی کنید.");
         var now = DateTime.UtcNow;
         var order = new Order
@@ -197,9 +198,10 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     {
         var telegramId = request.TelegramUserId.Trim();
         var username = request.TelegramUsername?.Trim().TrimStart('@');
+        var usernameWithAt = string.IsNullOrWhiteSpace(username) ? null : $"@{username}";
         var customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-            (value.TelegramId == telegramId || (!string.IsNullOrWhiteSpace(username) && value.Username != null &&
-                                                 value.Username.TrimStart('@') == username)), cancellationToken);
+            (value.TelegramId == telegramId || (!string.IsNullOrWhiteSpace(username) &&
+                                                 (value.Username == username || value.Username == usernameWithAt))), cancellationToken);
         if (customer is not null) return customer;
 
         customer = new Customer
