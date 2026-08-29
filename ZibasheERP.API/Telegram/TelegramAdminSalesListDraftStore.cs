@@ -138,7 +138,7 @@ public sealed class TelegramOwnerPricingDraftStore
     public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
 }
 
-public enum TelegramAdminRequestKind { NextBottle, CustomRequest, GiftRequest, EditList, CleanupList, ManageBottleQueue }
+public enum TelegramAdminRequestKind { NextBottle, CustomRequest, GiftRequest, EditList, CleanupList, ManageBottleQueue, RemoveCustomerRequests }
 public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingConfirmation }
 
 public sealed class TelegramAdminRequestDraft
@@ -179,25 +179,4 @@ public sealed class TelegramAdminRequestDraftStore
         return false;
     }
     public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
-}
-
-public sealed record TelegramGiftRecipientDraft(
-    Guid RequestId, Guid SalesListId, long TelegramUserId, long PromptMessageId, DateTime ExpiresAt);
-
-public sealed class TelegramGiftRecipientDraftStore
-{
-    private readonly ConcurrentDictionary<long, TelegramGiftRecipientDraft> _values = new();
-    public void Set(TelegramGiftRecipientDraft value) => _values[value.TelegramUserId] = value;
-    public bool TryGet(long telegramUserId, out TelegramGiftRecipientDraft value)
-    {
-        if (_values.TryGetValue(telegramUserId, out var found) && found.ExpiresAt > DateTime.UtcNow)
-        {
-            value = found;
-            return true;
-        }
-        _values.TryRemove(telegramUserId, out _);
-        value = null!;
-        return false;
-    }
-    public void Remove(long telegramUserId) => _values.TryRemove(telegramUserId, out _);
 }

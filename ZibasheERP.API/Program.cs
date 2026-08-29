@@ -101,7 +101,6 @@ builder.Services.AddOptions<N8nOptions>()
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
-builder.Services.AddSingleton<TelegramGiftRecipientDraftStore>();
 builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();
 builder.Services.AddSingleton<TelegramAdminRequestDraftStore>();
 builder.Services.AddSingleton<TelegramTemporaryMessageCleaner>();

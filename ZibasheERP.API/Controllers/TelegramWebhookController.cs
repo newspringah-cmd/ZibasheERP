@@ -52,7 +52,6 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly IBottleRepository _bottleRepository;
     private readonly IPerfumeRepository _perfumeRepository;
     private readonly TelegramTemporaryMessageCleaner _temporaryMessageCleaner;
-    private readonly TelegramGiftRecipientDraftStore _giftRecipientDrafts;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -69,7 +68,6 @@ public sealed partial class TelegramWebhookController : ControllerBase
         IBottleRepository bottleRepository,
         IPerfumeRepository perfumeRepository,
         TelegramTemporaryMessageCleaner temporaryMessageCleaner,
-        TelegramGiftRecipientDraftStore giftRecipientDrafts,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
@@ -86,7 +84,6 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _bottleRepository = bottleRepository;
         _perfumeRepository = perfumeRepository;
         _temporaryMessageCleaner = temporaryMessageCleaner;
-        _giftRecipientDrafts = giftRecipientDrafts;
         _logger = logger;
     }
 
@@ -761,9 +758,6 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
-        if (await TryHandleGiftRecipientMessageAsync(message, cancellationToken))
-            return;
-
         if (await TryHandleAdminCommandAsync(message, cancellationToken))
             return;
 
