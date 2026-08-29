@@ -493,7 +493,11 @@ public sealed partial class TelegramWebhookController
             }
             catch (InvalidOperationException exception)
             {
-                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct);
+                _logger.LogWarning(exception,
+                    "Manual invoice issuance was rejected for Telegram user {TelegramUserId}.",
+                    userId);
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+                await ReplyAsync(chatId, $"⚠️ فاکتور دستی صادر نشد:\n{exception.Message}", ct);
             }
             catch (Exception exception)
             {
@@ -534,7 +538,12 @@ public sealed partial class TelegramWebhookController
             }
             catch (InvalidOperationException exception)
             {
-                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct);
+                _logger.LogWarning(exception,
+                    "Completed sales-list invoice issuance was rejected for Telegram user {TelegramUserId} and {SalesListCount} selected lists.",
+                    userId,
+                    selected.Count);
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+                await ReplyAsync(chatId, $"⚠️ فاکتور صادر نشد:\n{exception.Message}", ct);
                 await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
             }
             catch (Exception exception)
