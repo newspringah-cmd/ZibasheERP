@@ -8,6 +8,10 @@ namespace ZibasheERP.API.Telegram;
 
 public interface ITelegramMessageSender
 {
+    Task<TelegramSendResult> ConfigureAdminMenuAsync(
+        string chatId,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> SendAsync(
         string chatId,
         string message,
@@ -204,6 +208,34 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         if (!string.IsNullOrWhiteSpace(button.Url))
             value["url"] = button.Url;
         return value;
+    }
+
+    public async Task<TelegramSendResult> ConfigureAdminMenuAsync(
+        string chatId,
+        CancellationToken cancellationToken = default)
+    {
+        var commands = await SendRequestAsync(
+            "setMyCommands",
+            new
+            {
+                commands = new[]
+                {
+                    new { command = "admin", description = "⚙️ پنل مدیریت" }
+                },
+                scope = new { type = "chat", chat_id = chatId }
+            },
+            cancellationToken);
+        if (!commands.IsSuccessful)
+            return commands;
+
+        return await SendRequestAsync(
+            "setChatMenuButton",
+            new
+            {
+                chat_id = chatId,
+                menu_button = new { type = "commands" }
+            },
+            cancellationToken);
     }
 
     public async Task<TelegramSendResult> SendPhotoAsync(
