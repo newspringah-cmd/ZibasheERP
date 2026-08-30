@@ -99,6 +99,9 @@ public sealed class SalesListManagementTests
             Task.FromResult<IReadOnlyCollection<SalesList>>(lists.Where(list => list.Status == SalesListStatus.Open).Take(limit).ToArray());
         public Task<IReadOnlyCollection<SalesList>> GetForAdminAsync(int limit, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<SalesList>>(lists.Take(limit).ToArray());
+        public Task<SalesList?> GetLatestByPerfumeIdAsync(Guid perfumeId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<SalesList?>(lists.OrderByDescending(list => list.OpenDate)
+                .FirstOrDefault(list => list.PerfumeId == perfumeId));
         public Task<bool> HasActiveForBatchAsync(Guid batchId, CancellationToken cancellationToken = default) =>
             Task.FromResult(lists.Any(list => list.BatchId == batchId && list.Status == SalesListStatus.Open));
         public Task AddAsync(SalesList salesList, CancellationToken cancellationToken = default)
