@@ -102,6 +102,7 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.False(message.Contains("جمع شیشه:", StringComparison.Ordinal));
         Assert.Contains("1,250,000", message);
         Assert.Contains("PDF", message);
+        Assert.DoesNotContain("وضعیت پرداخت", message);
     }
 
     [Fact]

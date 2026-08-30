@@ -485,6 +485,35 @@ public sealed partial class TelegramWebhookController
                 : $"@{callback.From.Username.TrimStart('@')}";
             await ReplyAsync(callback.Message!.Chat.Id,
                 $"{status}\nفاکتور: {result.InvoiceNumber}\nثبت توسط: {adminIdentity}", ct);
+            if (result.IsPaid && !string.IsNullOrWhiteSpace(callback.Message.Text))
+            {
+                var accounts = await _paymentAccountRepository.GetActiveAsync(ct);
+                var paidRows = accounts.Select(account =>
+                        (IReadOnlyCollection<TelegramInlineButton>)new[]
+                        {
+                            new TelegramInlineButton(
+                                $"📋 کپی شماره کارت {account.BankName}",
+                                CopyText: account.CardNumber)
+                        })
+                    .Append(new[]
+                    {
+                        new TelegramInlineButton(
+                            "✅ پرداخت‌شده",
+                            $"invoicepay:paid:{result.InvoiceId:N}")
+                    })
+                    .ToArray();
+                var invoiceRefresh = await _sender.EditTextWithKeyboardAsync(
+                    callback.Message.Chat.Id.ToString(),
+                    callback.Message.MessageId,
+                    callback.Message.Text,
+                    paidRows,
+                    ct);
+                if (!invoiceRefresh.IsSuccessful)
+                {
+                    await ReplyAsync(callback.Message.Chat.Id,
+                        $"⚠️ پرداخت ثبت شد اما دکمه‌های فاکتور بروزرسانی نشد: {invoiceRefresh.Error}", ct);
+                }
+            }
             if (result.InvoiceIssuanceBatchId.HasValue)
             {
                 var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(

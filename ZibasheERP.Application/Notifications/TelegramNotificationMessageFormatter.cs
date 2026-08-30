@@ -71,7 +71,6 @@ public static class TelegramNotificationMessageFormatter
             .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
             .AppendLine($"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}")
             .AppendLine($"شماره سفارش: {orderNumber}")
-            .AppendLine("وضعیت پرداخت: ⏳ در انتظار پرداخت")
             .AppendLine();
 
         if (root.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array)
