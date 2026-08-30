@@ -25,3 +25,7 @@ deploy/.env.production
 deploy/.env.n8n
 deploy/Caddyfile
 deploy/backups/
+
+# Local PDF render previews and visual QA files
+tmp/pdfs/
+output/pdf/

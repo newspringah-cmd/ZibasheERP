@@ -9,6 +9,7 @@ const event = {
   eventType: 'InvoiceIssued',
   data: {
     Delivery: { ChatId: '-1001234567890' },
+    InvoiceId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     InvoiceNumber: 'INV-TEST',
     OrderNumber: 'ORD-TEST',
     IssuedAt: '2026-08-03T12:00:00Z',
@@ -45,19 +46,26 @@ if (result.json.invoiceFileName !== 'invoice-INV-TEST.pdf') {
 if (result.json.artifactType !== 'InvoicePdf') {
   throw new Error('Invoice renderer produced an unexpected artifact type.');
 }
-if (!result.json.invoiceHtml.includes('نام انگلیسی:') ||
+if (!result.json.invoiceHtml.includes('فاکتور خرید') ||
+    !result.json.invoiceHtml.includes('ZibaShe') ||
     !result.json.invoiceHtml.includes('English Perfume') ||
-    !result.json.invoiceHtml.includes('نام فارسی:') ||
     !result.json.invoiceHtml.includes('عطر فارسی') ||
-    !result.json.invoiceHtml.includes('مبلغ عطر و شیشه:')) {
-  throw new Error('Invoice renderer did not render item details on separate lines.');
+    !result.json.invoiceHtml.includes('قیمت کل') ||
+    !result.json.invoiceHtml.includes('مبلغ قابل پرداخت:')) {
+  throw new Error('Invoice renderer did not render the branded table layout.');
 }
-if (!result.json.invoiceHtml.includes('تاریخ شمسی:') ||
+if (!result.json.invoiceHtml.includes('تاریخ:') ||
     result.json.invoiceHtml.includes('جمع شیشه</span>')) {
   throw new Error('Invoice renderer did not use the Persian date or combined total layout.');
 }
 if (!result.json.telegramCaption.includes('INV-TEST')) {
   throw new Error('Invoice renderer did not prepare the PDF Telegram caption.');
+}
+if (!result.json.telegramCaption.includes('مبلغ قابل پرداخت') ||
+    result.json.paidCallbackData !== 'invoicepay:paid:aaaaaaaabbbbccccddddeeeeeeeeeeee' ||
+    result.json.waitingCallbackData !== 'invoicepay:waiting:aaaaaaaabbbbccccddddeeeeeeeeeeee' ||
+    result.json.telegramCaption.length > 1024) {
+  throw new Error('Invoice renderer did not prepare the combined Telegram document message.');
 }
 
 console.log('Invoice renderer test: PASS');

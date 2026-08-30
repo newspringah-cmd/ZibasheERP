@@ -40,11 +40,7 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         Assert.Equal(OrderArtifactType.InvoicePdf.ToString(), first.Type);
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(1, artifacts.AddCount);
-        Assert.Equal(1, outbox.Added.Count);
-        var invoiceMessage = outbox.Added.Single();
-        Assert.Equal("Telegram", invoiceMessage.Channel);
-        Assert.Equal("InvoiceIssued", invoiceMessage.EventType);
-        Assert.Equal("-1001234567890", invoiceMessage.Recipient);
+        Assert.Empty(outbox.Added);
     }
 
     [Fact]

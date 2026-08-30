@@ -485,7 +485,9 @@ public sealed partial class TelegramWebhookController
                 : $"@{callback.From.Username.TrimStart('@')}";
             await ReplyAsync(callback.Message!.Chat.Id,
                 $"{status}\nفاکتور: {result.InvoiceNumber}\nثبت توسط: {adminIdentity}", ct);
-            if (result.IsPaid && !string.IsNullOrWhiteSpace(callback.Message.Text))
+            if (result.IsPaid &&
+                (!string.IsNullOrWhiteSpace(callback.Message.Text) ||
+                 !string.IsNullOrWhiteSpace(callback.Message.Caption)))
             {
                 var accounts = await _paymentAccountRepository.GetActiveAsync(ct);
                 var paidRows = accounts.Select(account =>
@@ -502,12 +504,19 @@ public sealed partial class TelegramWebhookController
                             $"invoicepay:paid:{result.InvoiceId:N}")
                     })
                     .ToArray();
-                var invoiceRefresh = await _sender.EditTextWithKeyboardAsync(
-                    callback.Message.Chat.Id.ToString(),
-                    callback.Message.MessageId,
-                    callback.Message.Text,
-                    paidRows,
-                    ct);
+                var invoiceRefresh = !string.IsNullOrWhiteSpace(callback.Message.Caption)
+                    ? await _sender.EditCaptionWithKeyboardAsync(
+                        callback.Message.Chat.Id.ToString(),
+                        callback.Message.MessageId,
+                        callback.Message.Caption,
+                        paidRows,
+                        ct)
+                    : await _sender.EditTextWithKeyboardAsync(
+                        callback.Message.Chat.Id.ToString(),
+                        callback.Message.MessageId,
+                        callback.Message.Text!,
+                        paidRows,
+                        ct);
                 if (!invoiceRefresh.IsSuccessful)
                 {
                     await ReplyAsync(callback.Message.Chat.Id,

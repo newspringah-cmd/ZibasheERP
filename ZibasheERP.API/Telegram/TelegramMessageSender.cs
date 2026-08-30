@@ -105,6 +105,11 @@ public interface ITelegramMessageSender
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> EditCaptionWithKeyboardAsync(
+        string chatId, long messageId, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
     Task<bool> IsChatMemberAsync(
         string chatId,
         string userId,
@@ -359,6 +364,19 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         await SendRequestAsync("editMessageText", new
         {
             chat_id = chatId, message_id = messageId, text = message,
+            reply_markup = new
+            {
+                inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+            }
+        }, cancellationToken);
+
+    public async Task<TelegramSendResult> EditCaptionWithKeyboardAsync(
+        string chatId, long messageId, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync("editMessageCaption", new
+        {
+            chat_id = chatId, message_id = messageId, caption,
             reply_markup = new
             {
                 inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
