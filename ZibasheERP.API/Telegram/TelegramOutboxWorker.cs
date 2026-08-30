@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using ZibasheERP.Application.Interfaces;
@@ -125,6 +126,16 @@ public sealed class TelegramOutboxWorker : BackgroundService
                         invoice.SentToCustomerAt ??= now;
                         invoice.UpdatedAt = now;
                     }
+
+                    if (result.MessageId.HasValue)
+                    {
+                        await ReleaseInvoicePdfNotificationAsync(
+                            db,
+                            notification.OrderId.Value,
+                            result.MessageId.Value,
+                            now,
+                            cancellationToken);
+                    }
                 }
             }
             else
@@ -168,6 +179,35 @@ public sealed class TelegramOutboxWorker : BackgroundService
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
+
+    private static async Task ReleaseInvoicePdfNotificationAsync(
+        AppDbContext db,
+        Guid orderId,
+        long invoiceMessageId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var integrationEvent = await db.NotificationOutbox
+            .Where(value => value.OrderId == orderId &&
+                value.Channel == "N8n" &&
+                value.EventType == "InvoiceIssued" &&
+                value.Status == NotificationOutboxStatus.Pending &&
+                !value.IsDeleted)
+            .OrderByDescending(value => value.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (integrationEvent is null)
+            return;
+
+        var payload = JsonNode.Parse(integrationEvent.Payload) as JsonObject
+            ?? throw new JsonException("InvoiceIssued n8n payload is not a JSON object.");
+        var delivery = payload["Delivery"] as JsonObject
+            ?? throw new JsonException("InvoiceIssued n8n payload has no delivery object.");
+        delivery["ReplyToMessageId"] = invoiceMessageId;
+        integrationEvent.Payload = payload.ToJsonString();
+        integrationEvent.NextAttemptAt = now;
+        integrationEvent.LockedUntil = null;
+        integrationEvent.UpdatedAt = now;
+    }
 
     private async Task<TelegramSendResult> SendNotificationAsync(
         NotificationOutbox notification,
