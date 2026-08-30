@@ -14,6 +14,10 @@ public interface ISalesListRepository
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<SalesList?> GetLatestByPerfumeIdAsync(
+        Guid perfumeId,
+        CancellationToken cancellationToken = default);
+
     Task<bool> HasActiveForBatchAsync(
         Guid batchId,
         CancellationToken cancellationToken = default);

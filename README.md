@@ -123,6 +123,8 @@ dotnet user-secrets set "ApiKeys:N8n" "A_DIFFERENT_RANDOM_KEY_WITH_AT_LEAST_32_C
 
 - `Telegram:PollIntervalSeconds`: فاصله بررسی Outbox، بین ۱ تا ۳۰۰ ثانیه
 - `Telegram:BatchSize`: تعداد اعلان هر batch، بین ۱ تا ۱۰۰
+- `Telegram:MessageDelayMilliseconds`: فاصله بین پیام‌های یک مقصد تلگرام (پیش‌فرض ۱۰۰۰ میلی‌ثانیه)
+- `Telegram:RecipientDelayMilliseconds`: فاصله هنگام تغییر مقصد به مشتری بعدی (پیش‌فرض ۲۰۰۰ میلی‌ثانیه)
 - `Telegram:MaxAttempts`: سقف تلاش ارسال، بین ۱ تا ۲۰
 
 در Production دو API key باید متفاوت و حداقل ۳۲ کاراکتر باشند.

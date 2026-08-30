@@ -42,6 +42,8 @@ public sealed class InvoiceRepository : IInvoiceRepository
                 .ThenInclude(item => item.Bottle)
             .Include(order => order.Items.Where(item => !item.IsDeleted))
                 .ThenInclude(item => item.SalesList)
+            .Include(order => order.Items.Where(item => !item.IsDeleted))
+                .ThenInclude(item => item.SourceSalesListRequest)
             .FirstOrDefaultAsync(
                 order => order.Id == orderId && !order.IsDeleted,
                 cancellationToken);

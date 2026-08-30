@@ -62,6 +62,9 @@ public sealed class TelegramOutboxWorker : BackgroundService
             Math.Clamp(_options.BatchSize, 1, 100),
             cancellationToken);
 
+        string? previousRecipient = null;
+        var hasAttemptedDelivery = false;
+
         foreach (var item in pending)
         {
             var notification = await repository.GetByIdAsync(item.Id, cancellationToken);
@@ -71,7 +74,10 @@ public sealed class TelegramOutboxWorker : BackgroundService
             TelegramSendResult result;
             try
             {
-                var recipient = notification.EventType is "TelegramCustomerGroupRequired" or "InvoiceDeliveryRequiresManualAction" or "TelegramGroupDeliveryFailed"
+                var recipient = notification.EventType is "TelegramCustomerGroupRequired" or
+                    "InvoiceDeliveryRequiresManualAction" or
+                    "InvoiceGiftDeliveryRequiresManualAction" or
+                    "TelegramGroupDeliveryFailed"
                     ? (string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
                         ? _options.AdminChatId.Trim()
                         : _options.InvoiceFailureChatId.Trim())
@@ -84,6 +90,19 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 }
                 else
                 {
+                    if (hasAttemptedDelivery)
+                    {
+                        var delayMilliseconds = string.Equals(
+                            previousRecipient,
+                            recipient,
+                            StringComparison.Ordinal)
+                            ? _options.MessageDelayMilliseconds
+                            : _options.RecipientDelayMilliseconds;
+                        if (delayMilliseconds > 0)
+                            await Task.Delay(delayMilliseconds, cancellationToken);
+                    }
+                    previousRecipient = recipient;
+                    hasAttemptedDelivery = true;
                     result = await SendNotificationAsync(
                         notification,
                         recipient,

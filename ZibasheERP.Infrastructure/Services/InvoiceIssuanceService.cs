@@ -154,6 +154,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     Id = Guid.NewGuid(), CreatedAt = now, OrderId = order.Id,
                     SalesListId = list.Id, PerfumeId = list.PerfumeId,
                     SourceSalesListRequestId = request.Id,
+                    SourceSalesListRequest = request,
                     RequestedVolumeMl = request.VolumeMl, Quantity = 1,
                     PerfumePricePerMl = request.PerfumePricePerMl,
                     PerfumeAmount = perfumeAmount, IsBottleOwner = request.IsBottleOwner,
@@ -179,6 +180,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         {
             var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id), cancellationToken);
             invoiceNumbers.Add(invoice.InvoiceNumber);
+            await QueueGiftRecipientNotificationsAsync(order, invoice.InvoiceNumber, cancellationToken);
         }
         foreach (var list in lists)
         {
@@ -190,6 +192,94 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         await _db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new InvoiceIssuanceResult(batch.Id, orders.Count, invoiceNumbers, productionCopies);
+    }
+
+    private async Task QueueGiftRecipientNotificationsAsync(
+        Order order,
+        string invoiceNumber,
+        CancellationToken cancellationToken)
+    {
+        var giftItems = order.Items
+            .Where(item => item.SourceSalesListRequest?.IsGift == true)
+            .OrderBy(item => item.RowNumber)
+            .ToArray();
+        if (giftItems.Length == 0)
+            return;
+
+        var now = DateTime.UtcNow;
+        var sequence = 0;
+        foreach (var item in giftItems)
+        {
+            var request = item.SourceSalesListRequest!;
+            var recipientTelegramId = request.GiftRecipientTelegramUserId?.Trim();
+            var recipientUsername = request.GiftRecipientTelegramUsername?.Trim().TrimStart('@');
+            var recipientWithAt = string.IsNullOrWhiteSpace(recipientUsername) ? null : $"@{recipientUsername}";
+            var recipient = await _db.Customers.AsNoTracking()
+                .Include(customer => customer.TelegramGroup)
+                .FirstOrDefaultAsync(customer => !customer.IsDeleted &&
+                    (customer.TelegramId == recipientTelegramId ||
+                     (!string.IsNullOrWhiteSpace(recipientUsername) &&
+                      (customer.Username == recipientUsername || customer.Username == recipientWithAt))),
+                    cancellationToken);
+            var group = recipient?.TelegramGroup;
+            var hasGroup = group is not null && !group.IsDeleted && group.IsActive &&
+                           !string.IsNullOrWhiteSpace(group.ChatId);
+
+            if (!hasGroup)
+            {
+                await _db.NotificationOutbox.AddAsync(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                    CustomerId = recipient?.Id ?? order.CustomerId, OrderId = order.Id,
+                    Channel = "Telegram", EventType = "InvoiceGiftDeliveryRequiresManualAction",
+                    Recipient = "admin",
+                    Payload = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        invoiceNumber,
+                        RecipientUsername = recipientUsername,
+                        RecipientTelegramId = recipientTelegramId,
+                        GiverUsername = request.TelegramUsername,
+                        GiverTelegramId = request.TelegramUserId
+                    })
+                }, cancellationToken);
+                continue;
+            }
+
+            var chatId = group!.ChatId.Trim();
+            if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+            {
+                await _db.NotificationOutbox.AddAsync(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                    CustomerId = recipient!.Id, OrderId = order.Id,
+                    Channel = "Telegram", EventType = "InvoicePerfumePhoto", Recipient = chatId,
+                    Payload = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        FileId = item.SalesList.TelegramPhotoFileId,
+                        PersianName = item.Perfume?.Name ?? item.ManualDescription,
+                        EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                    })
+                }, cancellationToken);
+            }
+
+            await _db.NotificationOutbox.AddAsync(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                CustomerId = recipient!.Id, OrderId = order.Id,
+                Channel = "Telegram", EventType = "GiftInvoiceIssued", Recipient = chatId,
+                Payload = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    InvoiceNumber = invoiceNumber,
+                    IssuedAt = now,
+                    GiverUsername = request.TelegramUsername,
+                    GiverTelegramId = request.TelegramUserId,
+                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                    item.RequestedVolumeMl,
+                    TotalAmount = 0
+                })
+            }, cancellationToken);
+        }
     }
 
     public async Task<InvoiceIssuanceResult> IssueManualAsync(
@@ -362,31 +452,153 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
     private static SalesListProductionCopy CreateProductionCopy(SalesList list)
     {
-        var rows = list.Requests
-            .OrderBy(request => request.ConfirmedAt)
-            .ThenBy(request => request.CreatedAt)
-            .Select((request, index) =>
-            {
-                var identity = !string.IsNullOrWhiteSpace(request.TelegramUsername)
-                    ? $"@{request.TelegramUsername.TrimStart('@')}"
-                    : request.TelegramUserId;
-                var bottle = request.IsBottleOwner
-                    ? "صاحب باتل — شیشه رایگان"
-                    : request.Bottle is null
-                        ? "شیشه ثبت نشده"
-                        : request.Bottle.Type == BottleType.Fancy
-                            ? $"شیشه فانتزی F — {request.Bottle.Name}"
-                            : $"شیشه نرمال — {request.Bottle.Name}";
-                return $"{index + 1}. {identity} — {request.VolumeMl} میل — {bottle}";
-            })
-            .ToArray();
-        var header = $"کد لیست: {list.PublicCode}\nعطر: {list.EnglishName}\n" +
-            $"حجم کل: {list.TotalVolume} میل\nتعداد آیتم: {rows.Length}";
+        var orderList = FormatOrderList(list);
         return new SalesListProductionCopy(
             list.Id,
             list.PublicCode,
             list.EnglishName,
-            "🧪 نسخه دکانت — آماده پس از صدور فاکتور\n" + header + "\n\n" + string.Join("\n", rows),
-            "🏷 نسخه چاپ لیبل\n" + header + "\n\n" + string.Join("\n", rows));
+            orderList,
+            FormatLabelList(list));
     }
+
+    private static string FormatOrderList(SalesList list)
+    {
+        var header = FormatOrderHeader(list);
+        var roster = list.Requests
+            .Where(request => request.Kind == SalesListRequestKind.CurrentBottle)
+            .GroupBy(request => request.VolumeMl)
+            .OrderByDescending(group => group.Key)
+            .Select(group => $"{group.Key} ml:\n" + string.Join("\n", group
+                .OrderBy(request => request.ConfirmedAt)
+                .ThenBy(request => request.CreatedAt)
+                .Select(ProductionIdentity)))
+            .ToArray();
+        return string.Join("\n\n", new[]
+        {
+            header,
+            string.Join("\n\n", roster),
+            FormatNextBottleSection(list)
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    private static string FormatOrderHeader(SalesList list)
+    {
+        var gender = list.Gender switch
+        {
+            PerfumeGender.Women => "#women 👩",
+            PerfumeGender.Men => "#men 👨",
+            _ => "#unisex 👩‍🦰👨"
+        };
+        var brand = "#" + string.Concat(list.DisplayBrand.Select(character =>
+            char.IsLetterOrDigit(character) ? character : '_')).Trim('_');
+        return $"کد: {list.PublicCode}\n" +
+            $"{list.EnglishName}\n{brand}\n{gender}\nL.{list.ReleaseYear}\n\n" +
+            $"{list.PersianName}\n\n" +
+            $"🍊 نت‌های ابتدایی: {list.TopNotes}\n" +
+            $"🌸 نت‌های میانی: {list.MiddleNotes}\n" +
+            $"🌳 نت‌های پایانی: {list.BaseNotes}\n" +
+            $"🎼 آکوردها: {list.Accords}\n\n" +
+            $"حجم کل: {list.TotalVolume}ml\n" +
+            $"قیمت هر میل: {list.PricePerMl:N0} تومان\n" +
+            $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل | باقی‌مانده: {list.RemainingVolume} میل";
+    }
+
+    private static string FormatNextBottleSection(SalesList list)
+    {
+        var next = list.Requests
+            .Where(request => request.Kind == SalesListRequestKind.NextBottle)
+            .OrderBy(request => request.CreatedAt)
+            .Select(ProductionIdentity)
+            .ToArray();
+        return next.Length == 0
+            ? "Next Bottle: اولین نفر صف باتل باشید 😘😘"
+            : "Next Bottle: " + string.Join("، ", next);
+    }
+
+    private static string ProductionIdentity(SalesListRequest request)
+    {
+        var identity = string.IsNullOrWhiteSpace(request.TelegramUsername)
+            ? $"کاربر {request.TelegramUserId}"
+            : $"@{request.TelegramUsername.TrimStart('@')}";
+        if (request.IsGift)
+        {
+            var recipient = !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
+                ? $"@{request.GiftRecipientTelegramUsername.TrimStart('@')}"
+                : request.GiftRecipientTelegramUserId ?? "گیرنده نامشخص";
+            identity += $" for {recipient}";
+        }
+        if (request.IsBottleOwner)
+            identity += " 👑";
+        if (request.Bottle?.Type == BottleType.Fancy)
+            identity += " F";
+        return identity;
+    }
+
+    private static string FormatLabelList(SalesList list)
+    {
+        var owner = list.Requests.FirstOrDefault(request =>
+            request.Kind == SalesListRequestKind.CurrentBottle && request.IsBottleOwner);
+        var ownerGiftVolume = owner is null
+            ? 0
+            : list.Requests.Where(request =>
+                    request.Kind == SalesListRequestKind.CurrentBottle &&
+                    request.IsGift && IsGiftFor(request, owner))
+                .Sum(request => request.VolumeMl);
+        var labelRows = new List<(int Volume, DateTime SortAt, string Identity)>();
+        foreach (var request in list.Requests
+                     .Where(request => request.Kind == SalesListRequestKind.CurrentBottle)
+                     .OrderBy(request => request.ConfirmedAt)
+                     .ThenBy(request => request.CreatedAt))
+        {
+            if (request.IsGift && owner is not null && IsGiftFor(request, owner))
+                continue;
+            var volume = request.IsBottleOwner
+                ? request.VolumeMl + ownerGiftVolume
+                : request.VolumeMl;
+            var identity = request.IsGift
+                ? GiftRecipientIdentity(request)
+                : BaseIdentity(request);
+            if (request.IsBottleOwner)
+                identity += " 👑";
+            if (request.Bottle?.Type == BottleType.Fancy)
+                identity += " F";
+            labelRows.Add((volume, request.ConfirmedAt ?? request.CreatedAt, identity));
+        }
+
+        var roster = labelRows
+            .GroupBy(row => row.Volume)
+            .OrderByDescending(group => group.Key)
+            .Select(group => $"{group.Key} ml:\n" + string.Join("\n", group
+                .OrderBy(row => row.SortAt)
+                .Select(row => row.Identity)))
+            .ToArray();
+        return FormatOrderHeader(list) + "\n\n" + string.Join("\n\n", roster) +
+               "\n\n" + FormatNextBottleSection(list);
+    }
+
+    private static bool IsGiftFor(SalesListRequest gift, SalesListRequest recipient)
+    {
+        if (!string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUserId) &&
+            string.Equals(gift.GiftRecipientTelegramUserId.Trim(), recipient.TelegramUserId.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+            return true;
+        return !string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUsername) &&
+               !string.IsNullOrWhiteSpace(recipient.TelegramUsername) &&
+               string.Equals(
+                   gift.GiftRecipientTelegramUsername.Trim().TrimStart('@'),
+                   recipient.TelegramUsername.Trim().TrimStart('@'),
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GiftRecipientIdentity(SalesListRequest request) =>
+        !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
+            ? $"@{request.GiftRecipientTelegramUsername.Trim().TrimStart('@')}"
+            : !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUserId)
+                ? $"کاربر {request.GiftRecipientTelegramUserId.Trim()}"
+                : "گیرنده نامشخص";
+
+    private static string BaseIdentity(SalesListRequest request) =>
+        string.IsNullOrWhiteSpace(request.TelegramUsername)
+            ? $"کاربر {request.TelegramUserId}"
+            : $"@{request.TelegramUsername.TrimStart('@')}";
 }

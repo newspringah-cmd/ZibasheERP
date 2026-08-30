@@ -17,6 +17,11 @@ public interface ITelegramMessageSender
         string message,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendHtmlAsync(
+        string chatId,
+        string message,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> RequestContactAsync(
         string chatId,
         string message,
@@ -34,6 +39,12 @@ public interface ITelegramMessageSender
         CancellationToken cancellationToken = default);
 
     Task<TelegramSendResult> SendPhotoAsync(
+        string chatId,
+        string photo,
+        string caption,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> SendPhotoHtmlAsync(
         string chatId,
         string photo,
         string caption,
@@ -184,6 +195,15 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             },
             cancellationToken);
 
+    public async Task<TelegramSendResult> SendHtmlAsync(
+        string chatId,
+        string message,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "sendMessage",
+            new { chat_id = chatId, text = message, parse_mode = "HTML" },
+            cancellationToken);
+
     public async Task<TelegramSendResult> SendForceReplyAsync(
         string chatId,
         string message,
@@ -238,6 +258,16 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         await SendRequestAsync(
             "sendPhoto",
             new { chat_id = chatId, photo, caption },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> SendPhotoHtmlAsync(
+        string chatId,
+        string photo,
+        string caption,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "sendPhoto",
+            new { chat_id = chatId, photo, caption, parse_mode = "HTML" },
             cancellationToken);
 
     public async Task<TelegramSendResult> SendStickerAsync(

@@ -106,6 +106,31 @@ public sealed class TelegramNotificationMessageFormatterTests
     }
 
     [Fact]
+    public void Format_InvoiceIssued_LabelsGiftRecipientAndKeepsGiftPrice()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "InvoiceIssued",
+            "{\"OrderNumber\":\"ZS-GIFT-1\",\"InvoiceNumber\":\"INV-GIFT-1\",\"TotalAmount\":900000,\"Items\":[{\"RowNumber\":1,\"PerfumeEnglishName\":\"Gift Perfume\",\"PerfumePersianName\":\"عطر هدیه\",\"RequestedVolumeMl\":5,\"LineTotal\":900000,\"IsGift\":true,\"GiftRecipientUsername\":\"gift_receiver\"}]}" );
+
+        Assert.Contains("900,000", message);
+        Assert.Contains("هدیه برای: @gift_receiver", message);
+    }
+
+    [Fact]
+    public void Format_GiftInvoiceIssued_IsZeroAndNamesGiver()
+    {
+        var message = TelegramNotificationMessageFormatter.Format(
+            "GiftInvoiceIssued",
+            "{\"IssuedAt\":\"2026-08-30T12:00:00Z\",\"GiverUsername\":\"gift_giver\",\"PerfumeEnglishName\":\"Gift Perfume\",\"PerfumePersianName\":\"عطر هدیه\",\"RequestedVolumeMl\":5,\"TotalAmount\":0}");
+
+        Assert.Contains("فاکتور هدیه", message);
+        Assert.Contains("از طرف: @gift_giver", message);
+        Assert.Contains("5 میلی‌لیتر", message);
+        Assert.Contains("۰ تومان", message);
+        Assert.False(message.Contains("شماره کارت", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Format_OrderReadyToShip_IncludesOrderNumber()
     {
         var message = TelegramNotificationMessageFormatter.Format(

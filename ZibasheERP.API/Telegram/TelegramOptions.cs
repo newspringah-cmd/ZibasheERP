@@ -22,4 +22,6 @@ public sealed class TelegramOptions
     public int PollIntervalSeconds { get; set; } = 10;
     public int BatchSize { get; set; } = 20;
     public int MaxAttempts { get; set; } = 5;
+    public int MessageDelayMilliseconds { get; set; } = 1000;
+    public int RecipientDelayMilliseconds { get; set; } = 2000;
 }

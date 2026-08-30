@@ -97,7 +97,9 @@ builder.Services.AddOptions<TelegramOptions>()
          (long.TryParse(options.InventoryChatId, out var inventoryChatId) && inventoryChatId != 0)) &&
         options.PollIntervalSeconds is >= 1 and <= 300 &&
          options.BatchSize is >= 1 and <= 100 &&
-         options.MaxAttempts is >= 1 and <= 20),
+         options.MaxAttempts is >= 1 and <= 20 &&
+         options.MessageDelayMilliseconds is >= 0 and <= 10000 &&
+         options.RecipientDelayMilliseconds is >= 0 and <= 30000),
         "Enabled Telegram integration has invalid or missing settings. Production also requires a valid AdminChatId.")
     .ValidateOnStart();
 builder.Services.AddOptions<ApiKeyOptions>()

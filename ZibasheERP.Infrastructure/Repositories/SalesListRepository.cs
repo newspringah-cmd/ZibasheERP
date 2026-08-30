@@ -61,6 +61,15 @@ public class SalesListRepository : ISalesListRepository
             .ToArrayAsync(cancellationToken);
     }
 
+    public Task<SalesList?> GetLatestByPerfumeIdAsync(
+        Guid perfumeId,
+        CancellationToken cancellationToken = default) =>
+        _dbContext.SalesLists
+            .AsNoTracking()
+            .Where(salesList => !salesList.IsDeleted && salesList.PerfumeId == perfumeId)
+            .OrderByDescending(salesList => salesList.OpenDate)
+            .FirstOrDefaultAsync(cancellationToken);
+
     public Task<bool> HasActiveForBatchAsync(
         Guid batchId,
         CancellationToken cancellationToken = default) =>

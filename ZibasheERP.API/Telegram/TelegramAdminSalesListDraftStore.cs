@@ -24,6 +24,7 @@ public enum TelegramAdminSalesListStage
     AwaitingBottleOwnerVolume,
     AwaitingNotes,
     AwaitingPhoto,
+    ReviewingExistingPerfume,
     Preview
 }
 
@@ -54,6 +55,8 @@ public sealed class TelegramAdminSalesListDraft
     public string? Notes { get; set; }
     public string? PhotoFileId { get; set; }
     public Guid? SalesListId { get; set; }
+    public bool IsReviewingExistingPerfume { get; set; }
+    public int ReviewFieldIndex { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

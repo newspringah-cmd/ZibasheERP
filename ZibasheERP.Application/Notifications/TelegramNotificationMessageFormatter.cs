@@ -43,12 +43,29 @@ public static class TelegramNotificationMessageFormatter
                    $"لطفاً گروه مشتری را بسازید، ربات را اضافه کنید و داخل گروه بفرستید:\n" +
                    $"/connect {invoiceNumber}";
         }
+        if (eventType == "InvoiceGiftDeliveryRequiresManualAction")
+        {
+            var recipientUsername = ReadString(root, "RecipientUsername");
+            var recipient = string.IsNullOrWhiteSpace(recipientUsername)
+                ? ReadString(root, "RecipientTelegramId") ?? "نامشخص"
+                : $"@{recipientUsername.Trim().TrimStart('@')}";
+            var giverUsername = ReadString(root, "GiverUsername");
+            var giver = string.IsNullOrWhiteSpace(giverUsername)
+                ? ReadString(root, "GiverTelegramId") ?? "نامشخص"
+                : $"@{giverUsername.Trim().TrimStart('@')}";
+            return $"⚠️ فاکتور هدیه به گیرنده ارسال نشد\n" +
+                   $"گیرنده: {recipient}\n" +
+                   $"هدیه‌دهنده: {giver}\n" +
+                   $"شماره فاکتور مالی: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}\n\n" +
+                   "گروه فعال هدیه‌گیرنده شناسایی نشد؛ پس از اتصال گروه، پیام هدیه را دستی بررسی و ارسال کنید.";
+        }
         var orderNumber = ReadString(root, "OrderNumber") ?? "نامشخص";
 
         return eventType switch
         {
             "OrderPaid" => $"پرداخت سفارش {orderNumber} با موفقیت تأیید شد.",
             "InvoiceIssued" => FormatInvoice(root, orderNumber),
+            "GiftInvoiceIssued" => FormatGiftInvoice(root),
             "OrderDecanted" => $"دکانت سفارش {orderNumber} انجام شد و سفارش در حال آماده‌سازی است.",
             "OrderReadyToShip" => $"سفارش {orderNumber} آماده ارسال است.",
             "OrderCancelled" => $"سفارش {orderNumber} لغو شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
@@ -102,6 +119,15 @@ public static class TelegramNotificationMessageFormatter
                     .AppendLine($"مبلغ عطر و شیشه: {ReadDecimal(item, "LineTotal"):N0} تومان")
                     .AppendLine();
 
+                if (ReadBoolean(item, "IsGift"))
+                {
+                    var recipient = ReadString(item, "GiftRecipientUsername");
+                    recipient = string.IsNullOrWhiteSpace(recipient)
+                        ? ReadString(item, "GiftRecipientTelegramId")
+                        : $"@{recipient.Trim().TrimStart('@')}";
+                    builder.AppendLine($"🎁 هدیه برای: {recipient ?? "گیرنده نامشخص"}").AppendLine();
+                }
+
                 if (builder.Length > 3200)
                 {
                     builder.AppendLine("… ادامه ردیف‌ها در نسخه PDF");
@@ -130,6 +156,26 @@ public static class TelegramNotificationMessageFormatter
             .Append("مهلت پرداخت فاکتور: ۲۴ ساعت");
 
         return builder.ToString();
+    }
+
+    private static string FormatGiftInvoice(JsonElement root)
+    {
+        var giver = ReadString(root, "GiverUsername");
+        giver = string.IsNullOrWhiteSpace(giver)
+            ? ReadString(root, "GiverTelegramId") ?? "کاربر زیباشی"
+            : $"@{giver.Trim().TrimStart('@')}";
+        return new StringBuilder()
+            .AppendLine("🎁 فاکتور هدیه زیباشی")
+            .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
+            .AppendLine($"از طرف: {giver}")
+            .AppendLine()
+            .AppendLine($"نام انگلیسی: {ReadString(root, "PerfumeEnglishName") ?? "عطر"}")
+            .AppendLine($"نام فارسی: {ReadString(root, "PerfumePersianName") ?? "عطر"}")
+            .AppendLine($"مقدار: {ReadInt(root, "RequestedVolumeMl")} میلی‌لیتر")
+            .AppendLine("مبلغ قابل پرداخت: ۰ تومان")
+            .AppendLine()
+            .Append("این عطر از طرف هدیه‌دهنده برای شما ثبت شده است 🌹")
+            .ToString();
     }
 
     private static string FormatCard(string value)
@@ -161,6 +207,11 @@ public static class TelegramNotificationMessageFormatter
         root.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var result)
             ? result
             : 0;
+
+    private static bool ReadBoolean(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind is JsonValueKind.True or JsonValueKind.False &&
+        value.GetBoolean();
 
     private static DateTime? ReadDateTime(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String &&

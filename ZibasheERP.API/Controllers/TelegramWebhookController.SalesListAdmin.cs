@@ -8,6 +8,47 @@ namespace ZibasheERP.API.Controllers;
 
 public sealed partial class TelegramWebhookController
 {
+    private static readonly TelegramAdminSalesListStage[] ExistingReviewStages =
+    [
+        TelegramAdminSalesListStage.AwaitingEnglishName,
+        TelegramAdminSalesListStage.AwaitingProductPageUrl,
+        TelegramAdminSalesListStage.AwaitingBrand,
+        TelegramAdminSalesListStage.AwaitingGender,
+        TelegramAdminSalesListStage.AwaitingReleaseYear,
+        TelegramAdminSalesListStage.AwaitingPersianName,
+        TelegramAdminSalesListStage.AwaitingTopNotes,
+        TelegramAdminSalesListStage.AwaitingMiddleNotes,
+        TelegramAdminSalesListStage.AwaitingBaseNotes,
+        TelegramAdminSalesListStage.AwaitingAccords,
+        TelegramAdminSalesListStage.AwaitingPrice,
+        TelegramAdminSalesListStage.AwaitingVolume,
+        TelegramAdminSalesListStage.AwaitingMinimumVolume
+    ];
+
+    private static readonly string[] ExistingReviewLabels =
+    [
+        "نام انگلیسی", "لینک صفحه عطر", "برند", "جنسیت", "سال تولید",
+        "نام فارسی", "نت‌های ابتدایی", "نت‌های میانی", "نت‌های پایانی",
+        "آکوردهای اصلی", "قیمت هر میل", "حجم کل", "حداقل حجم درخواست"
+    ];
+
+    private static readonly string[] ExistingEditPrompts =
+    [
+        "نام انگلیسی جدید را وارد کنید.",
+        "لینک کامل و جدید صفحه عطر را وارد کنید؛ باید با https:// شروع شود.",
+        "نام جدید برند را به انگلیسی وارد کنید.",
+        "جنسیت را وارد کنید: زنانه، مردانه یا یونیسکس",
+        "سال تولید جدید را میلادی وارد کنید.",
+        "نام فارسی جدید عطر را وارد کنید.",
+        "نت‌های ابتدایی جدید را به فارسی وارد کنید.",
+        "نت‌های میانی جدید را به فارسی وارد کنید.",
+        "نت‌های پایانی جدید را به فارسی وارد کنید.",
+        "آکوردهای اصلی جدید را به فارسی وارد کنید.",
+        "قیمت جدید هر میل را به تومان وارد کنید.",
+        "حجم کل لیست جدید را به میل وارد کنید.",
+        "حداقل حجم قابل درخواست مشتری را وارد کنید."
+    ];
+
     private async Task<bool> TryHandleAdminSalesListCallbackAsync(
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
@@ -51,6 +92,28 @@ public sealed partial class TelegramWebhookController
 
             case "perfume" when parts.Length == 3 && Guid.TryParseExact(parts[2], "N", out var perfumeId):
                 await StartSalesListDraftAsync(callback, perfumeId, cancellationToken);
+                return true;
+
+            case "review" when parts.Length == 3 && parts[2] is "keep" or "edit":
+                if (!_adminSalesListDrafts.TryGet(chatId, userId, out var reviewDraft) ||
+                    !reviewDraft.IsReviewingExistingPerfume ||
+                    reviewDraft.Stage != TelegramAdminSalesListStage.ReviewingExistingPerfume)
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "فرایند بازبینی منقضی شده است.", cancellationToken);
+                    return true;
+                }
+                if (parts[2] == "edit")
+                {
+                    reviewDraft.Stage = ExistingReviewStages[reviewDraft.ReviewFieldIndex];
+                    _adminSalesListDrafts.Set(reviewDraft);
+                    await _sender.AnswerCallbackAsync(callback.Id, "مقدار جدید را وارد کنید.", cancellationToken);
+                    await ReplyAsync(chatId, ExistingEditPrompts[reviewDraft.ReviewFieldIndex], cancellationToken);
+                    return true;
+                }
+                reviewDraft.ReviewFieldIndex++;
+                _adminSalesListDrafts.Set(reviewDraft);
+                await _sender.AnswerCallbackAsync(callback.Id, "تأیید شد ✅", cancellationToken);
+                await SendExistingPerfumeReviewAsync(reviewDraft, cancellationToken);
                 return true;
 
             case "owner" when parts.Length == 3 && parts[2] is "known" or "unknown":
@@ -142,6 +205,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingEnglishName:
                 draft.EnglishName = Limit(input, 200);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingProductPageUrl;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "لینک کامل صفحه عطر در سایت عطردان را وارد کنید؛ باید با https:// شروع شود.", cancellationToken);
@@ -154,6 +218,7 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.ProductPageUrl = Limit(productUri.ToString(), 500);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBrand;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "نام برند را به انگلیسی وارد کنید؛ مثال: Chanel", cancellationToken);
@@ -161,6 +226,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingBrand:
                 draft.DisplayBrand = Limit(input, 150);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingGender;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "جنسیت عطر را وارد کنید: زنانه، مردانه یا یونیسکس", cancellationToken);
@@ -173,6 +239,7 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.Gender = gender;
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingReleaseYear;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "سال تولید عطر را میلادی وارد کنید؛ مثال: 2021", cancellationToken);
@@ -185,6 +252,7 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.ReleaseYear = releaseYear;
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingPersianName;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "نام فارسی عطر را وارد کنید.", cancellationToken);
@@ -192,6 +260,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingPersianName:
                 draft.PersianName = Limit(input, 200);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingTopNotes;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "نت‌های ابتدایی را به فارسی وارد کنید.", cancellationToken);
@@ -199,6 +268,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingTopNotes:
                 draft.TopNotes = Limit(input, 500);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingMiddleNotes;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "نت‌های میانی را به فارسی وارد کنید.", cancellationToken);
@@ -206,6 +276,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingMiddleNotes:
                 draft.MiddleNotes = Limit(input, 500);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBaseNotes;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "نت‌های پایانی را به فارسی وارد کنید.", cancellationToken);
@@ -213,6 +284,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingBaseNotes:
                 draft.BaseNotes = Limit(input, 500);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingAccords;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "آکوردهای اصلی را به فارسی وارد کنید.", cancellationToken);
@@ -220,6 +292,7 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingAccords:
                 draft.Accords = Limit(input, 500);
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingPrice;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "قیمت فروش هر میل را به تومان وارد کنید؛ مثال: 150000", cancellationToken);
@@ -232,6 +305,7 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.PricePerMl = price;
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingVolume;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "برای باز کردن لیست جدید، حجم کل را به میل وارد کنید؛ مثال: 100", cancellationToken);
@@ -244,6 +318,7 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.TotalVolume = volume;
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingMinimumVolume;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "حداقل حجم قابل درخواست مشتری را وارد کنید؛ مثال: 1", cancellationToken);
@@ -256,6 +331,7 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
                 draft.MinimumRequestVolumeMl = minimumVolume;
+                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBottleOwnerChoice;
                 _adminSalesListDrafts.Set(draft);
                 await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
@@ -376,6 +452,10 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
+        var previousList = await _salesListRepository.GetLatestByPerfumeIdAsync(
+            perfume.Id,
+            cancellationToken);
+
         var draft = new TelegramAdminSalesListDraft
         {
             ChatId = callback.Message!.Chat.Id,
@@ -385,12 +465,116 @@ public sealed partial class TelegramWebhookController
             Brand = perfume.Brand,
             EnglishName = perfume.EnglishName,
             DisplayBrand = perfume.Brand,
-            PersianName = perfume.Name
+            PersianName = perfume.Name,
+            Stage = TelegramAdminSalesListStage.AwaitingEnglishName
         };
+
+        if (previousList is not null)
+        {
+            draft.EnglishName = previousList.EnglishName;
+            draft.ProductPageUrl = previousList.ProductPageUrl;
+            draft.DisplayBrand = previousList.DisplayBrand;
+            draft.Gender = (int)previousList.Gender;
+            draft.ReleaseYear = previousList.ReleaseYear;
+            draft.PersianName = previousList.PersianName;
+            draft.TopNotes = previousList.TopNotes;
+            draft.MiddleNotes = previousList.MiddleNotes;
+            draft.BaseNotes = previousList.BaseNotes;
+            draft.Accords = previousList.Accords;
+            draft.PricePerMl = previousList.PricePerMl;
+            draft.TotalVolume = previousList.TotalVolume;
+            draft.MinimumRequestVolumeMl = previousList.MinimumRequestVolumeMl;
+            draft.Notes = previousList.Notes;
+            draft.IsReviewingExistingPerfume = true;
+            draft.ReviewFieldIndex = 0;
+            draft.Stage = TelegramAdminSalesListStage.ReviewingExistingPerfume;
+        }
+
         _adminSalesListDrafts.Set(draft);
         await _sender.AnswerCallbackAsync(callback.Id, "عطر انتخاب شد.", cancellationToken);
+
+        if (previousList is not null)
+        {
+            await ReplyAsync(draft.ChatId,
+                $"عطر «{perfume.EnglishName} — {perfume.Brand}» قبلاً ثبت شده است. اطلاعات آخرین لیست را یکی‌یکی بررسی کنید.",
+                cancellationToken);
+            await SendExistingPerfumeReviewAsync(draft, cancellationToken);
+            return;
+        }
+
         await ReplyAsync(draft.ChatId, $"عطر «{perfume.EnglishName} — {perfume.Brand}» انتخاب شد.\nنام انگلیسی عطر را وارد کنید.", cancellationToken);
     }
+
+    private async Task<bool> ContinueExistingPerfumeReviewAsync(
+        TelegramAdminSalesListDraft draft,
+        long chatId,
+        CancellationToken cancellationToken)
+    {
+        if (!draft.IsReviewingExistingPerfume)
+            return false;
+
+        draft.ReviewFieldIndex++;
+        draft.Stage = TelegramAdminSalesListStage.ReviewingExistingPerfume;
+        _adminSalesListDrafts.Set(draft);
+        await ReplyAsync(chatId, "اصلاح شد ✅", cancellationToken);
+        await SendExistingPerfumeReviewAsync(draft, cancellationToken);
+        return true;
+    }
+
+    private async Task SendExistingPerfumeReviewAsync(
+        TelegramAdminSalesListDraft draft,
+        CancellationToken cancellationToken)
+    {
+        if (draft.ReviewFieldIndex >= ExistingReviewStages.Length)
+        {
+            draft.IsReviewingExistingPerfume = false;
+            draft.Stage = TelegramAdminSalesListStage.AwaitingBottleOwnerChoice;
+            _adminSalesListDrafts.Set(draft);
+            await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
+                "اطلاعات قبلی بررسی شد ✅\nصاحب باتل این لیست مشخص است؟",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("👑 ثبت صاحب باتل", "adminlist:owner:known") },
+                    new[] { new TelegramInlineButton("فعلاً مشخص نیست", "adminlist:owner:unknown") }
+                }, cancellationToken);
+            return;
+        }
+
+        draft.Stage = TelegramAdminSalesListStage.ReviewingExistingPerfume;
+        _adminSalesListDrafts.Set(draft);
+        var index = draft.ReviewFieldIndex;
+        var text = $"بررسی اطلاعات قبلی — {index + 1} از {ExistingReviewStages.Length}\n\n" +
+                   $"{ExistingReviewLabels[index]}:\n{ExistingReviewValue(draft, index)}\n\n" +
+                   "این مقدار صحیح است؟";
+        await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(), text,
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[]
+                {
+                    new TelegramInlineButton("✅ تأیید", "adminlist:review:keep"),
+                    new TelegramInlineButton("✏️ اصلاح", "adminlist:review:edit")
+                },
+                new[] { new TelegramInlineButton("❌ لغو", "adminlist:cancel") }
+            }, cancellationToken);
+    }
+
+    private static string ExistingReviewValue(TelegramAdminSalesListDraft draft, int index) => index switch
+    {
+        0 => draft.EnglishName,
+        1 => draft.ProductPageUrl,
+        2 => draft.DisplayBrand,
+        3 => GenderLabel(draft.Gender),
+        4 => draft.ReleaseYear.ToString(CultureInfo.InvariantCulture),
+        5 => draft.PersianName,
+        6 => draft.TopNotes,
+        7 => draft.MiddleNotes,
+        8 => draft.BaseNotes,
+        9 => draft.Accords,
+        10 => $"{draft.PricePerMl:N0} تومان",
+        11 => $"{draft.TotalVolume:N0} میل",
+        12 => $"{draft.MinimumRequestVolumeMl:N0} میل",
+        _ => "—"
+    };
 
     private async Task SendSalesListPreviewAsync(
         TelegramAdminSalesListDraft draft,

@@ -103,6 +103,9 @@ public sealed class IssueInvoiceCommandHandler
                     item.RequestedVolumeMl,
                     item.PerfumeAmount,
                     item.IsBottleOwner,
+                    IsGift = item.SourceSalesListRequest?.IsGift == true,
+                    GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername,
+                    GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId,
                     BottleName = item.Bottle?.Name,
                     item.BottlePrice,
                     item.LineTotal
@@ -131,7 +134,8 @@ public sealed class IssueInvoiceCommandHandler
                 Payload = "{}"
             }, cancellationToken);
             foreach (var photo in order.Items
-                         .Where(item => !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+                         .Where(item => item.SourceSalesListRequest?.IsGift != true &&
+                                        !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
                          .Select(item => new
                          {
                              FileId = item.SalesList!.TelegramPhotoFileId!,
@@ -212,6 +216,9 @@ public sealed class IssueInvoiceCommandHandler
                     item.PerfumePricePerMl,
                     item.PerfumeAmount,
                     item.IsBottleOwner,
+                    IsGift = item.SourceSalesListRequest?.IsGift == true,
+                    GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername,
+                    GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId,
                     BottleName = item.Bottle?.Name,
                     item.BottlePrice,
                     item.LineTotal
