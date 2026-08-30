@@ -40,7 +40,7 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         Assert.Equal(OrderArtifactType.InvoicePdf.ToString(), first.Type);
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(1, artifacts.AddCount);
-        Assert.Empty(outbox.Added);
+        Assert.Equal(0, outbox.Added.Count);
     }
 
     [Fact]
