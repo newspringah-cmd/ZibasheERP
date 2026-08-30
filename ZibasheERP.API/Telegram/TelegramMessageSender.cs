@@ -214,7 +214,10 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string chatId,
         CancellationToken cancellationToken = default)
     {
-        var commands = await SendRequestAsync(
+        if (!long.TryParse(chatId, out var numericChatId) || numericChatId == 0)
+            return new TelegramSendResult(false, "Telegram admin chat ID is invalid.");
+
+        return await SendRequestAsync(
             "setMyCommands",
             new
             {
@@ -222,18 +225,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 {
                     new { command = "admin", description = "⚙️ پنل مدیریت" }
                 },
-                scope = new { type = "chat", chat_id = chatId }
-            },
-            cancellationToken);
-        if (!commands.IsSuccessful)
-            return commands;
-
-        return await SendRequestAsync(
-            "setChatMenuButton",
-            new
-            {
-                chat_id = chatId,
-                menu_button = new { type = "commands" }
+                scope = new { type = "chat", chat_id = numericChatId }
             },
             cancellationToken);
     }
