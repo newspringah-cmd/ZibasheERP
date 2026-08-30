@@ -143,8 +143,7 @@
         "binaryData": true,
         "binaryPropertyName": "data",
         "additionalFields": {
-          "caption": "={{ $('Build Invoice HTML').first().json.telegramCaption }}",
-          "replyToMessageId": "={{ $('Build Invoice HTML').first().json.data.Delivery.ReplyToMessageId }}"
+          "caption": "={{ $('Build Invoice HTML').first().json.telegramCaption }}"
         }
       }
     },

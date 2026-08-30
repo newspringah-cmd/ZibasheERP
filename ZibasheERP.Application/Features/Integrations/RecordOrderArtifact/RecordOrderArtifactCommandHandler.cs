@@ -1,4 +1,5 @@
 using MediatR;
+using System.Text.Json;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 
@@ -67,6 +68,24 @@ public sealed class RecordOrderArtifactCommandHandler
             DeliveredAt = now
         };
         await _artifactRepository.AddAsync(artifact, cancellationToken);
+        if (request.Type == OrderArtifactType.InvoicePdf)
+        {
+            var recipient = ReadTelegramDeliveryChatId(sourceEvent.Payload);
+            if (recipient is not null)
+            {
+                await _outboxRepository.AddAsync(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(),
+                    CreatedAt = now,
+                    CustomerId = sourceEvent.CustomerId,
+                    OrderId = request.OrderId,
+                    Channel = "Telegram",
+                    EventType = "InvoiceIssued",
+                    Recipient = recipient,
+                    Payload = sourceEvent.Payload
+                }, cancellationToken);
+            }
+        }
         await _artifactRepository.SaveChangesAsync(cancellationToken);
         if (request.Type == OrderArtifactType.InvoicePdf)
         {
@@ -100,6 +119,20 @@ public sealed class RecordOrderArtifactCommandHandler
         if (normalized.Length > maxLength)
             throw new InvalidOperationException($"{field} بیش از حد طولانی است.");
         return normalized;
+    }
+
+    private static string? ReadTelegramDeliveryChatId(string payload)
+    {
+        using var document = JsonDocument.Parse(payload);
+        if (!document.RootElement.TryGetProperty("Delivery", out var delivery) ||
+            delivery.ValueKind != JsonValueKind.Object ||
+            !delivery.TryGetProperty("ChatId", out var chatId) ||
+            chatId.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(chatId.GetString()))
+        {
+            return null;
+        }
+        return chatId.GetString()!.Trim();
     }
 
     private static OrderArtifactResponse Map(OrderArtifact artifact) => new(

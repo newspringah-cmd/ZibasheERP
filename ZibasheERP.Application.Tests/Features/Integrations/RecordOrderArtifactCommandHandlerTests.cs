@@ -14,14 +14,17 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         var source = new NotificationOutbox
         {
             Id = Guid.NewGuid(),
+            CustomerId = Guid.NewGuid(),
             OrderId = orderId,
             Channel = "N8n",
-            EventType = "InvoiceIssued"
+            EventType = "InvoiceIssued",
+            Payload = "{\"Delivery\":{\"ChatId\":\"-1001234567890\"}}"
         };
         var artifacts = new ArtifactRepositoryStub();
+        var outbox = new OutboxRepositoryStub(source);
         var handler = new RecordOrderArtifactCommandHandler(
             artifacts,
-            new OutboxRepositoryStub(source),
+            outbox,
             new InvoiceRepositoryStub());
         var command = new RecordOrderArtifactCommand(
             source.Id,
@@ -37,6 +40,11 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         Assert.Equal(OrderArtifactType.InvoicePdf.ToString(), first.Type);
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(1, artifacts.AddCount);
+        Assert.Equal(1, outbox.Added.Count);
+        var invoiceMessage = outbox.Added.Single();
+        Assert.Equal("Telegram", invoiceMessage.Channel);
+        Assert.Equal("InvoiceIssued", invoiceMessage.EventType);
+        Assert.Equal("-1001234567890", invoiceMessage.Recipient);
     }
 
     [Fact]
@@ -86,7 +94,12 @@ public sealed class RecordOrderArtifactCommandHandlerTests
 
     private sealed class OutboxRepositoryStub(NotificationOutbox source) : INotificationOutboxRepository
     {
-        public Task AddAsync(NotificationOutbox notification, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public List<NotificationOutbox> Added { get; } = [];
+        public Task AddAsync(NotificationOutbox notification, CancellationToken cancellationToken = default)
+        {
+            Added.Add(notification);
+            return Task.CompletedTask;
+        }
         public Task<IReadOnlyCollection<NotificationOutbox>> GetPendingAsync(string channel, int limit, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyCollection<NotificationOutbox>>(Array.Empty<NotificationOutbox>());
         public Task<NotificationOutbox?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>

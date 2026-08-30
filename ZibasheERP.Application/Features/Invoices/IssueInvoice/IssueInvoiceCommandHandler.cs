@@ -153,8 +153,6 @@ public sealed class IssueInvoiceCommandHandler
                     Payload = System.Text.Json.JsonSerializer.Serialize(photo)
                 }, cancellationToken);
             }
-            notification.CreatedAt = now.AddTicks(sequence);
-            await _outboxRepository.AddAsync(notification, cancellationToken);
         }
         if (!hasDeliveryGroup)
         {
@@ -220,13 +218,6 @@ public sealed class IssueInvoiceCommandHandler
                 })
             },
             now);
-        if (hasDeliveryGroup)
-        {
-            // The Telegram worker releases this event after the invoice message is sent and
-            // its message_id has been added to Delivery.ReplyToMessageId. This guarantees
-            // that the PDF is posted as a reply to the matching invoice message.
-            integrationEvent.NextAttemptAt = now.AddDays(1);
-        }
         await _outboxRepository.AddAsync(integrationEvent, cancellationToken);
         await _invoiceRepository.SaveChangesAsync(cancellationToken);
 

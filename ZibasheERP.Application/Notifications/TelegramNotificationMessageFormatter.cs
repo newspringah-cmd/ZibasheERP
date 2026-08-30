@@ -63,6 +63,12 @@ public static class TelegramNotificationMessageFormatter
     private static string FormatInvoice(JsonElement root, string orderNumber)
     {
         var username = ReadString(root, "CustomerUsername");
+        if (string.IsNullOrWhiteSpace(username) &&
+            root.TryGetProperty("Customer", out var customer) &&
+            customer.ValueKind == JsonValueKind.Object)
+        {
+            username = ReadString(customer, "Username");
+        }
         var title = string.IsNullOrWhiteSpace(username)
             ? "فاکتور عطر"
             : $"فاکتور عطر — @{username.Trim().TrimStart('@')}";
@@ -121,8 +127,7 @@ public static class TelegramNotificationMessageFormatter
         }
 
         builder.AppendLine("با تشکر از خرید شما")
-            .AppendLine("مهلت پرداخت فاکتور: ۲۴ ساعت")
-            .Append("📎 فایل PDF همراه همین فاکتور ارسال می‌شود.");
+            .Append("مهلت پرداخت فاکتور: ۲۴ ساعت");
 
         return builder.ToString();
     }
