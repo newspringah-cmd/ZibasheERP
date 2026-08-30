@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using ZibasheERP.Infrastructure.Persistence;
 namespace ZibasheERP.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260829230408_AddInvoiceTelegramSettingsAndPaymentTracking")]
+    partial class AddInvoiceTelegramSettingsAndPaymentTracking
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -863,9 +866,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<Guid?>("SalesListId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid?>("SourceSalesListRequestId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
@@ -878,8 +878,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasIndex("PerfumeId");
 
                     b.HasIndex("SalesListId");
-
-                    b.HasIndex("SourceSalesListRequestId");
 
                     b.ToTable("OrderItems");
                 });
@@ -1028,13 +1026,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<Guid?>("FixedBottleId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<decimal?>("FixedBottlePrice")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
                     b.Property<int>("Gender")
                         .HasColumnType("int");
 
@@ -1042,9 +1033,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasColumnType("bit");
 
                     b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("IsInventoryOffer")
                         .HasColumnType("bit");
 
                     b.Property<string>("MiddleNotes")
@@ -1094,9 +1082,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
-                    b.Property<Guid?>("SourceOrderItemId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
@@ -1134,17 +1119,11 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasIndex("BottleOwnerCustomerId");
 
-                    b.HasIndex("FixedBottleId");
-
                     b.HasIndex("PerfumeId");
 
                     b.HasIndex("PublicCode")
                         .IsUnique()
                         .HasFilter("[PublicCode] > 0");
-
-                    b.HasIndex("SourceOrderItemId")
-                        .IsUnique()
-                        .HasFilter("[SourceOrderItemId] IS NOT NULL");
 
                     b.ToTable("SalesLists");
                 });
@@ -1431,7 +1410,7 @@ namespace ZibasheERP.Infrastructure.Migrations
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Invoice", b =>
                 {
                     b.HasOne("ZibasheERP.Domain.Entities.Order", "Order")
-                        .WithMany("Invoices")
+                        .WithMany()
                         .HasForeignKey("OrderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
@@ -1524,11 +1503,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasForeignKey("SalesListId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("ZibasheERP.Domain.Entities.SalesListRequest", "SourceSalesListRequest")
-                        .WithMany()
-                        .HasForeignKey("SourceSalesListRequestId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.Navigation("Bottle");
 
                     b.Navigation("Order");
@@ -1536,8 +1510,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Navigation("Perfume");
 
                     b.Navigation("SalesList");
-
-                    b.Navigation("SourceSalesListRequest");
                 });
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Payment", b =>
@@ -1563,11 +1535,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasForeignKey("BottleOwnerCustomerId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("ZibasheERP.Domain.Entities.Bottle", "FixedBottle")
-                        .WithMany()
-                        .HasForeignKey("FixedBottleId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("ZibasheERP.Domain.Entities.Perfume", "Perfume")
                         .WithMany()
                         .HasForeignKey("PerfumeId")
@@ -1577,8 +1544,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Navigation("Batch");
 
                     b.Navigation("BottleOwnerCustomer");
-
-                    b.Navigation("FixedBottle");
 
                     b.Navigation("Perfume");
                 });
@@ -1630,8 +1595,6 @@ namespace ZibasheERP.Infrastructure.Migrations
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Order", b =>
                 {
-                    b.Navigation("Invoices");
-
                     b.Navigation("Items");
 
                     b.Navigation("Payments");

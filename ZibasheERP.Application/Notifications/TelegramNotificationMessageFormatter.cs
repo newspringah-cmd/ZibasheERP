@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
 
 namespace ZibasheERP.Application.Notifications;
 
@@ -67,8 +68,10 @@ public static class TelegramNotificationMessageFormatter
             : $"فاکتور عطر — @{username.Trim().TrimStart('@')}";
         var builder = new StringBuilder()
             .AppendLine($"🧾 {title}")
+            .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
             .AppendLine($"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}")
             .AppendLine($"شماره سفارش: {orderNumber}")
+            .AppendLine("وضعیت پرداخت: ⏳ در انتظار پرداخت")
             .AppendLine();
 
         if (root.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array)
@@ -77,15 +80,22 @@ public static class TelegramNotificationMessageFormatter
             {
                 var rowNumber = ReadInt(item, "RowNumber");
                 var brand = ReadString(item, "PerfumeBrand");
-                var name = ReadString(item, "PerfumeName");
-                var perfume = string.Join(' ', new[] { brand, name }
+                var englishName = ReadString(item, "PerfumeEnglishName") ?? ReadString(item, "PerfumeName");
+                var persianName = ReadString(item, "PerfumePersianName") ?? ReadString(item, "PerfumeName");
+                var englishTitle = string.Join(' ', new[] { brand, englishName }
                     .Where(value => !string.IsNullOrWhiteSpace(value)));
-                if (string.IsNullOrWhiteSpace(perfume))
-                    perfume = "آیتم دستی";
+                if (string.IsNullOrWhiteSpace(englishTitle))
+                    englishTitle = "آیتم دستی";
+                if (string.IsNullOrWhiteSpace(persianName))
+                    persianName = "آیتم دستی";
 
-                builder.AppendLine(
-                    $"{rowNumber}. {perfume} — {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر — " +
-                    $"{ReadDecimal(item, "LineTotal"):N0} تومان");
+                builder
+                    .AppendLine($"{rowNumber}.")
+                    .AppendLine($"نام انگلیسی: {englishTitle}")
+                    .AppendLine($"نام فارسی: {persianName}")
+                    .AppendLine($"مقدار: {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر")
+                    .AppendLine($"مبلغ عطر و شیشه: {ReadDecimal(item, "LineTotal"):N0} تومان")
+                    .AppendLine();
 
                 if (builder.Length > 3200)
                 {
@@ -94,13 +104,10 @@ public static class TelegramNotificationMessageFormatter
                 }
             }
 
-            builder.AppendLine();
         }
 
         builder
-            .AppendLine($"جمع عطر: {ReadDecimal(root, "PerfumeTotal"):N0} تومان")
-            .AppendLine($"جمع شیشه: {ReadDecimal(root, "BottleTotal"):N0} تومان")
-            .AppendLine($"💰 مبلغ قابل پرداخت: {ReadDecimal(root, "TotalAmount"):N0} تومان")
+            .AppendLine($"💰 جمع عطر و شیشه: {ReadDecimal(root, "TotalAmount"):N0} تومان")
             .AppendLine();
 
         if (root.TryGetProperty("PaymentAccounts", out var accounts) && accounts.ValueKind == JsonValueKind.Array)
@@ -116,7 +123,7 @@ public static class TelegramNotificationMessageFormatter
 
         builder.AppendLine("با تشکر از خرید شما")
             .AppendLine("مهلت پرداخت فاکتور: ۲۴ ساعت")
-            .Append("نسخه PDF همین فاکتور نیز در گروه ارسال می‌شود.");
+            .Append("📎 فایل PDF همراه همین فاکتور ارسال می‌شود.");
 
         return builder.ToString();
     }
@@ -150,4 +157,39 @@ public static class TelegramNotificationMessageFormatter
         root.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var result)
             ? result
             : 0;
+
+    private static DateTime? ReadDateTime(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String &&
+        value.TryGetDateTime(out var result)
+            ? result
+            : null;
+
+    private static string FormatPersianDate(DateTime? value)
+    {
+        if (!value.HasValue)
+            return "نامشخص";
+
+        var utc = value.Value.Kind == DateTimeKind.Utc
+            ? value.Value
+            : value.Value.ToUniversalTime();
+        DateTime tehran;
+        try
+        {
+            tehran = TimeZoneInfo.ConvertTimeFromUtc(
+                utc,
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Tehran"));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            tehran = utc.AddHours(3.5);
+        }
+        catch (InvalidTimeZoneException)
+        {
+            tehran = utc.AddHours(3.5);
+        }
+
+        var calendar = new PersianCalendar();
+        return $"{calendar.GetYear(tehran):0000}/{calendar.GetMonth(tehran):00}/{calendar.GetDayOfMonth(tehran):00} " +
+               $"ساعت {tehran:HH:mm}";
+    }
 }

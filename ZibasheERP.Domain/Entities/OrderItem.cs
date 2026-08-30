@@ -11,6 +11,10 @@ public class OrderItem : BaseEntity
 
     public SalesList? SalesList { get; set; }
 
+    public Guid? SourceSalesListRequestId { get; set; }
+
+    public SalesListRequest? SourceSalesListRequest { get; set; }
+
     public Guid? PerfumeId { get; set; }
 
     public Perfume? Perfume { get; set; }

@@ -6,9 +6,9 @@
   "orderId": "33333333-3333-3333-3333-333333333333",
   "data": {
     "OrderId": "33333333-3333-3333-3333-333333333333",
-    "OrderNumber": "ORD-20260803-1001",
+    "OrderNumber": "ORD-260803-1001",
     "InvoiceId": "44444444-4444-4444-4444-444444444444",
-    "InvoiceNumber": "INV-20260803120000-1001",
+    "InvoiceNumber": "INV-260803-1001",
     "IssuedAt": "2026-08-03T12:00:00Z",
     "PerfumeTotal": 1500000,
     "BottleTotal": 150000,

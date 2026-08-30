@@ -163,6 +163,9 @@ public sealed class TelegramGroupMembershipTracker(
             .Include(value => value.Order)
                 .ThenInclude(value => value!.Items)
                     .ThenInclude(value => value.Bottle)
+            .Include(value => value.Order)
+                .ThenInclude(value => value!.Items)
+                    .ThenInclude(value => value.SalesList)
             .Where(value => !value.IsDeleted && value.Order != null && !value.Order.IsDeleted &&
                 value.Order.CustomerId == customerId &&
                 (value.DeliveryStatus == InvoiceDeliveryStatus.NeedsManualAction ||
@@ -193,10 +196,37 @@ public sealed class TelegramGroupMembershipTracker(
         foreach (var invoice in invoices.Where(value => !queuedSet.Contains(value.OrderId)))
         {
             var order = invoice.Order!;
+            var sequence = 0;
+            context.NotificationOutbox.Add(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                CustomerId = order.CustomerId, OrderId = order.Id,
+                Channel = "Telegram", EventType = "InvoiceGreeting", Recipient = chatId,
+                Payload = "{}"
+            });
+            foreach (var photo in order.Items
+                         .Where(item => !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+                         .Select(item => new
+                         {
+                             FileId = item.SalesList!.TelegramPhotoFileId!,
+                             PersianName = item.Perfume?.Name ?? item.ManualDescription,
+                             EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                         })
+                         .GroupBy(value => value.FileId)
+                         .Select(group => group.First()))
+            {
+                context.NotificationOutbox.Add(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                    CustomerId = order.CustomerId, OrderId = order.Id,
+                    Channel = "Telegram", EventType = "InvoicePerfumePhoto", Recipient = chatId,
+                    Payload = JsonSerializer.Serialize(photo)
+                });
+            }
             context.NotificationOutbox.Add(new NotificationOutbox
             {
                 Id = Guid.NewGuid(),
-                CreatedAt = now,
+                CreatedAt = now.AddTicks(sequence),
                 CustomerId = order.CustomerId,
                 OrderId = order.Id,
                 Channel = "Telegram",
@@ -206,7 +236,9 @@ public sealed class TelegramGroupMembershipTracker(
                 {
                     order.Id,
                     order.OrderNumber,
+                    InvoiceId = invoice.Id,
                     invoice.InvoiceNumber,
+                    invoice.IssuedAt,
                     invoice.PerfumeTotal,
                     invoice.BottleTotal,
                     invoice.TotalAmount,
@@ -216,7 +248,8 @@ public sealed class TelegramGroupMembershipTracker(
                     Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                     {
                         item.RowNumber,
-                        PerfumeName = item.Perfume?.Name ?? item.ManualDescription,
+                        PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                        PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
                         PerfumeBrand = item.Perfume?.Brand,
                         item.RequestedVolumeMl,
                         item.PerfumeAmount,

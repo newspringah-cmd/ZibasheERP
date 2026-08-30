@@ -19,6 +19,8 @@ public sealed class InvoiceIssuanceBatch : BaseEntity
     public InvoiceIssuanceBatchStatus Status { get; set; } = InvoiceIssuanceBatchStatus.Created;
     public DateTime? IssuedAt { get; set; }
     public string? Notes { get; set; }
+    public string? TelegramPaymentTrackingChatId { get; set; }
+    public long? TelegramPaymentTrackingMessageId { get; set; }
     public ICollection<InvoiceIssuanceBatchSalesList> SalesLists { get; set; } = new List<InvoiceIssuanceBatchSalesList>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
 }

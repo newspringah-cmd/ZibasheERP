@@ -36,10 +36,12 @@ public sealed class InvoiceRepository : IInvoiceRepository
         return _dbContext.Orders
             .Include(order => order.Customer)
                 .ThenInclude(customer => customer!.TelegramGroup)
-            .Include(order => order.Items)
+            .Include(order => order.Items.Where(item => !item.IsDeleted))
                 .ThenInclude(item => item.Perfume)
-            .Include(order => order.Items)
+            .Include(order => order.Items.Where(item => !item.IsDeleted))
                 .ThenInclude(item => item.Bottle)
+            .Include(order => order.Items.Where(item => !item.IsDeleted))
+                .ThenInclude(item => item.SalesList)
             .FirstOrDefaultAsync(
                 order => order.Id == orderId && !order.IsDeleted,
                 cancellationToken);
@@ -66,9 +68,9 @@ public sealed class InvoiceRepository : IInvoiceRepository
             .ThenInclude(order => order!.Customer)
                 .ThenInclude(customer => customer!.TelegramGroup)
         .Include(invoice => invoice.Order)
-            .ThenInclude(order => order!.Items)
+            .ThenInclude(order => order!.Items.Where(item => !item.IsDeleted))
                 .ThenInclude(item => item.Perfume)
         .Include(invoice => invoice.Order)
-            .ThenInclude(order => order!.Items)
+            .ThenInclude(order => order!.Items.Where(item => !item.IsDeleted))
                 .ThenInclude(item => item.Bottle);
 }

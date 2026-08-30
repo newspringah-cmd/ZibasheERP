@@ -82,7 +82,9 @@ public sealed class IssueInvoiceCommandHandler
             {
                 order.Id,
                 order.OrderNumber,
+                InvoiceId = invoice.Id,
                 invoice.InvoiceNumber,
+                invoice.IssuedAt,
                 invoice.PerfumeTotal,
                 invoice.BottleTotal,
                 invoice.TotalAmount,
@@ -95,7 +97,8 @@ public sealed class IssueInvoiceCommandHandler
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
-                    PerfumeName = item.Perfume?.Name ?? item.ManualDescription,
+                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
                     PerfumeBrand = item.Perfume?.Brand,
                     item.RequestedVolumeMl,
                     item.PerfumeAmount,
@@ -114,7 +117,45 @@ public sealed class IssueInvoiceCommandHandler
                 notification = null;
         }
         if (notification is not null)
+        {
+            var sequence = 0;
+            await _outboxRepository.AddAsync(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = now.AddTicks(sequence++),
+                CustomerId = order.CustomerId,
+                OrderId = order.Id,
+                Channel = "Telegram",
+                EventType = "InvoiceGreeting",
+                Recipient = notification.Recipient,
+                Payload = "{}"
+            }, cancellationToken);
+            foreach (var photo in order.Items
+                         .Where(item => !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+                         .Select(item => new
+                         {
+                             FileId = item.SalesList!.TelegramPhotoFileId!,
+                             PersianName = item.Perfume?.Name ?? item.ManualDescription,
+                             EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                         })
+                         .GroupBy(value => value.FileId)
+                         .Select(group => group.First()))
+            {
+                await _outboxRepository.AddAsync(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(),
+                    CreatedAt = now.AddTicks(sequence++),
+                    CustomerId = order.CustomerId,
+                    OrderId = order.Id,
+                    Channel = "Telegram",
+                    EventType = "InvoicePerfumePhoto",
+                    Recipient = notification.Recipient,
+                    Payload = System.Text.Json.JsonSerializer.Serialize(photo)
+                }, cancellationToken);
+            }
+            notification.CreatedAt = now.AddTicks(sequence);
             await _outboxRepository.AddAsync(notification, cancellationToken);
+        }
         if (!hasDeliveryGroup)
         {
             await _outboxRepository.AddAsync(new NotificationOutbox
@@ -166,7 +207,8 @@ public sealed class IssueInvoiceCommandHandler
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
-                    PerfumeName = item.Perfume?.Name ?? item.ManualDescription,
+                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
                     PerfumeBrand = item.Perfume?.Brand,
                     item.RequestedVolumeMl,
                     item.PerfumePricePerMl,
@@ -190,7 +232,7 @@ public sealed class IssueInvoiceCommandHandler
     {
         for (var attempt = 0; attempt < 10; attempt++)
         {
-            var number = $"INV-{now:yyyyMMddHHmmss}-{Random.Shared.Next(1000, 10000)}";
+            var number = $"INV-{now:yyMMdd}-{Random.Shared.Next(1000, 10000)}";
             if (!await _invoiceRepository.InvoiceNumberExistsAsync(number, cancellationToken))
                 return number;
         }

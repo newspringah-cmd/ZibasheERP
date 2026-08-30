@@ -138,6 +138,26 @@ public sealed class TelegramOwnerPricingDraftStore
     public void Remove(long chatId, long userId) => _values.TryRemove((chatId, userId), out _);
 }
 
+public sealed class TelegramInvoiceStickerDraftStore
+{
+    private readonly ConcurrentDictionary<(long ChatId, long UserId), DateTime> _values = new();
+
+    public void Start(long chatId, long userId) =>
+        _values[(chatId, userId)] = DateTime.UtcNow;
+
+    public bool IsWaiting(long chatId, long userId)
+    {
+        if (_values.TryGetValue((chatId, userId), out var createdAt) &&
+            createdAt > DateTime.UtcNow.AddMinutes(-5))
+            return true;
+        _values.TryRemove((chatId, userId), out _);
+        return false;
+    }
+
+    public void Remove(long chatId, long userId) =>
+        _values.TryRemove((chatId, userId), out _);
+}
+
 public enum TelegramAdminRequestKind { NextBottle, CustomRequest, GiftRequest, EditList, CleanupList, ManageBottleQueue, RemoveCustomerRequests }
 public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingConfirmation }
 

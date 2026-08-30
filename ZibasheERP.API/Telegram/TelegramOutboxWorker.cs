@@ -71,9 +71,6 @@ public sealed class TelegramOutboxWorker : BackgroundService
             TelegramSendResult result;
             try
             {
-                var message = TelegramNotificationMessageFormatter.Format(
-                    notification.EventType,
-                    notification.Payload);
                 var recipient = notification.EventType is "TelegramCustomerGroupRequired" or "InvoiceDeliveryRequiresManualAction" or "TelegramGroupDeliveryFailed"
                     ? (string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
                         ? _options.AdminChatId.Trim()
@@ -87,12 +84,11 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 }
                 else
                 {
-                var copyButtons = notification.EventType == "InvoiceIssued"
-                    ? BuildCardCopyButtons(notification.Payload)
-                    : Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
-                result = copyButtons.Length == 0
-                    ? await _sender.SendAsync(recipient, message, cancellationToken)
-                    : await _sender.SendInlineKeyboardAsync(recipient, message, copyButtons, cancellationToken);
+                    result = await SendNotificationAsync(
+                        notification,
+                        recipient,
+                        db,
+                        cancellationToken);
                 }
             }
             catch (JsonException exception)
@@ -173,21 +169,92 @@ public sealed class TelegramOutboxWorker : BackgroundService
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
 
+    private async Task<TelegramSendResult> SendNotificationAsync(
+        NotificationOutbox notification,
+        string recipient,
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (notification.EventType == "InvoiceGreeting")
+        {
+            var savedSetting = await db.InvoiceTelegramSettings.AsNoTracking()
+                .Where(value => !value.IsDeleted)
+                .OrderByDescending(value => value.UpdatedAt ?? value.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+            var stickerFileId = savedSetting is null
+                ? _options.InvoiceGreetingStickerFileId
+                : savedSetting.GreetingStickerFileId;
+            return string.IsNullOrWhiteSpace(stickerFileId)
+                ? await _sender.SendAsync(recipient, "سلام 👋", cancellationToken)
+                : await _sender.SendStickerAsync(
+                    recipient,
+                    stickerFileId.Trim(),
+                    cancellationToken);
+        }
+
+        if (notification.EventType == "InvoicePerfumePhoto")
+        {
+            using var document = JsonDocument.Parse(notification.Payload);
+            var root = document.RootElement;
+            var fileId = root.TryGetProperty("FileId", out var fileValue)
+                ? fileValue.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(fileId))
+                return new TelegramSendResult(true);
+            var persianName = root.TryGetProperty("PersianName", out var persianValue)
+                ? persianValue.GetString()
+                : null;
+            var englishName = root.TryGetProperty("EnglishName", out var englishValue)
+                ? englishValue.GetString()
+                : null;
+            var title = string.Join(" — ", new[] { englishName, persianName }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+            return await _sender.SendPhotoAsync(
+                recipient,
+                fileId,
+                string.IsNullOrWhiteSpace(title) ? "عطر فاکتور" : title,
+                cancellationToken);
+        }
+
+        var message = TelegramNotificationMessageFormatter.Format(
+            notification.EventType,
+            notification.Payload);
+        var copyButtons = notification.EventType == "InvoiceIssued"
+            ? BuildCardCopyButtons(notification.Payload)
+            : Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
+        return copyButtons.Length == 0
+            ? await _sender.SendAsync(recipient, message, cancellationToken)
+            : await _sender.SendInlineKeyboardAsync(recipient, message, copyButtons, cancellationToken);
+    }
+
     private static IReadOnlyCollection<TelegramInlineButton>[] BuildCardCopyButtons(string payload)
     {
         using var document = JsonDocument.Parse(payload);
-        if (!document.RootElement.TryGetProperty("PaymentAccounts", out var accounts) ||
-            accounts.ValueKind != JsonValueKind.Array)
-            return Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
-        return accounts.EnumerateArray().Select(account =>
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (document.RootElement.TryGetProperty("PaymentAccounts", out var accounts) &&
+            accounts.ValueKind == JsonValueKind.Array)
         {
-            var card = account.TryGetProperty("CardNumber", out var value) ? value.GetString() : null;
-            var bank = account.TryGetProperty("BankName", out var bankValue) ? bankValue.GetString() : null;
-            return (IReadOnlyCollection<TelegramInlineButton>)new[]
+            rows.AddRange(accounts.EnumerateArray().Select(account =>
             {
-                new TelegramInlineButton($"📋 کپی شماره کارت {bank}", CopyText: card)
-            };
-        }).Where(row => row.First().CopyText is not null).ToArray();
+                var card = account.TryGetProperty("CardNumber", out var value) ? value.GetString() : null;
+                var bank = account.TryGetProperty("BankName", out var bankValue) ? bankValue.GetString() : null;
+                return (IReadOnlyCollection<TelegramInlineButton>)new[]
+                {
+                    new TelegramInlineButton($"📋 کپی شماره کارت {bank}", CopyText: card)
+                };
+            }).Where(row => row.First().CopyText is not null));
+        }
+        if (document.RootElement.TryGetProperty("InvoiceId", out var invoiceIdValue) &&
+            invoiceIdValue.ValueKind == JsonValueKind.String &&
+            Guid.TryParse(invoiceIdValue.GetString(), out var invoiceId))
+        {
+            rows.Add(new[]
+            {
+                new TelegramInlineButton("✅ پرداخت‌شده", $"invoicepay:paid:{invoiceId:N}"),
+                new TelegramInlineButton("⏳ در انتظار پرداخت", $"invoicepay:waiting:{invoiceId:N}")
+            });
+        }
+        return rows.ToArray();
     }
 
     private async Task QueueAdminFailureAlertAsync(

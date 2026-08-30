@@ -22,7 +22,8 @@ const event = {
     Items: [{
       RowNumber: 1,
       PerfumeBrand: 'Brand',
-      PerfumeName: 'عطر',
+      PerfumeEnglishName: 'English Perfume',
+      PerfumePersianName: 'عطر فارسی',
       RequestedVolumeMl: 10,
       PerfumeAmount: 1000,
       IsBottleOwner: true,
@@ -43,6 +44,20 @@ if (result.json.invoiceFileName !== 'invoice-INV-TEST.pdf') {
 }
 if (result.json.artifactType !== 'InvoicePdf') {
   throw new Error('Invoice renderer produced an unexpected artifact type.');
+}
+if (!result.json.invoiceHtml.includes('نام انگلیسی:') ||
+    !result.json.invoiceHtml.includes('English Perfume') ||
+    !result.json.invoiceHtml.includes('نام فارسی:') ||
+    !result.json.invoiceHtml.includes('عطر فارسی') ||
+    !result.json.invoiceHtml.includes('مبلغ عطر و شیشه:')) {
+  throw new Error('Invoice renderer did not render item details on separate lines.');
+}
+if (!result.json.invoiceHtml.includes('تاریخ شمسی:') ||
+    result.json.invoiceHtml.includes('جمع شیشه</span>')) {
+  throw new Error('Invoice renderer did not use the Persian date or combined total layout.');
+}
+if (!result.json.telegramCaption.includes('INV-TEST')) {
+  throw new Error('Invoice renderer did not prepare the PDF Telegram caption.');
 }
 
 console.log('Invoice renderer test: PASS');

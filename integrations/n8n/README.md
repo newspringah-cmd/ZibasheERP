@@ -24,7 +24,7 @@ Schema ورودی در `contracts/event-envelope.schema.json` و نمونه وا
 1. اعتبارسنجی امضا، timestamp، EventId و Schema.
 2. توقف امن اگر `data.Delivery` برابر `null` است.
 3. ساخت HTML فاکتور با داده escape‌شده و تبدیل آن به PDF توسط Gotenberg داخلی در `http://gotenberg:3000/forms/chromium/convert/html`.
-4. ارسال با Telegram «Send Document» فقط به `data.Delivery.ChatId`.
+4. ارسال فوری با Telegram «Send Document» فقط به `data.Delivery.ChatId`؛ Caption را از `telegramCaption` و فایل را از خروجی PDF بگیرید تا PDF در همان اجرای صدور فاکتور ارسال شود.
 5. ثبت نتیجه در `POST /api/integrations/n8n/order-artifacts` با نوع `InvoicePdf`.
 
 کد آماده تولید HTML در `code/build-invoice-html.js` قرار دارد. آن را در Code node با حالت Run Once for All Items قرار دهید، خروجی `invoiceHtml` را با Convert to File به binary با نام `index.html` تبدیل کنید و HTTP Request را به‌صورت multipart با فیلد `files` به Gotenberg بفرستید. نام PDF نهایی در `invoiceFileName` آماده است.

@@ -35,6 +35,11 @@ public interface ITelegramMessageSender
         string caption,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendStickerAsync(
+        string chatId,
+        string sticker,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> SendPhotoWithKeyboardAsync(
         string chatId,
         string photo,
@@ -72,6 +77,17 @@ public interface ITelegramMessageSender
     Task<bool> IsChatAdministratorAsync(
         string chatId,
         string userId,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> EditTextAsync(
+        string chatId,
+        long messageId,
+        string message,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> EditTextWithKeyboardAsync(
+        string chatId, long messageId, string message,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
     Task<bool> IsChatMemberAsync(
@@ -200,6 +216,15 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             new { chat_id = chatId, photo, caption },
             cancellationToken);
 
+    public async Task<TelegramSendResult> SendStickerAsync(
+        string chatId,
+        string sticker,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "sendSticker",
+            new { chat_id = chatId, sticker },
+            cancellationToken);
+
     public async Task<TelegramSendResult> SendPhotoWithKeyboardAsync(
         string chatId,
         string photo,
@@ -262,6 +287,29 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
     public async Task<TelegramSendResult> DeleteMessageAsync(
         string chatId, long messageId, CancellationToken cancellationToken = default) =>
         await SendRequestAsync("deleteMessage", new { chat_id = chatId, message_id = messageId }, cancellationToken);
+
+    public async Task<TelegramSendResult> EditTextAsync(
+        string chatId,
+        long messageId,
+        string message,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "editMessageText",
+            new { chat_id = chatId, message_id = messageId, text = message },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> EditTextWithKeyboardAsync(
+        string chatId, long messageId, string message,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync("editMessageText", new
+        {
+            chat_id = chatId, message_id = messageId, text = message,
+            reply_markup = new
+            {
+                inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+            }
+        }, cancellationToken);
 
     public async Task<TelegramSendResult> SendDocumentAsync(
         string chatId,

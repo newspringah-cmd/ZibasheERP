@@ -15,6 +15,9 @@ public sealed class TelegramOptions
     public string InvoiceFailureChatId { get; set; } = string.Empty;
     public string DecantChatId { get; set; } = string.Empty;
     public string LabelPrintChatId { get; set; } = string.Empty;
+    public string NewPaymentsChatId { get; set; } = string.Empty;
+    public string InventoryChatId { get; set; } = string.Empty;
+    public string InvoiceGreetingStickerFileId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
     public int PollIntervalSeconds { get; set; } = 10;
     public int BatchSize { get; set; } = 20;

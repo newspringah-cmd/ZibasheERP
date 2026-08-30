@@ -44,6 +44,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly ITelegramOrderDraftRepository _draftRepository;
     private readonly ITelegramGroupMembershipTracker _groupMembershipTracker;
     private readonly IInvoicePaymentAccountRepository _paymentAccountRepository;
+    private readonly IInvoiceTelegramSettingRepository _invoiceTelegramSettingRepository;
     private readonly ISalesListRepository _salesListRepository;
     private readonly ISalesListRequestRepository _salesListRequestRepository;
     private readonly TelegramAdminSalesListDraftStore _adminSalesListDrafts;
@@ -51,10 +52,14 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramAdminRequestDraftStore _adminRequestDrafts;
     private readonly TelegramInvoiceIssuanceDraftStore _invoiceIssuanceDrafts;
     private readonly IInvoiceIssuanceService _invoiceIssuanceService;
+    private readonly IInvoicePaymentStatusService _invoicePaymentStatusService;
     private readonly TelegramManualInvoiceDraftStore _manualInvoiceDrafts;
     private readonly IBottleRepository _bottleRepository;
     private readonly IPerfumeRepository _perfumeRepository;
     private readonly TelegramTemporaryMessageCleaner _temporaryMessageCleaner;
+    private readonly TelegramInvoiceStickerDraftStore _invoiceStickerDrafts;
+    private readonly TelegramInvoiceInventoryDraftStore _invoiceInventoryDrafts;
+    private readonly IInvoiceInventoryService _invoiceInventoryService;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -63,6 +68,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         ITelegramOrderDraftRepository draftRepository,
         ITelegramGroupMembershipTracker groupMembershipTracker,
         IInvoicePaymentAccountRepository paymentAccountRepository,
+        IInvoiceTelegramSettingRepository invoiceTelegramSettingRepository,
         ISalesListRepository salesListRepository,
         ISalesListRequestRepository salesListRequestRepository,
         TelegramAdminSalesListDraftStore adminSalesListDrafts,
@@ -70,10 +76,14 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramAdminRequestDraftStore adminRequestDrafts,
         TelegramInvoiceIssuanceDraftStore invoiceIssuanceDrafts,
         IInvoiceIssuanceService invoiceIssuanceService,
+        IInvoicePaymentStatusService invoicePaymentStatusService,
         TelegramManualInvoiceDraftStore manualInvoiceDrafts,
         IBottleRepository bottleRepository,
         IPerfumeRepository perfumeRepository,
         TelegramTemporaryMessageCleaner temporaryMessageCleaner,
+        TelegramInvoiceStickerDraftStore invoiceStickerDrafts,
+        TelegramInvoiceInventoryDraftStore invoiceInventoryDrafts,
+        IInvoiceInventoryService invoiceInventoryService,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
@@ -82,6 +92,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _draftRepository = draftRepository;
         _groupMembershipTracker = groupMembershipTracker;
         _paymentAccountRepository = paymentAccountRepository;
+        _invoiceTelegramSettingRepository = invoiceTelegramSettingRepository;
         _salesListRepository = salesListRepository;
         _salesListRequestRepository = salesListRequestRepository;
         _adminSalesListDrafts = adminSalesListDrafts;
@@ -89,10 +100,14 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _adminRequestDrafts = adminRequestDrafts;
         _invoiceIssuanceDrafts = invoiceIssuanceDrafts;
         _invoiceIssuanceService = invoiceIssuanceService;
+        _invoicePaymentStatusService = invoicePaymentStatusService;
         _manualInvoiceDrafts = manualInvoiceDrafts;
         _bottleRepository = bottleRepository;
         _perfumeRepository = perfumeRepository;
         _temporaryMessageCleaner = temporaryMessageCleaner;
+        _invoiceStickerDrafts = invoiceStickerDrafts;
+        _invoiceInventoryDrafts = invoiceInventoryDrafts;
+        _invoiceInventoryService = invoiceInventoryService;
         _logger = logger;
     }
 
@@ -161,6 +176,15 @@ public sealed partial class TelegramWebhookController : ControllerBase
             }
 
             await ReplyAsync(message.Chat.Id, contactResponse, cancellationToken);
+            return Ok();
+        }
+
+        if (message.Sticker is not null && IsPrimaryOwner(message.From.Id))
+        {
+            await ReplyAsync(
+                message.Chat.Id,
+                $"شناسه استیکر برای تنظیم فاکتور:\n{message.Sticker.FileId}",
+                cancellationToken);
             return Ok();
         }
 
@@ -767,6 +791,12 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleInvoiceInventoryMessageAsync(message, cancellationToken))
+            return;
+
+        if (await TryHandleInvoiceStickerMessageAsync(message, cancellationToken))
+            return;
+
         if (await TryHandleAdminCommandAsync(message, cancellationToken))
             return;
 

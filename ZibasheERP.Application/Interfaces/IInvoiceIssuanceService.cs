@@ -26,6 +26,15 @@ public sealed record SalesListProductionCopy(
     string DecantMessage,
     string LabelPrintMessage);
 
+public sealed record InvoicePaymentTrackingReport(
+    Guid BatchId,
+    string Message,
+    string? TelegramChatId,
+    long? TelegramMessageId,
+    IReadOnlyCollection<InvoicePaymentTrackingAction> Actions);
+
+public sealed record InvoicePaymentTrackingAction(Guid OrderItemId, string Label);
+
 public interface IInvoiceIssuanceService
 {
     Task<IReadOnlyCollection<CompletedSalesListForInvoice>> GetCompletedListsAsync(
@@ -57,5 +66,15 @@ public interface IInvoiceIssuanceService
         string customerIdentity,
         IReadOnlyCollection<ManualInvoiceLineInput> lines,
         string issuedByTelegramUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<InvoicePaymentTrackingReport?> GetPaymentTrackingReportAsync(
+        Guid batchId,
+        CancellationToken cancellationToken = default);
+
+    Task SetPaymentTrackingMessageAsync(
+        Guid batchId,
+        string chatId,
+        long messageId,
         CancellationToken cancellationToken = default);
 }

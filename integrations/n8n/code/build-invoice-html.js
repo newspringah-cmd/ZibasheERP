@@ -18,6 +18,22 @@ function money(value) {
   return `${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(number)} تومان`;
 }
 
+function persianDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Invoice contains an invalid issue date.');
+  }
+  return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
+    timeZone: 'Asia/Tehran',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).format(date);
+}
+
 if (event.eventType !== 'InvoiceIssued' || !event.data) {
   throw new Error('Expected an InvoiceIssued event.');
 }
@@ -35,15 +51,19 @@ if (items.length === 0) {
   throw new Error('Invoice has no items.');
 }
 
-const rows = items.map((item) => `
-  <tr>
-    <td>${escapeHtml(item.RowNumber)}</td>
-    <td>${escapeHtml(item.PerfumeBrand)} ${escapeHtml(item.PerfumeName)}</td>
-    <td>${escapeHtml(item.RequestedVolumeMl)} میلی‌لیتر</td>
-    <td>${money(item.PerfumeAmount)}</td>
-    <td>${item.IsBottleOwner ? escapeHtml(item.BottleName || 'شیشه') : '—'}</td>
-    <td>${money(item.LineTotal)}</td>
-  </tr>`).join('');
+const rows = items.map((item) => {
+  const englishName = item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
+  const persianName = item.PerfumePersianName ?? item.PerfumeName ?? 'آیتم دستی';
+  const englishTitle = [item.PerfumeBrand, englishName].filter(Boolean).join(' ');
+  return `
+  <article class="invoice-item">
+    <div class="item-number">ردیف ${escapeHtml(item.RowNumber)}</div>
+    <div><strong>نام انگلیسی:</strong> <span dir="ltr">${escapeHtml(englishTitle)}</span></div>
+    <div><strong>نام فارسی:</strong> ${escapeHtml(persianName)}</div>
+    <div><strong>مقدار:</strong> ${escapeHtml(item.RequestedVolumeMl)} میلی‌لیتر</div>
+    <div class="item-total"><strong>مبلغ عطر و شیشه:</strong> ${money(item.LineTotal)}</div>
+  </article>`;
+}).join('');
 
 const accountRows = paymentAccounts.map((account) => `
   <div class="account">
@@ -64,10 +84,11 @@ const invoiceHtml = `<!doctype html>
     h1 { margin: 0 0 6px; color: #8b5e3c; font-size: 24px; }
     .brand { font-size: 18px; font-weight: 700; }
     .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; background: #faf6f1; padding: 12px; border-radius: 8px; margin-bottom: 18px; }
-    table { width: 100%; border-collapse: collapse; }
-    th { background: #8b5e3c; color: white; font-weight: 600; }
-    th, td { border: 1px solid #ddd; padding: 8px 6px; text-align: right; vertical-align: top; }
-    tbody tr:nth-child(even) { background: #fafafa; }
+    .items { display: grid; gap: 10px; }
+    .invoice-item { border: 1px solid #ddd; border-right: 4px solid #8b5e3c; border-radius: 7px; padding: 10px 12px; break-inside: avoid; }
+    .invoice-item > div { line-height: 1.8; }
+    .item-number { color: #8b5e3c; font-weight: 700; border-bottom: 1px solid #eee; margin-bottom: 4px; }
+    .item-total { margin-top: 3px; }
     .totals { width: 48%; margin: 18px 0 0 auto; }
     .totals div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #ddd; }
     .totals .final { color: #8b5e3c; font-size: 15px; font-weight: 700; border-bottom: 0; }
@@ -84,17 +105,12 @@ const invoiceHtml = `<!doctype html>
   <section class="meta">
     <div><strong>مشتری:</strong> ${escapeHtml(customer.FullName)}</div>
     <div><strong>شماره موبایل:</strong> ${escapeHtml(customer.Mobile)}</div>
-    <div><strong>تاریخ صدور:</strong> ${escapeHtml(new Date(invoice.IssuedAt).toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' }))}</div>
+    <div><strong>تاریخ شمسی:</strong> ${escapeHtml(persianDate(invoice.IssuedAt))}</div>
     <div><strong>شماره سفارش:</strong> ${escapeHtml(invoice.OrderNumber)}</div>
   </section>
-  <table>
-    <thead><tr><th>ردیف</th><th>عطر</th><th>حجم</th><th>مبلغ عطر</th><th>شیشه</th><th>جمع ردیف</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
+  <section class="items">${rows}</section>
   <section class="totals">
-    <div><span>جمع عطر</span><span>${money(invoice.PerfumeTotal)}</span></div>
-    <div><span>جمع شیشه</span><span>${money(invoice.BottleTotal)}</span></div>
-    <div class="final"><span>مبلغ نهایی</span><span>${money(invoice.TotalAmount)}</span></div>
+    <div class="final"><span>جمع عطر و شیشه</span><span>${money(invoice.TotalAmount)}</span></div>
   </section>
   ${accountRows ? `<section class="payment"><h3>شماره کارت جهت واریز</h3>${accountRows}<p><strong>مهلت پرداخت فاکتور: ۲۴ ساعت</strong></p></section>` : ''}
   <footer>این فاکتور به‌صورت خودکار توسط سامانه زیباشی صادر شده است.</footer>
@@ -106,6 +122,7 @@ return [{
     ...event,
     invoiceHtml,
     invoiceFileName: `invoice-${String(invoice.InvoiceNumber).replace(/[^A-Za-z0-9_-]/g, '_')}.pdf`,
+    telegramCaption: `فاکتور ${invoice.InvoiceNumber} — سفارش ${invoice.OrderNumber}`,
     artifactType: 'InvoicePdf'
   }
 }];

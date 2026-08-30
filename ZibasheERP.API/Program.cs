@@ -63,7 +63,12 @@ builder.Services.AddScoped<IAddressRepository, AddressRepository>();
 builder.Services.AddScoped<ITelegramOrderDraftRepository, TelegramOrderDraftRepository>();
 builder.Services.AddScoped<IOrderArtifactRepository, OrderArtifactRepository>();
 builder.Services.AddScoped<IInvoicePaymentAccountRepository, InvoicePaymentAccountRepository>();
+builder.Services.AddScoped<IInvoiceTelegramSettingRepository, InvoiceTelegramSettingRepository>();
 builder.Services.AddScoped<IInvoiceIssuanceService, InvoiceIssuanceService>();
+builder.Services.AddScoped<IInvoicePaymentStatusService, InvoicePaymentStatusService>();
+builder.Services.AddScoped<IInvoiceInventoryService, InvoiceInventoryService>();
+builder.Services.AddSingleton<TelegramInvoiceStickerDraftStore>();
+builder.Services.AddSingleton<TelegramInvoiceInventoryDraftStore>();
 
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
@@ -86,6 +91,10 @@ builder.Services.AddOptions<TelegramOptions>()
          (long.TryParse(options.DecantChatId, out var decantChatId) && decantChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.LabelPrintChatId) ||
          (long.TryParse(options.LabelPrintChatId, out var labelPrintChatId) && labelPrintChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.NewPaymentsChatId) ||
+         (long.TryParse(options.NewPaymentsChatId, out var newPaymentsChatId) && newPaymentsChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.InventoryChatId) ||
+         (long.TryParse(options.InventoryChatId, out var inventoryChatId) && inventoryChatId != 0)) &&
         options.PollIntervalSeconds is >= 1 and <= 300 &&
          options.BatchSize is >= 1 and <= 100 &&
          options.MaxAttempts is >= 1 and <= 20),

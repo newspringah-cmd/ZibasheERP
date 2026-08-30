@@ -243,9 +243,21 @@ public sealed partial class TelegramWebhookController
         if (callback.Message is null || callback.Data is null ||
             !(callback.Data.StartsWith("invoiceadmin:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoicebatch:", StringComparison.Ordinal) ||
+              callback.Data.StartsWith("invoicepay:", StringComparison.Ordinal) ||
+              callback.Data.StartsWith("invoiceinventory:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal)))
             return false;
+        if (callback.Data.StartsWith("invoicepay:", StringComparison.Ordinal))
+        {
+            await HandleInvoicePaymentStatusCallbackAsync(callback, ct);
+            return true;
+        }
+        if (callback.Data.StartsWith("invoiceinventory:", StringComparison.Ordinal))
+        {
+            await HandleInvoiceInventoryCallbackAsync(callback, ct);
+            return true;
+        }
         if (!await IsAuthorizedInvoiceAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
         {
             await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مدیریت ندارید.", ct);
@@ -396,6 +408,32 @@ public sealed partial class TelegramWebhookController
                 }, ct);
             return true;
         }
+        if (callback.Data == "invoiceadmin:sticker")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این بخش فقط برای مدیر اصلی است.", ct);
+                return true;
+            }
+            _invoiceStickerDrafts.Start(callback.Message.Chat.Id, callback.From.Id);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "👋 استیکر سلام جدید را همین‌جا ارسال کنید. این ورودی تا ۵ دقیقه فعال است.", ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:sticker-clear")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این بخش فقط برای مدیر اصلی است.", ct);
+                return true;
+            }
+            await _invoiceTelegramSettingRepository.SetGreetingStickerFileIdAsync(null, callback.From.Id, ct);
+            await _sender.AnswerCallbackAsync(callback.Id, "استیکر حذف شد.", ct);
+            await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id,
+                "از این پس پیام «سلام 👋» ارسال می‌شود.", ct);
+            return true;
+        }
 
         var parts = callback.Data.Split(':');
         if (parts.Length == 3 && Guid.TryParseExact(parts[2], "N", out var id))
@@ -414,9 +452,241 @@ public sealed partial class TelegramWebhookController
         return true;
     }
 
+    private async Task HandleInvoicePaymentStatusCallbackAsync(
+        TelegramCallbackQuery callback,
+        CancellationToken ct)
+    {
+        if (!await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, ct))
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "فقط مدیران حسابداری مجاز به تغییر وضعیت پرداخت هستند.",
+                ct,
+                showAlert: true);
+            return;
+        }
+        var parts = callback.Data!.Split(':');
+        if (parts.Length != 3 || !Guid.TryParseExact(parts[2], "N", out var invoiceId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "شناسه فاکتور معتبر نیست.", ct, showAlert: true);
+            return;
+        }
+
+        try
+        {
+            var result = parts[1] == "paid"
+                ? await _invoicePaymentStatusService.MarkPaidAsync(invoiceId, callback.From.Id, ct)
+                : await _invoicePaymentStatusService.KeepWaitingAsync(invoiceId, ct);
+            var status = result.IsPaid ? "✅ پرداخت‌شده" : "⏳ در انتظار پرداخت";
+            await _sender.AnswerCallbackAsync(callback.Id, $"وضعیت ثبت شد: {status}", ct, showAlert: true);
+            var adminIdentity = string.IsNullOrWhiteSpace(callback.From.Username)
+                ? callback.From.Id.ToString()
+                : $"@{callback.From.Username.TrimStart('@')}";
+            await ReplyAsync(callback.Message!.Chat.Id,
+                $"{status}\nفاکتور: {result.InvoiceNumber}\nثبت توسط: {adminIdentity}", ct);
+            if (result.InvoiceIssuanceBatchId.HasValue)
+            {
+                var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(
+                    result.InvoiceIssuanceBatchId.Value, ct);
+                if (report is not null && !string.IsNullOrWhiteSpace(report.TelegramChatId) &&
+                    report.TelegramMessageId.HasValue)
+                {
+                    var refresh = await _sender.EditTextWithKeyboardAsync(
+                        report.TelegramChatId,
+                        report.TelegramMessageId.Value,
+                        report.Message,
+                        BuildPaymentTrackingButtons(report),
+                        ct);
+                    if (!refresh.IsSuccessful)
+                        await ReplyAsync(callback.Message.Chat.Id,
+                            $"⚠️ وضعیت مالی ثبت شد اما گزارش گروه واریز بروزرسانی نشد: {refresh.Error}", ct);
+                }
+            }
+        }
+        catch (InvalidOperationException exception)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, showAlert: true);
+        }
+    }
+
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildPaymentTrackingButtons(
+        InvoicePaymentTrackingReport report) =>
+        report.Actions.Select(action =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(action.Label,
+                    $"invoiceinventory:start:{action.OrderItemId:N}")
+            }).ToArray();
+
+    private async Task HandleInvoiceInventoryCallbackAsync(
+        TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        if (!await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, ct))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id,
+                "فقط مدیران حسابداری مجاز هستند.", ct, showAlert: true);
+            return;
+        }
+        var data = callback.Data!;
+        if (data == "invoiceinventory:cancel")
+        {
+            _invoiceInventoryDrafts.Remove(callback.Message!.Chat.Id, callback.From.Id);
+            await _sender.AnswerCallbackAsync(callback.Id, "عملیات لغو شد.", ct);
+            return;
+        }
+        if (data == "invoiceinventory:confirm")
+        {
+            if (!_invoiceInventoryDrafts.TryGet(callback.Message!.Chat.Id, callback.From.Id, out var draft) ||
+                !draft.NewTotalAmount.HasValue)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct, showAlert: true);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(_options.InventoryChatId))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "گروه موجودی تنظیم نشده است.", ct, showAlert: true);
+                return;
+            }
+            try
+            {
+                var result = await _invoiceInventoryService.ReleaseAsync(
+                    draft.OrderItemId, draft.NewTotalAmount.Value, callback.From.Id, ct);
+                var publishedList = await _salesListRepository.GetByIdAsync(result.SalesListId, ct);
+                if (publishedList?.TelegramMessageId.HasValue == true &&
+                    !string.IsNullOrWhiteSpace(publishedList.TelegramChannelId))
+                {
+                    _invoiceInventoryDrafts.Remove(callback.Message!.Chat.Id, callback.From.Id);
+                    await _sender.AnswerCallbackAsync(callback.Id,
+                        "این آیتم قبلاً به موجودی منتقل شده است ✅", ct, showAlert: true);
+                    await RefreshPaymentTrackingReportAsync(
+                        result.InvoiceIssuanceBatchId, callback.Message.Chat.Id, ct);
+                    return;
+                }
+                var caption =
+                    $"🌸 <b>{System.Net.WebUtility.HtmlEncode(result.PerfumeName)}</b>\n" +
+                    $"📦 موجودی آماده: {result.VolumeMl} میل\n" +
+                    $"🧴 شیشه: {System.Net.WebUtility.HtmlEncode(result.BottleName)}\n" +
+                    $"💰 مبلغ عطر و شیشه: {result.TotalAmount:N0} تومان\n" +
+                    $"🔖 کد: {result.PublicCode}";
+                var sent = await _sender.SendPhotoWithKeyboardAsync(
+                    _options.InventoryChatId.Trim(), result.PhotoFileId, caption,
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[] { new TelegramInlineButton(
+                            $"انتخاب {result.VolumeMl} میل — {result.TotalAmount:N0} تومان",
+                            $"slv:{EncodeCompactGuid(result.SalesListId)}:{result.VolumeMl}") }
+                    }, ct);
+                if (!sent.IsSuccessful || !sent.MessageId.HasValue)
+                    throw new InvalidOperationException($"آیتم مالی اصلاح شد اما انتشار موجودی ناموفق بود: {sent.Error}");
+                var list = await _salesListRepository.GetByIdAsync(result.SalesListId, ct)
+                    ?? throw new InvalidOperationException("لیست موجودی ساخته‌شده پیدا نشد.");
+                list.TelegramChannelId = _options.InventoryChatId.Trim();
+                list.TelegramMessageId = sent.MessageId.Value;
+                list.UpdatedAt = DateTime.UtcNow;
+                await _salesListRepository.SaveChangesAsync(ct);
+                _invoiceInventoryDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
+                await _sender.AnswerCallbackAsync(callback.Id, "آیتم به موجودی منتقل شد ✅", ct, showAlert: true);
+                await ReplyAsync(callback.Message.Chat.Id,
+                    $"✅ {result.PerfumeName}، {result.VolumeMl} میل با مبلغ {result.TotalAmount:N0} تومان به گروه موجودی ارسال شد.", ct);
+                await RefreshPaymentTrackingReportAsync(result.InvoiceIssuanceBatchId, callback.Message.Chat.Id, ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, showAlert: true);
+            }
+            return;
+        }
+
+        var parts = data.Split(':');
+        if (parts.Length != 3 || parts[1] != "start" ||
+            !Guid.TryParseExact(parts[2], "N", out var itemId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "شناسه آیتم معتبر نیست.", ct, showAlert: true);
+            return;
+        }
+        try
+        {
+            var preview = await _invoiceInventoryService.GetPreviewAsync(itemId, ct);
+            _invoiceInventoryDrafts.Set(new TelegramInvoiceInventoryDraft
+            {
+                ChatId = callback.Message!.Chat.Id,
+                UserId = callback.From.Id,
+                OrderItemId = itemId
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                $"📤 انتقال به موجودی\nمشتری قبلی: {preview.CustomerIdentity}\n" +
+                $"عطر: {preview.PerfumeName}\nحجم: {preview.VolumeMl} میل\n" +
+                $"شیشه: {preview.BottleName} ({preview.BottlePrice:N0} تومان)\n" +
+                $"مبلغ فعلی: {preview.CurrentAmount:N0} تومان\n\n" +
+                "مبلغ نهایی جدید عطر و شیشه را وارد کنید:", ct);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, showAlert: true);
+        }
+    }
+
+    private async Task<bool> TryHandleInvoiceInventoryMessageAsync(
+        TelegramMessage message, CancellationToken ct)
+    {
+        if (message.From is null ||
+            !_invoiceInventoryDrafts.TryGet(message.Chat.Id, message.From.Id, out var draft))
+            return false;
+        if (!await IsAuthorizedInvoiceActionAdminAsync(message.From.Id, ct))
+        {
+            _invoiceInventoryDrafts.Remove(message.Chat.Id, message.From.Id);
+            return true;
+        }
+        if (!decimal.TryParse(NormalizeNumber(message.Text ?? string.Empty),
+                System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+        {
+            await ReplyAsync(message.Chat.Id, "مبلغ معتبر و مثبت وارد کنید؛ مثال: 450000", ct);
+            return true;
+        }
+        var preview = await _invoiceInventoryService.GetPreviewAsync(draft.OrderItemId, ct);
+        if (amount < preview.BottlePrice)
+        {
+            await ReplyAsync(message.Chat.Id,
+                $"مبلغ نمی‌تواند از هزینه شیشه ({preview.BottlePrice:N0} تومان) کمتر باشد.", ct);
+            return true;
+        }
+        draft.NewTotalAmount = amount;
+        draft.ExpiresAt = DateTime.UtcNow.AddMinutes(10);
+        _invoiceInventoryDrafts.Set(draft);
+        await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+            $"آیا انتقال قطعی انجام شود؟\n{preview.PerfumeName} — {preview.VolumeMl} میل\n" +
+            $"همان شیشه: {preview.BottleName}\nمبلغ جدید: {amount:N0} تومان\n\n" +
+            "پس از تأیید، آیتم از فاکتور قبلی و بدهی مشتری حذف می‌شود.",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[]
+                {
+                    new TelegramInlineButton("✅ تأیید و ارسال", "invoiceinventory:confirm"),
+                    new TelegramInlineButton("❌ لغو", "invoiceinventory:cancel")
+                }
+            }, ct);
+        return true;
+    }
+
+    private async Task RefreshPaymentTrackingReportAsync(
+        Guid batchId, long fallbackChatId, CancellationToken ct)
+    {
+        var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(batchId, ct);
+        if (report is null || string.IsNullOrWhiteSpace(report.TelegramChatId) ||
+            !report.TelegramMessageId.HasValue) return;
+        var refresh = await _sender.EditTextWithKeyboardAsync(
+            report.TelegramChatId, report.TelegramMessageId.Value,
+            report.Message, BuildPaymentTrackingButtons(report), ct);
+        if (!refresh.IsSuccessful)
+            await ReplyAsync(fallbackChatId, $"⚠️ گزارش واریز بروزرسانی نشد: {refresh.Error}", ct);
+    }
+
     private async Task SendInvoiceAdminMenuAsync(long chatId, string? notice, CancellationToken ct)
     {
         var accounts = await _paymentAccountRepository.GetForAdminAsync(ct);
+        var greetingSticker = await _invoiceTelegramSettingRepository.GetGreetingStickerFileIdAsync(ct);
         var lines = accounts.Count == 0
             ? "هنوز حساب بانکی ثبت نشده است."
             : string.Join("\n\n", accounts.Select((x, i) =>
@@ -463,13 +733,50 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup")
         }).ToList();
         if (long.TryParse(_options.OwnerUserId, out _))
+        {
             buttons.Add(new[] { new TelegramInlineButton("💰 مدیریت قیمت‌ها", "invoiceadmin:pricing") });
+            buttons.Add(new[]
+            {
+                new TelegramInlineButton("👋 تغییر استیکر سلام", "invoiceadmin:sticker"),
+                new TelegramInlineButton("🗑 حذف استیکر", "invoiceadmin:sticker-clear")
+            });
+        }
         var message = (notice is null ? "" : notice + "\n\n") +
-            $"⚙️ تنظیمات فاکتور زیباشی\n⏱ مهلت پرداخت: ۲۴ ساعت\n🏦 حساب‌ها: {accounts.Count}/4 (پیشنهاد: ۲ حساب فعال)\n\nحساب‌های بانکی:\n" + lines +
+            $"⚙️ تنظیمات فاکتور زیباشی\n⏱ مهلت پرداخت: ۲۴ ساعت\n👋 استیکر سلام: {(string.IsNullOrWhiteSpace(greetingSticker) ? "پیام متنی" : "فعال")}\n🏦 حساب‌ها: {accounts.Count}/4 (پیشنهاد: ۲ حساب فعال)\n\nحساب‌های بانکی:\n" + lines +
             "\n\nافزودن حساب:\n/bankadd شماره‌کارت | نام صاحب حساب | نام بانک";
         message += "\n\nثبت صف بطری بعدی (فقط ادمین):\n/nextbottle کدلیست | @username | مقدارمیل";
         message += "\n\nثبت مقدار سفارشی از کامنت:\n/listrequest کدلیست | @username | مقدارمیل | نرمال یا فانتزی";
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons.ToArray(), ct);
+    }
+
+    private async Task<bool> TryHandleInvoiceStickerMessageAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null || !_invoiceStickerDrafts.IsWaiting(message.Chat.Id, message.From.Id))
+            return false;
+        if (!IsPrimaryOwner(message.From.Id) ||
+            !await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            _invoiceStickerDrafts.Remove(message.Chat.Id, message.From.Id);
+            return false;
+        }
+        if (message.Sticker is null)
+        {
+            await ReplyAsync(message.Chat.Id, "لطفاً خودِ استیکر را ارسال کنید؛ متن یا عکس قابل قبول نیست.", ct);
+            return true;
+        }
+
+        await _invoiceTelegramSettingRepository.SetGreetingStickerFileIdAsync(
+            message.Sticker.FileId, message.From.Id, ct);
+        _invoiceStickerDrafts.Remove(message.Chat.Id, message.From.Id);
+        var preview = await _sender.SendStickerAsync(
+            message.Chat.Id.ToString(), message.Sticker.FileId, ct);
+        await SendInvoiceAdminMenuAsync(message.Chat.Id,
+            preview.IsSuccessful
+                ? "استیکر سلام ذخیره شد و پیش‌نمایش آن ارسال شد ✅"
+                : $"استیکر ذخیره شد؛ ارسال پیش‌نمایش ناموفق بود: {preview.Error}", ct);
+        return true;
     }
 
     private async Task HandleInvoiceBatchCallbackAsync(TelegramCallbackQuery callback, CancellationToken ct)
@@ -610,13 +917,14 @@ public sealed partial class TelegramWebhookController
                     selected.ToArray(), userId.ToString(), ct);
                 _invoiceIssuanceDrafts.Remove(chatId, userId);
                 var productionDispatchFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
+                var paymentTrackingStatus = await SendPaymentTrackingReportAsync(result.BatchId, ct);
                 var productionDispatchStatus = productionDispatchFailures.Count == 0
                     ? $"نسخهٔ عملیاتی {result.ProductionCopies.Count} لیست به گروه دکانت و گروه چاپ لیبل ارسال شد ✅"
                     : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionDispatchFailures);
                 await ReplyAsync(chatId,
                     $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
                     $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
-                    productionDispatchStatus + "\n\n" +
+                    productionDispatchStatus + "\n" + paymentTrackingStatus + "\n\n" +
                     "ارسال خودکار فاکتور انجام می‌شود؛ موارد بدون گروه یا با خطای دائمی در گروه خطاهای فاکتور ثبت خواهند شد.", ct);
             }
             catch (InvalidOperationException exception)
@@ -677,6 +985,23 @@ public sealed partial class TelegramWebhookController
             failures,
             ct);
         return failures;
+    }
+
+    private async Task<string> SendPaymentTrackingReportAsync(Guid batchId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.NewPaymentsChatId))
+            return "⚠️ گروه واریز جدید تنظیم نشده است.";
+        var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(batchId, ct);
+        if (report is null)
+            return "⚠️ گزارش واریز ساخته نشد.";
+        var sent = await _sender.SendInlineKeyboardAsync(
+            _options.NewPaymentsChatId.Trim(), report.Message,
+            BuildPaymentTrackingButtons(report), ct);
+        if (!sent.IsSuccessful || !sent.MessageId.HasValue)
+            return $"⚠️ ارسال گزارش واریز ناموفق بود: {sent.Error}";
+        await _invoiceIssuanceService.SetPaymentTrackingMessageAsync(
+            batchId, _options.NewPaymentsChatId.Trim(), sent.MessageId.Value, ct);
+        return "گزارش وضعیت به گروه واریز جدید ارسال شد ✅";
     }
 
     private async Task SendProductionCopiesToChatAsync(
@@ -884,6 +1209,11 @@ public sealed partial class TelegramWebhookController
         long.TryParse(_options.AdminChatId, out var configured) && configured == chatId &&
         (IsPrimaryOwner(userId) ||
          await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct));
+
+    private async Task<bool> IsAuthorizedInvoiceActionAdminAsync(long userId, CancellationToken ct) =>
+        IsPrimaryOwner(userId) ||
+        (!string.IsNullOrWhiteSpace(_options.AdminChatId) &&
+         await _sender.IsChatAdministratorAsync(_options.AdminChatId.Trim(), userId.ToString(), ct));
 
     private static bool TryNormalizeCard(string value, out string card)
     {

@@ -22,6 +22,7 @@ public class SalesListRepository : ISalesListRepository
             .Include(x => x.Batch)
             .Include(x => x.Perfume)
             .Include(x => x.BottleOwnerCustomer)
+            .Include(x => x.FixedBottle)
             .FirstOrDefaultAsync(
                 x => x.Id == id && !x.IsDeleted,
                 cancellationToken);

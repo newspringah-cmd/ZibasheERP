@@ -90,14 +90,16 @@ public sealed class TelegramNotificationMessageFormatterTests
     {
         var message = TelegramNotificationMessageFormatter.Format(
             "InvoiceIssued",
-            "{\"OrderNumber\":\"ZS-1005\",\"InvoiceNumber\":\"INV-42\",\"PerfumeTotal\":1100000,\"BottleTotal\":150000,\"TotalAmount\":1250000,\"Items\":[{\"RowNumber\":1,\"PerfumeBrand\":\"Brand\",\"PerfumeName\":\"Perfume\",\"RequestedVolumeMl\":5,\"LineTotal\":1250000}]}");
+            "{\"OrderNumber\":\"ZS-1005\",\"InvoiceNumber\":\"INV-42\",\"IssuedAt\":\"2026-08-03T12:00:00Z\",\"PerfumeTotal\":1100000,\"BottleTotal\":150000,\"TotalAmount\":1250000,\"Items\":[{\"RowNumber\":1,\"PerfumeBrand\":\"Brand\",\"PerfumeEnglishName\":\"Perfume\",\"PerfumePersianName\":\"عطر فارسی\",\"RequestedVolumeMl\":5,\"LineTotal\":1250000}]}");
 
         Assert.Contains("INV-42", message);
         Assert.Contains("ZS-1005", message);
         Assert.Contains("Brand Perfume", message);
+        Assert.Contains("عطر فارسی", message);
         Assert.Contains("5 میلی‌لیتر", message);
-        Assert.Contains("جمع عطر", message);
-        Assert.Contains("جمع شیشه", message);
+        Assert.Contains("1405/05/12", message);
+        Assert.Contains("جمع عطر و شیشه", message);
+        Assert.False(message.Contains("جمع شیشه:", StringComparison.Ordinal));
         Assert.Contains("1,250,000", message);
         Assert.Contains("PDF", message);
     }

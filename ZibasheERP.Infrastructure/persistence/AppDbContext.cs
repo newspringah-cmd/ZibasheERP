@@ -35,6 +35,7 @@ public class AppDbContext : DbContext
     public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
     public DbSet<IntegrationDeliveryFailure> IntegrationDeliveryFailures => Set<IntegrationDeliveryFailure>();
     public DbSet<InvoicePaymentAccount> InvoicePaymentAccounts => Set<InvoicePaymentAccount>();
+    public DbSet<InvoiceTelegramSetting> InvoiceTelegramSettings => Set<InvoiceTelegramSetting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -60,6 +61,14 @@ public class AppDbContext : DbContext
         ConfigureNotificationOutbox(modelBuilder);
         ConfigureIntegrationDeliveryFailure(modelBuilder);
         ConfigureInvoicePaymentAccount(modelBuilder);
+        ConfigureInvoiceTelegramSetting(modelBuilder);
+    }
+
+    private static void ConfigureInvoiceTelegramSetting(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<InvoiceTelegramSetting>()
+            .Property(value => value.GreetingStickerFileId)
+            .HasMaxLength(500);
     }
 
     private static void ConfigureCustomer(ModelBuilder modelBuilder)
@@ -172,6 +181,10 @@ public class AppDbContext : DbContext
             .HasPrecision(18, 2);
 
         modelBuilder.Entity<SalesList>()
+            .Property(x => x.FixedBottlePrice)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<SalesList>()
             .Property(x => x.RowVersion)
             .IsRowVersion();
 
@@ -191,6 +204,17 @@ public class AppDbContext : DbContext
             .HasOne(x => x.BottleOwnerCustomer)
             .WithMany()
             .HasForeignKey(x => x.BottleOwnerCustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<SalesList>()
+            .HasIndex(x => x.SourceOrderItemId)
+            .IsUnique()
+            .HasFilter("[SourceOrderItemId] IS NOT NULL");
+
+        modelBuilder.Entity<SalesList>()
+            .HasOne(x => x.FixedBottle)
+            .WithMany()
+            .HasForeignKey(x => x.FixedBottleId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -317,6 +341,11 @@ public class AppDbContext : DbContext
     private static void ConfigureOrderItem(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<OrderItem>()
+            .HasOne(x => x.SourceSalesListRequest)
+            .WithMany()
+            .HasForeignKey(x => x.SourceSalesListRequestId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OrderItem>()
             .HasOne(x => x.Order)
             .WithMany(x => x.Items)
             .HasForeignKey(x => x.OrderId)
@@ -405,7 +434,7 @@ public class AppDbContext : DbContext
     {
         modelBuilder.Entity<Invoice>()
             .HasOne(x => x.Order)
-            .WithMany()
+            .WithMany(x => x.Invoices)
             .HasForeignKey(x => x.OrderId)
             .OnDelete(DeleteBehavior.Restrict);
 
@@ -443,6 +472,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<InvoiceIssuanceBatch>()
             .Property(value => value.Notes)
             .HasMaxLength(1000);
+        modelBuilder.Entity<InvoiceIssuanceBatch>()
+            .Property(value => value.TelegramPaymentTrackingChatId)
+            .HasMaxLength(100);
         modelBuilder.Entity<InvoiceIssuanceBatch>()
             .HasIndex(value => new { value.Status, value.CreatedAt });
 

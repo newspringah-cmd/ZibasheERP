@@ -14,6 +14,7 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("from")] TelegramUser? From,
     [property: JsonPropertyName("contact")] TelegramContact? Contact,
     [property: JsonPropertyName("photo")] IReadOnlyCollection<TelegramPhotoSize>? Photo = null,
+    [property: JsonPropertyName("sticker")] TelegramSticker? Sticker = null,
     [property: JsonPropertyName("caption")] string? Caption = null,
     [property: JsonPropertyName("message_id")] long MessageId = 0,
     [property: JsonPropertyName("reply_to_message")] TelegramMessage? ReplyToMessage = null);
@@ -23,6 +24,10 @@ public sealed record TelegramPhotoSize(
     [property: JsonPropertyName("width")] int Width,
     [property: JsonPropertyName("height")] int Height,
     [property: JsonPropertyName("file_size")] long? FileSize = null);
+
+public sealed record TelegramSticker(
+    [property: JsonPropertyName("file_id")] string FileId,
+    [property: JsonPropertyName("emoji")] string? Emoji = null);
 
 public sealed record TelegramChat(
     [property: JsonPropertyName("id")] long Id,

@@ -98,10 +98,12 @@ public sealed partial class TelegramWebhookController
     private async Task StartChannelReservationAsync(
         TelegramCallbackQuery callback, Guid salesListId, int volume, CancellationToken cancellationToken)
     {
-        if (!await _sender.IsChatMemberAsync(_options.SalesChannelId, callback.From.Id.ToString(), cancellationToken))
-            throw new InvalidOperationException("برای ثبت درخواست باید عضو کانال فروش باشید.");
-        var salesList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
+        var initialList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
             ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
+        var membershipChatId = initialList.TelegramChannelId ?? _options.SalesChannelId;
+        if (!await _sender.IsChatMemberAsync(membershipChatId, callback.From.Id.ToString(), cancellationToken))
+            throw new InvalidOperationException("برای ثبت درخواست باید عضو کانال فروش باشید.");
+        var salesList = initialList;
         if (salesList.Status != SalesListStatus.Open || volume < salesList.MinimumRequestVolumeMl || volume > salesList.RemainingVolume)
             throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {salesList.RemainingVolume} میل است.");
         if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
@@ -133,6 +135,22 @@ public sealed partial class TelegramWebhookController
         };
         await _salesListRequestRepository.AddAsync(request, cancellationToken);
         await _salesListRequestRepository.SaveChangesAsync(cancellationToken);
+
+        if (salesList.IsInventoryOffer)
+        {
+            if (!salesList.FixedBottleId.HasValue)
+                throw new InvalidOperationException("شیشه ثابت این موجودی مشخص نشده است.");
+            var bottle = salesList.FixedBottle
+                ?? throw new InvalidOperationException("شیشه این موجودی دیگر فعال نیست.");
+            var bottlePrice = salesList.FixedBottlePrice
+                ?? throw new InvalidOperationException("قیمت ثابت شیشه این موجودی مشخص نیست.");
+            await _salesListRequestRepository.SelectBottleAsync(
+                request.Id, request.TelegramUserId, bottle.Id, bottlePrice, cancellationToken);
+            request = await _salesListRequestRepository.GetAsync(request.Id, cancellationToken) ?? request;
+            await ShowChannelConfirmationAsync(
+                callback, request, $"{BottleLabel(bottle.Type.ToString())} — {bottlePrice:N0} تومان", cancellationToken);
+            return;
+        }
 
         var warning = sameVolumeCount > 0
             ? $"⚠️ شما قبلاً {sameVolumeCount} بار مقدار {volume} میل را در این لیست ثبت کرده‌اید.\n"

@@ -117,4 +117,15 @@ public class SalesList : BaseEntity
     public string? Notes { get; set; }
 
     public ICollection<SalesListRequest> Requests { get; set; } = new List<SalesListRequest>();
+
+    // موجودی برگشتی از یک ردیف فاکتور پرداخت‌نشده.
+    public bool IsInventoryOffer { get; set; }
+
+    public Guid? SourceOrderItemId { get; set; }
+
+    public Guid? FixedBottleId { get; set; }
+
+    public Bottle? FixedBottle { get; set; }
+
+    public decimal? FixedBottlePrice { get; set; }
 }
