@@ -219,9 +219,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
         var message = TelegramNotificationMessageFormatter.Format(
             notification.EventType,
             notification.Payload);
-        var copyButtons = notification.EventType == "InvoiceIssued"
-            ? BuildCardCopyButtons(notification.Payload)
-            : Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
+        var copyButtons = BuildNotificationButtons(notification.EventType, notification.Payload);
         return copyButtons.Length == 0
             ? await _sender.SendAsync(recipient, message, cancellationToken)
             : await _sender.SendInlineKeyboardAsync(recipient, message, copyButtons, cancellationToken);
@@ -255,6 +253,24 @@ public sealed class TelegramOutboxWorker : BackgroundService
             });
         }
         return rows.ToArray();
+    }
+
+    private static IReadOnlyCollection<TelegramInlineButton>[] BuildNotificationButtons(
+        string eventType, string payload)
+    {
+        if (eventType == "InvoiceIssued")
+            return BuildCardCopyButtons(payload);
+        if (eventType is not ("InvoiceDeliveryRequiresManualAction" or "TelegramCustomerGroupRequired"))
+            return [];
+        using var document = JsonDocument.Parse(payload);
+        if (!document.RootElement.TryGetProperty("InvoiceNumber", out var value) ||
+            string.IsNullOrWhiteSpace(value.GetString()))
+            return [];
+        var command = $"/connect {value.GetString()!.Trim()}";
+        return
+        [
+            new[] { new TelegramInlineButton("📋 کپی دستور اتصال گروه", CopyText: command) }
+        ];
     }
 
     private async Task QueueAdminFailureAlertAsync(

@@ -1,4 +1,5 @@
 using ZibasheERP.API.Telegram;
+using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 
@@ -506,6 +507,11 @@ public sealed partial class TelegramWebhookController
         catch (InvalidOperationException exception)
         {
             await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, showAlert: true);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id, "اطلاعات هم‌زمان تغییر کرد؛ دوباره دکمه را بزنید.", ct, showAlert: true);
         }
     }
 

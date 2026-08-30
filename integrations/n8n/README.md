@@ -19,6 +19,12 @@ Schema ورودی در `contracts/event-envelope.schema.json` و نمونه وا
 
 ## مسیرهای workflow
 
+فایل آمادهٔ import در `workflows/production-events.json` قرار دارد. پس از import، سه credential را انتخاب کنید: Header Auth ورودی webhook با هدر `X-Zibashe-Webhook-Token`، Telegram Bot، و Header Auth خروجی API با هدر `X-API-Key`. سپس workflow را Active کنید؛ production webhook باید دقیقاً `/webhook/zibashe-events` باشد. فایل را پس از تغییر Code nodeها با دستور زیر بازسازی کنید:
+
+```bash
+python3 integrations/n8n/build-production-workflow.py
+```
+
 ### InvoiceIssued
 
 1. اعتبارسنجی امضا، timestamp، EventId و Schema.

@@ -13,6 +13,27 @@ public sealed class InvoicePaymentStatusService(AppDbContext db) : IInvoicePayme
         long confirmedByTelegramUserId,
         CancellationToken cancellationToken = default)
     {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                return await MarkPaidOnceAsync(
+                    invoiceId, confirmedByTelegramUserId, cancellationToken);
+            }
+            catch (DbUpdateException) when (attempt < 2)
+            {
+                db.ChangeTracker.Clear();
+            }
+        }
+        throw new InvalidOperationException("ثبت پرداخت به‌دلیل تغییر هم‌زمان اطلاعات انجام نشد؛ دوباره تلاش کنید.");
+    }
+
+    private async Task<InvoicePaymentStatusResult> MarkPaidOnceAsync(
+        Guid invoiceId,
+        long confirmedByTelegramUserId,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var invoice = await Query().FirstOrDefaultAsync(
             value => value.Id == invoiceId && !value.IsDeleted,
             cancellationToken) ?? throw new InvalidOperationException("فاکتور پیدا نشد.");
@@ -38,32 +59,45 @@ public sealed class InvoicePaymentStatusService(AppDbContext db) : IInvoicePayme
         var now = DateTime.UtcNow;
         foreach (var payment in pending)
         {
-            payment.Status = PaymentStatus.Confirmed;
-            payment.IsSuccessful = true;
-            payment.PaidAt = now;
-            payment.UpdatedAt = now;
+            await db.Payments.Where(value => value.Id == payment.Id &&
+                    value.Status == PaymentStatus.Pending && !value.IsDeleted)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(value => value.Status, PaymentStatus.Confirmed)
+                    .SetProperty(value => value.IsSuccessful, true)
+                    .SetProperty(value => value.PaidAt, now)
+                    .SetProperty(value => value.UpdatedAt, now), cancellationToken);
         }
         var adjustment = remaining - pendingAmount;
         if (adjustment > 0)
         {
-            order.Payments.Add(new Payment
+            await db.Payments.AddAsync(new Payment
             {
                 Id = Guid.NewGuid(), CreatedAt = now, OrderId = order.Id,
                 Amount = adjustment, PaymentMethod = "AdminTelegram",
                 TransactionId = $"admin-{invoice.Id:N}", Status = PaymentStatus.Confirmed,
                 IsSuccessful = true, PaidAt = now,
                 Notes = $"تأیید دستی فاکتور توسط مدیر تلگرام {confirmedByTelegramUserId}"
-            });
+            }, cancellationToken);
         }
 
-        customer.CurrentDebt = Math.Max(0, customer.CurrentDebt - remaining);
-        customer.UpdatedAt = now;
+        await db.Customers.Where(value => value.Id == customer.Id && !value.IsDeleted)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(value => value.CurrentDebt, Math.Max(0, customer.CurrentDebt - remaining))
+                .SetProperty(value => value.UpdatedAt, now), cancellationToken);
+        await db.Invoices.Where(value => value.Id == invoice.Id && !value.IsDeleted)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(value => value.Status, InvoiceStatus.Paid)
+                .SetProperty(value => value.UpdatedAt, now), cancellationToken);
+        await db.Orders.Where(value => value.Id == order.Id && !value.IsDeleted)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(value => value.Status, OrderStatus.Paid)
+                .SetProperty(value => value.PaidAt, now)
+                .SetProperty(value => value.UpdatedAt, now), cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         invoice.Status = InvoiceStatus.Paid;
-        invoice.UpdatedAt = now;
         order.Status = OrderStatus.Paid;
         order.PaidAt = now;
-        order.UpdatedAt = now;
-        await db.SaveChangesAsync(cancellationToken);
         return Build(invoice, order);
     }
 
@@ -80,7 +114,7 @@ public sealed class InvoicePaymentStatusService(AppDbContext db) : IInvoicePayme
         return Build(invoice, order);
     }
 
-    private IQueryable<Invoice> Query() => db.Invoices
+    private IQueryable<Invoice> Query() => db.Invoices.AsNoTracking()
         .Include(value => value.Order)
             .ThenInclude(value => value!.Customer)
         .Include(value => value.Order)

@@ -1,0 +1,286 @@
+{
+  "name": "Zibashe Production Events",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Zibashe Events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "zibashe-events",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "validate",
+      "name": "Validate Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Place this immediately after an n8n Webhook node protected by Header Auth.\n// Configure Header Auth to require X-Zibashe-Webhook-Token using an encrypted n8n credential.\nconst webhook = $input.first().json;\nconst headers = Object.fromEntries(\n  Object.entries(webhook.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value]));\nconst body = typeof webhook.body === 'string' ? JSON.parse(webhook.body) : webhook.body;\n\nfunction reject(message) {\n  throw new Error(`Rejected Zibashe event: ${message}`);\n}\n\nconst eventIdHeader = String(headers['x-zibashe-event-id'] ?? '').toLowerCase();\nconst timestampHeader = String(headers['x-zibashe-timestamp'] ?? '');\nconst signatureHeader = String(headers['x-zibashe-signature'] ?? '');\nconst uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n\nif (!body || typeof body !== 'object' || Array.isArray(body)) reject('body is not a JSON object');\nif (!uuidPattern.test(eventIdHeader)) reject('event ID header is invalid');\nif (String(body.eventId ?? '').toLowerCase() !== eventIdHeader) reject('event ID header and body differ');\nif (!/^sha256=[0-9a-f]{64}$/i.test(signatureHeader)) reject('HMAC signature header format is invalid');\n\nconst timestamp = Number(timestampHeader);\nif (!Number.isSafeInteger(timestamp) || timestamp <= 0) reject('timestamp is invalid');\nconst ageSeconds = Math.abs(Math.floor(Date.now() / 1000) - timestamp);\nif (ageSeconds > 300) reject('timestamp is outside the five-minute window');\n\nconst allowedTypes = new Set(['InvoiceIssued', 'OrderDecanted', 'OrderShipped']);\nif (!allowedTypes.has(body.eventType)) reject('event type is not supported');\nif (!uuidPattern.test(String(body.customerId ?? ''))) reject('customer ID is invalid');\nif (!uuidPattern.test(String(body.orderId ?? ''))) reject('order ID is invalid');\nif (!body.data || typeof body.data !== 'object' || Array.isArray(body.data)) reject('data is invalid');\n\nconst delivery = body.data.Delivery;\nif (delivery !== null) {\n  if (!delivery || delivery.Channel !== 'TelegramGroup') reject('delivery channel is invalid');\n  if (!/^-[1-9][0-9]*$/.test(String(delivery.ChatId ?? ''))) reject('delivery ChatId is invalid');\n  if (!String(delivery.Title ?? '').trim()) reject('delivery title is missing');\n}\n\nreturn [{\n  json: {\n    ...body,\n    deliveryReady: delivery !== null,\n    receivedAt: new Date().toISOString()\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "invoice-if",
+      "name": "Is Invoice Issued",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "invoice-condition",
+              "leftValue": "={{ $json.eventType }}",
+              "rightValue": "InvoiceIssued",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "build-html",
+      "name": "Build Invoice HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Paste this file into an n8n Code node configured to run once for all items.\nconst event = $input.first().json;\n\nfunction escapeHtml(value) {\n  return String(value ?? '')\n    .replaceAll('&', '&amp;')\n    .replaceAll('<', '&lt;')\n    .replaceAll('>', '&gt;')\n    .replaceAll('\"', '&quot;')\n    .replaceAll(\"'\", '&#39;');\n}\n\nfunction money(value) {\n  const number = Number(value);\n  if (!Number.isFinite(number)) {\n    throw new Error('Invoice contains an invalid monetary value.');\n  }\n  return `${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(number)} تومان`;\n}\n\nfunction persianDate(value) {\n  const date = new Date(value);\n  if (Number.isNaN(date.getTime())) {\n    throw new Error('Invoice contains an invalid issue date.');\n  }\n  return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {\n    timeZone: 'Asia/Tehran',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n    hourCycle: 'h23'\n  }).format(date);\n}\n\nif (event.eventType !== 'InvoiceIssued' || !event.data) {\n  throw new Error('Expected an InvoiceIssued event.');\n}\nif (!event.data.Delivery?.ChatId) {\n  throw new Error('Invoice event has no approved Telegram group delivery target.');\n}\n\nconst invoice = event.data;\nconst customer = invoice.Customer ?? {};\nconst items = Array.isArray(invoice.Items) ? invoice.Items : [];\nconst paymentAccounts = Array.isArray(invoice.PaymentAccounts) ? invoice.PaymentAccounts.slice(0, 4) : [];\nconst username = String(customer.Username ?? '').trim().replace(/^@/, '');\nconst invoiceTitle = username ? `فاکتور عطر — @${username}` : `فاکتور عطر — ${customer.FullName ?? ''}`;\nif (items.length === 0) {\n  throw new Error('Invoice has no items.');\n}\n\nconst rows = items.map((item) => {\n  const englishName = item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';\n  const persianName = item.PerfumePersianName ?? item.PerfumeName ?? 'آیتم دستی';\n  const englishTitle = [item.PerfumeBrand, englishName].filter(Boolean).join(' ');\n  return `\n  <article class=\"invoice-item\">\n    <div class=\"item-number\">ردیف ${escapeHtml(item.RowNumber)}</div>\n    <div><strong>نام انگلیسی:</strong> <span dir=\"ltr\">${escapeHtml(englishTitle)}</span></div>\n    <div><strong>نام فارسی:</strong> ${escapeHtml(persianName)}</div>\n    <div><strong>مقدار:</strong> ${escapeHtml(item.RequestedVolumeMl)} میلی‌لیتر</div>\n    <div class=\"item-total\"><strong>مبلغ عطر و شیشه:</strong> ${money(item.LineTotal)}</div>\n  </article>`;\n}).join('');\n\nconst accountRows = paymentAccounts.map((account) => `\n  <div class=\"account\">\n    <strong>${escapeHtml(account.CardNumber)}</strong>\n    <span>${escapeHtml(account.AccountHolder)} — بانک ${escapeHtml(account.BankName)}</span>\n  </div>`).join('');\n\nconst invoiceHtml = `<!doctype html>\n<html lang=\"fa\" dir=\"rtl\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>فاکتور ${escapeHtml(invoice.InvoiceNumber)}</title>\n  <style>\n    @page { size: A4; margin: 18mm; }\n    * { box-sizing: border-box; }\n    body { margin: 0; color: #202124; font-family: \"Noto Sans Arabic\", Tahoma, sans-serif; font-size: 12px; }\n    header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #8b5e3c; padding-bottom: 14px; margin-bottom: 18px; }\n    h1 { margin: 0 0 6px; color: #8b5e3c; font-size: 24px; }\n    .brand { font-size: 18px; font-weight: 700; }\n    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; background: #faf6f1; padding: 12px; border-radius: 8px; margin-bottom: 18px; }\n    .items { display: grid; gap: 10px; }\n    .invoice-item { border: 1px solid #ddd; border-right: 4px solid #8b5e3c; border-radius: 7px; padding: 10px 12px; break-inside: avoid; }\n    .invoice-item > div { line-height: 1.8; }\n    .item-number { color: #8b5e3c; font-weight: 700; border-bottom: 1px solid #eee; margin-bottom: 4px; }\n    .item-total { margin-top: 3px; }\n    .totals { width: 48%; margin: 18px 0 0 auto; }\n    .totals div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #ddd; }\n    .totals .final { color: #8b5e3c; font-size: 15px; font-weight: 700; border-bottom: 0; }\n    .payment { margin-top: 22px; padding: 14px; background: #faf6f1; border-radius: 8px; }\n    .account { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #ddd; }\n    footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #ddd; color: #666; text-align: center; }\n  </style>\n</head>\n<body>\n  <header>\n    <div><div class=\"brand\">زیباشی</div><div>${escapeHtml(invoiceTitle)}</div></div>\n    <div><h1>${escapeHtml(invoice.InvoiceNumber)}</h1><div>سفارش: ${escapeHtml(invoice.OrderNumber)}</div></div>\n  </header>\n  <section class=\"meta\">\n    <div><strong>مشتری:</strong> ${escapeHtml(customer.FullName)}</div>\n    <div><strong>شماره موبایل:</strong> ${escapeHtml(customer.Mobile)}</div>\n    <div><strong>تاریخ شمسی:</strong> ${escapeHtml(persianDate(invoice.IssuedAt))}</div>\n    <div><strong>شماره سفارش:</strong> ${escapeHtml(invoice.OrderNumber)}</div>\n  </section>\n  <section class=\"items\">${rows}</section>\n  <section class=\"totals\">\n    <div class=\"final\"><span>جمع عطر و شیشه</span><span>${money(invoice.TotalAmount)}</span></div>\n  </section>\n  ${accountRows ? `<section class=\"payment\"><h3>شماره کارت جهت واریز</h3>${accountRows}<p><strong>مهلت پرداخت فاکتور: ۲۴ ساعت</strong></p></section>` : ''}\n  <footer>این فاکتور به‌صورت خودکار توسط سامانه زیباشی صادر شده است.</footer>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    ...event,\n    invoiceHtml,\n    invoiceFileName: `invoice-${String(invoice.InvoiceNumber).replace(/[^A-Za-z0-9_-]/g, '_')}.pdf`,\n    telegramCaption: `فاکتور ${invoice.InvoiceNumber} — سفارش ${invoice.OrderNumber}`,\n    artifactType: 'InvoicePdf'\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "html-binary",
+      "name": "HTML To Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\nconst html = String(item.json.invoiceHtml ?? '');\nif (!html) throw new Error('Invoice HTML is empty.');\nreturn [{json: item.json, binary: {data: {data: Buffer.from(html, 'utf8').toString('base64'), mimeType: 'text/html', fileName: 'index.html'}}}];"
+      }
+    },
+    {
+      "id": "gotenberg",
+      "name": "Create PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "telegram",
+      "name": "Send PDF To Customer Group",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1440,
+        -80
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendDocument",
+        "chatId": "={{ $('Build Invoice HTML').first().json.data.Delivery.ChatId }}",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "additionalFields": {
+          "caption": "={{ $('Build Invoice HTML').first().json.telegramCaption }}"
+        }
+      }
+    },
+    {
+      "id": "artifact",
+      "name": "Build Artifact Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const event = $('Build Invoice HTML').first().json;\nconst telegram = $input.first().json;\nconst fileId = telegram.document?.file_id ?? telegram.result?.document?.file_id;\nif (!fileId) throw new Error('Telegram did not return the PDF file_id.');\nreturn [{json: {sourceEventId: event.eventId, orderId: event.orderId, type: 'InvoicePdf', fileUrl: null, externalFileId: fileId, contentType: 'application/pdf'}}];"
+      }
+    },
+    {
+      "id": "record",
+      "name": "Record PDF Artifact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        -80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://erp.zibashe.ir/api/integrations/n8n/order-artifacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Zibashe Events": {
+      "main": [
+        [
+          {
+            "node": "Validate Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Event": {
+      "main": [
+        [
+          {
+            "node": "Is Invoice Issued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Invoice Issued": {
+      "main": [
+        [
+          {
+            "node": "Build Invoice HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build Invoice HTML": {
+      "main": [
+        [
+          {
+            "node": "HTML To Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML To Binary": {
+      "main": [
+        [
+          {
+            "node": "Create PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create PDF": {
+      "main": [
+        [
+          {
+            "node": "Send PDF To Customer Group",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send PDF To Customer Group": {
+      "main": [
+        [
+          {
+            "node": "Build Artifact Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Artifact Callback": {
+      "main": [
+        [
+          {
+            "node": "Record PDF Artifact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "00000000-0000-4000-8000-000000000001",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
