@@ -20,6 +20,10 @@ const event = {
       FullName: '<script>مشتری</script>',
       Mobile: '09120000000'
     },
+    PaymentAccounts: [
+      { CardNumber: '6280231544451379', BankName: 'مسکن', AccountHolder: 'زیباشی' },
+      { CardNumber: '6037997450926374', BankName: 'ملی', AccountHolder: 'زیباشی' }
+    ],
     Items: [{
       RowNumber: 1,
       PerfumeBrand: 'Brand',
@@ -29,6 +33,7 @@ const event = {
       PerfumeAmount: 1000,
       IsBottleOwner: true,
       BottleName: 'شیشه',
+      BottlePrice: 200,
       LineTotal: 1200
     }]
   }
@@ -46,15 +51,17 @@ if (result.json.invoiceFileName !== 'invoice-INV-TEST.pdf') {
 if (result.json.artifactType !== 'InvoicePdf') {
   throw new Error('Invoice renderer produced an unexpected artifact type.');
 }
-if (!result.json.invoiceHtml.includes('فاکتور خرید') ||
-    !result.json.invoiceHtml.includes('ZibaShe') ||
+if (!result.json.invoiceHtml.includes('__INVOICE_BACKGROUND_DATA_URI__') ||
+    !result.json.invoiceHtml.includes('class="background"') ||
     !result.json.invoiceHtml.includes('English Perfume') ||
     !result.json.invoiceHtml.includes('عطر فارسی') ||
-    !result.json.invoiceHtml.includes('قیمت کل') ||
-    !result.json.invoiceHtml.includes('مبلغ قابل پرداخت:')) {
-  throw new Error('Invoice renderer did not render the branded table layout.');
+    !result.json.invoiceHtml.includes('class="invoice-row"') ||
+    !result.json.invoiceHtml.includes('قیمت شیشه') ||
+    !result.json.invoiceHtml.includes('class="total final"') ||
+    result.json.invoiceHtml.includes('هزینه ارسال')) {
+  throw new Error('Invoice renderer did not render data over the fixed background.');
 }
-if (!result.json.invoiceHtml.includes('تاریخ:') ||
+if (!result.json.invoiceHtml.includes('class="field date"') ||
     result.json.invoiceHtml.includes('جمع شیشه</span>')) {
   throw new Error('Invoice renderer did not use the Persian date or combined total layout.');
 }
@@ -66,6 +73,26 @@ if (!result.json.telegramCaption.includes('مبلغ قابل پرداخت') ||
     result.json.waitingCallbackData !== 'invoicepay:waiting:aaaaaaaabbbbccccddddeeeeeeeeeeee' ||
     result.json.telegramCaption.length > 1024) {
   throw new Error('Invoice renderer did not prepare the combined Telegram document message.');
+}
+if (result.json.firstCardCopyText !== '6280231544451379' ||
+    result.json.secondCardCopyText !== '6037997450926374' ||
+    !result.json.firstCardCopyLabel.includes('مسکن') ||
+    !result.json.secondCardCopyLabel.includes('ملی')) {
+  throw new Error('Invoice renderer did not prepare payment card copy buttons.');
+}
+
+const paginationEvent = structuredClone(event);
+paginationEvent.data.Items = Array.from({ length: 9 }, (_, index) => ({
+  ...event.data.Items[0],
+  RowNumber: index + 1,
+  PerfumePersianName: `عطر ${index + 1}`
+}));
+const [paginatedResult] = run({ first: () => ({ json: paginationEvent }) });
+const pageCount = (paginatedResult.json.invoiceHtml.match(/<main class="page">/g) ?? []).length;
+const finalTotalCount = (paginatedResult.json.invoiceHtml.match(/class="total final"/g) ?? []).length;
+if (pageCount !== 2 || finalTotalCount !== 1 ||
+    !paginatedResult.json.invoiceHtml.includes('صفحه ۲ از ۲')) {
+  throw new Error('Invoice renderer did not paginate after eight rows.');
 }
 
 console.log('Invoice renderer test: PASS');

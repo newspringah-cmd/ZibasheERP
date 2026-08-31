@@ -65,6 +65,7 @@ public interface IInvoiceIssuanceService
     Task<InvoiceIssuanceResult> IssueManualAsync(
         string customerIdentity,
         IReadOnlyCollection<ManualInvoiceLineInput> lines,
+        string productPhotoFileId,
         string issuedByTelegramUserId,
         CancellationToken cancellationToken = default);
 

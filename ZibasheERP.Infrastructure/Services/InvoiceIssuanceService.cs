@@ -285,6 +285,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     public async Task<InvoiceIssuanceResult> IssueManualAsync(
         string customerIdentity,
         IReadOnlyCollection<ManualInvoiceLineInput> lines,
+        string productPhotoFileId,
         string issuedByTelegramUserId,
         CancellationToken cancellationToken = default)
     {
@@ -330,7 +331,9 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         customer.UpdatedAt = now;
         await _db.Orders.AddAsync(order, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
-        var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id), cancellationToken);
+        var invoice = await _sender.Send(
+            new IssueInvoiceCommand(order.Id, productPhotoFileId.Trim()),
+            cancellationToken);
         return new InvoiceIssuanceResult(Guid.Empty, 1, new[] { invoice.InvoiceNumber }, Array.Empty<SalesListProductionCopy>());
     }
 

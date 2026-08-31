@@ -15,8 +15,7 @@ function persianDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error('Invoice contains an invalid issue date.');
   return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {
-    timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit'
   }).format(date);
 }
 function formatCard(value) {
@@ -33,20 +32,17 @@ const paymentAccounts = Array.isArray(invoice.PaymentAccounts) ? invoice.Payment
 const username = String(customer.Username ?? '').trim().replace(/^@/, '');
 const customerName = username ? `@${username}` : (customer.FullName ?? 'مشتری زیباشی');
 if (items.length === 0) throw new Error('Invoice has no items.');
-const pageClass = items.length > 10 ? 'page compact' : 'page';
 
-const rows = items.map((item) => {
+const renderRows = (pageItems) => pageItems.map((item) => {
   const englishName = item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
   const persianName = item.PerfumePersianName ?? item.PerfumeName ?? 'آیتم دستی';
   const englishTitle = [item.PerfumeBrand, englishName].filter(Boolean).join(' ');
-  return `<tr><td class="row-number">${number(item.RowNumber)}</td>
-    <td class="item-name"><strong>${escapeHtml(persianName)}</strong><small dir="ltr">${escapeHtml(englishTitle)}</small></td>
-    <td>${number(item.RequestedVolumeMl)} میل</td><td>${number(item.Quantity ?? 1)}</td>
-    <td>${money(item.PerfumePricePerMl ?? 0)}</td><td class="line-total">${money(item.LineTotal)}</td></tr>`;
+  return `<div class="invoice-row"><span>${number(item.RowNumber)}</span>
+    <span class="item-name"><strong>${escapeHtml(persianName)}</strong><small dir="ltr">${escapeHtml(englishTitle)}</small></span>
+    <span>${number(item.RequestedVolumeMl)}</span><span>${number(item.Quantity ?? 1)}</span>
+    <span>${number(item.PerfumePricePerMl ?? 0)}</span><span>${number(item.BottlePrice ?? 0)}</span>
+    <span>${number(item.LineTotal)}</span></div>`;
 }).join('');
-const accountRows = paymentAccounts.map((account) => `<div class="account">
-  <div class="card" dir="ltr">${escapeHtml(formatCard(account.CardNumber))}</div>
-  <div>${escapeHtml(account.AccountHolder)} - بانک ${escapeHtml(account.BankName)}</div></div>`).join('');
 
 const captionLines = [
   `🧾 فاکتور عطر ${customerName}`,
@@ -72,27 +68,30 @@ if (paymentAccounts.length > 0) {
 captionLines.push('', 'با تشکر از خرید شما', 'مهلت پرداخت فاکتور: ۲۴ ساعت');
 const telegramCaption = captionLines.join('\n').slice(0, 1024);
 const invoiceId = String(invoice.InvoiceId ?? '').replaceAll('-', '');
+const firstPaymentAccount = paymentAccounts[0] ?? {};
+const secondPaymentAccount = paymentAccounts[1] ?? {};
+const backgroundImage = '__INVOICE_BACKGROUND_DATA_URI__';
+const pages = Array.from(
+  { length: Math.ceil(items.length / 8) },
+  (_, index) => items.slice(index * 8, index * 8 + 8));
+const pagesHtml = pages.map((pageItems, pageIndex) => {
+  const isLastPage = pageIndex === pages.length - 1;
+  return `<main class="page"><img class="background" src="${backgroundImage}" alt="">
+    <div class="field date">${escapeHtml(persianDate(invoice.IssuedAt))}</div>
+    <div class="field customer">${escapeHtml(customerName)}</div>
+    <div class="field invoice-number">${escapeHtml(invoice.InvoiceNumber)}</div>
+    <div class="field mobile">${escapeHtml(customer.Mobile ?? '-')}</div>
+    <div class="table-head"><span>ردیف</span><span>نام عطر</span><span>مقدار (میل)</span><span>تعداد</span><span>قیمت واحد</span><span>قیمت شیشه</span><span>قیمت کل</span></div>
+    <section class="rows">${renderRows(pageItems)}</section>
+    ${isLastPage ? `<div class="total subtotal">${money(invoice.TotalAmount)}</div>
+    <div class="shipping-mask"></div>
+    <div class="total final">${money(invoice.TotalAmount)}</div>` : '<div class="shipping-mask"></div>'}
+    ${pages.length > 1 ? `<div class="page-counter">صفحه ${number(pageIndex + 1)} از ${number(pages.length)}</div>` : ''}
+  </main>`;
+}).join('');
 
 const invoiceHtml = `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">
 <title>فاکتور ${escapeHtml(invoice.InvoiceNumber)}</title><style>
-@page{size:A4;margin:8mm}:root{--wine:#78151c;--rose:#c98f83;--cream:#fff9f3;--gold:#aa7a32;--ink:#4f2928}*{box-sizing:border-box}html{background:#f3e8dc}body{margin:0;color:var(--ink);font-family:"Noto Sans Arabic","Vazirmatn",Tahoma,sans-serif;font-size:11px;background:var(--cream)}
-.page{min-height:277mm;position:relative;overflow:hidden;padding:13mm 12mm 10mm;border:1px solid #e5c9bc;background:radial-gradient(circle at 8% 8%,rgba(225,170,158,.24),transparent 18%),linear-gradient(145deg,#fffaf5 0%,#fdf2e9 58%,#fffaf5 100%)}.page:before,.page:after{content:"";position:absolute;border:1px solid rgba(170,122,50,.35);border-radius:50%;pointer-events:none}.page:before{width:120px;height:120px;left:-62px;top:-55px;box-shadow:28px 22px 0 -27px var(--rose),55px 48px 0 -52px var(--wine)}.page:after{width:150px;height:150px;right:-88px;bottom:-88px;box-shadow:-35px -30px 0 -34px var(--rose)}
-header{display:grid;grid-template-columns:1fr 1.08fr;gap:24px;align-items:center;margin-bottom:11mm}.brand-panel{text-align:center;border-left:1px solid rgba(170,122,50,.25);padding-left:18px}.emblem{width:68px;height:68px;margin:0 auto 4px;border:4px solid var(--wine);border-top-color:transparent;border-radius:50%;position:relative}.emblem:before{content:"Z";position:absolute;inset:9px 0 0;color:var(--wine);font:700 34px Georgia,serif}.emblem:after{content:"";position:absolute;width:24px;height:7px;border-radius:6px;background:var(--wine);top:-7px;left:18px;box-shadow:0 -7px 0 -2px var(--wine)}.brand-en{color:var(--wine);font:500 29px Georgia,serif;letter-spacing:5px;direction:ltr}.tagline{color:var(--gold);font-size:12px;margin-top:2px}
-.invoice-head h1{margin:0 0 10px;color:var(--wine);font-size:25px}.ornament{display:flex;align-items:center;gap:8px;width:145px;margin:0 0 14px auto;color:var(--gold)}.ornament:before,.ornament:after{content:"";height:1px;background:rgba(170,122,50,.55);flex:1}.ornament i{width:8px;height:8px;background:var(--gold);transform:rotate(45deg)}.meta{display:grid;grid-template-columns:1fr 1fr;gap:7px 18px}.meta div{border-bottom:1px dotted #d8b8ae;padding:3px 0;min-height:23px}.meta strong{color:var(--wine)}.meta span[dir="ltr"]{display:inline-block;white-space:nowrap;font-size:9px}
-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;border:1px solid #dcbdb2;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.45)}thead{display:table-header-group}th{background:linear-gradient(#ead0c7,#e4c3b8);color:#5d211f;padding:9px 5px;font-size:10.5px;border-left:1px solid #d5b2a6}th:last-child,td:last-child{border-left:0}td{padding:8px 6px;text-align:center;vertical-align:middle;border-top:1px dotted #d9c0b7;border-left:1px solid #ead6cf;line-height:1.55}tbody tr{break-inside:avoid}.row-number{color:var(--wine);font-weight:700}.item-name{text-align:right}.item-name strong,.item-name small{display:block}.item-name small{color:#8f6963;font-size:9px;margin-top:2px}.line-total{font-weight:700;color:var(--wine)}
-.summary{display:grid;grid-template-columns:1.45fr .9fr;gap:16px;margin-top:9mm;break-inside:avoid}.payment{border:1px solid #dec1b7;border-radius:12px;padding:12px;background:rgba(255,255,255,.42)}.payment h3{color:var(--wine);margin:0 0 8px;font-size:13px}.account{display:grid;grid-template-columns:1fr 1fr;gap:8px;border-top:1px dotted #d8b8ae;padding:7px 0}.account:first-of-type{border-top:0}.card{font-weight:700;letter-spacing:.6px;color:var(--wine)}.totals{border-radius:12px;overflow:hidden;border:1px solid #dec1b7;align-self:start}.totals div{display:flex;justify-content:space-between;padding:10px 12px;background:rgba(255,255,255,.48)}.totals .final{background:linear-gradient(90deg,#edd3ca,#e4bdb2);color:var(--wine);font-size:14px;font-weight:800;border-top:1px solid #d6ada2}.deadline{text-align:center;color:var(--wine);font-weight:700;margin:9px 0 0}
-footer{margin-top:11mm;text-align:center;color:var(--wine);font-size:13px;break-inside:avoid}.footer-tagline{color:var(--gold);font-size:10px;margin-top:3px}.social{margin-top:8px;padding-top:8px;border-top:1px solid rgba(170,122,50,.3);direction:ltr;color:#865754;font-size:9px;letter-spacing:.4px}@media print{html,body{background:white}.page{break-after:page}}
-.compact header{margin-bottom:5mm}.compact .emblem{width:48px;height:48px}.compact .emblem:before{inset:3px 0 0;font-size:29px}.compact .emblem:after{left:8px}.compact .brand-en{font-size:22px}.compact .invoice-head h1{font-size:20px;margin-bottom:4px}.compact .ornament{margin-bottom:5px}.compact .meta{gap:3px 14px}.compact .meta div{min-height:18px;padding:1px 0}.compact td{padding:5px}.compact .summary{margin-top:4mm}.compact .payment{padding:8px}.compact .account{padding:4px 0}.compact .totals div{padding:7px 9px}.compact footer{display:none}</style></head><body><main class="${pageClass}"><header>
-<section class="brand-panel"><div class="emblem"></div><div class="brand-en">ZibaShe</div><div class="tagline">فروشگاه تخصصی عطر</div></section>
-<section class="invoice-head"><h1>فاکتور خرید</h1><div class="ornament"><i></i></div><div class="meta">
-<div><strong>تاریخ:</strong> ${escapeHtml(persianDate(invoice.IssuedAt))}</div><div><strong>شماره فاکتور:</strong> <span dir="ltr">${escapeHtml(invoice.InvoiceNumber)}</span></div>
-<div><strong>نام کاربری:</strong> ${escapeHtml(customerName)}</div><div><strong>شماره تماس:</strong> <span dir="ltr">${escapeHtml(customer.Mobile ?? '-')}</span></div>
-<div><strong>شماره سفارش:</strong> <span dir="ltr">${escapeHtml(invoice.OrderNumber)}</span></div></div></section></header>
-<table><colgroup><col style="width:7%"><col style="width:30%"><col style="width:13%"><col style="width:9%"><col style="width:18%"><col style="width:23%"></colgroup>
-<thead><tr><th>ردیف</th><th>نام عطر</th><th>مقدار (میل)</th><th>تعداد</th><th>قیمت واحد</th><th>قیمت کل</th></tr></thead><tbody>${rows}</tbody></table>
-<section class="summary"><div class="payment"><h3>اطلاعات پرداخت</h3>${accountRows || '<div>اطلاعات حساب ثبت نشده است.</div>'}<p class="deadline">مهلت پرداخت فاکتور: ۲۴ ساعت</p></div>
-<div class="totals"><div><span>جمع عطر و شیشه:</span><strong>${money(invoice.TotalAmount)}</strong></div><div class="final"><span>مبلغ قابل پرداخت:</span><span>${money(invoice.TotalAmount)}</span></div></div></section>
-<footer><div>ممنون از اعتماد شما</div><div class="footer-tagline">عطر، حس خوب ماندگار</div><div class="social">zibasheperfume &nbsp; | &nbsp; Ziblog</div></footer>
-</main></body></html>`;
+@page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;width:210mm;background:#faefea}body{font-family:"Noto Sans Arabic","Vazirmatn",Tahoma,sans-serif;color:#55151b}.page{position:relative;width:210mm;height:297mm;overflow:hidden;break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}.background{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;z-index:0}.field{position:absolute;z-index:2;text-align:right;font-weight:700;font-size:10px;line-height:1.2;color:#59131a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.date{top:19.8%;right:24.8%;width:22%}.customer{top:23.5%;right:24.8%;width:22%}.invoice-number{top:27.1%;right:24.8%;width:22%;direction:ltr;text-align:right}.mobile{top:30.7%;right:24.8%;width:22%;direction:ltr;text-align:right}.table-head{position:absolute;z-index:3;top:36%;right:8%;width:84%;height:3.8%;display:grid;grid-template-columns:10% 22% 14% 11% 15% 14% 14%;direction:rtl;align-items:center;text-align:center;background:rgba(239,203,208,.97);border-radius:12px 12px 0 0;color:#531719;font-weight:700;font-size:8.5px}.table-head span{height:100%;display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(125,66,70,.12)}.table-head span:last-child{border-left:0}.rows{position:absolute;z-index:2;top:39.7%;right:8%;width:84%;height:29.3%;display:flex;flex-direction:column;justify-content:space-around;overflow:hidden}.invoice-row{display:grid;grid-template-columns:10% 22% 14% 11% 15% 14% 14%;direction:rtl;align-items:center;text-align:center;min-height:0;flex:1;font-size:8.3px;line-height:1.15;color:#4e2324}.invoice-row .item-name{padding:0 3px}.invoice-row .item-name strong,.invoice-row .item-name small{display:block}.invoice-row .item-name small{font-size:.82em;color:#7f5555}.total{position:absolute;z-index:3;right:8%;width:14%;height:2.8%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#68141b;font-size:9px}.subtotal{top:71.1%}.final{top:79.9%;font-size:10px}.shipping-mask{position:absolute;z-index:2;top:74.3%;right:7.5%;width:36%;height:4.2%;background:#faece8}.page-counter{position:absolute;z-index:2;bottom:1.3%;left:4%;font-size:7px;color:#8c5b5d}@media print{html,body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}</style></head><body>${pagesHtml}</body></html>`;
 
-return [{json:{...event,invoiceHtml,invoiceFileName:`invoice-${String(invoice.InvoiceNumber).replace(/[^A-Za-z0-9_-]/g,'_')}.pdf`,telegramCaption,paidCallbackData:`invoicepay:paid:${invoiceId}`,waitingCallbackData:`invoicepay:waiting:${invoiceId}`,artifactType:'InvoicePdf'}}];
+return [{json:{...event,invoiceHtml,invoiceFileName:`invoice-${String(invoice.InvoiceNumber).replace(/[^A-Za-z0-9_-]/g,'_')}.pdf`,telegramCaption,paidCallbackData:`invoicepay:paid:${invoiceId}`,waitingCallbackData:`invoicepay:waiting:${invoiceId}`,firstCardCopyText:String(firstPaymentAccount.CardNumber??''),firstCardCopyLabel:`📋 کپی کارت ${firstPaymentAccount.BankName??'اول'}`,secondCardCopyText:String(secondPaymentAccount.CardNumber??''),secondCardCopyLabel:`📋 کپی کارت ${secondPaymentAccount.BankName??'دوم'}`,artifactType:'InvoicePdf'}}];

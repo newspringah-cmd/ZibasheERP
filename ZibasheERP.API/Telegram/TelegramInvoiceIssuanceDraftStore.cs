@@ -15,7 +15,18 @@ public sealed class TelegramInvoiceIssuanceDraftStore
     public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);
 }
 
-public enum TelegramManualInvoiceStage { AwaitingCustomer, AwaitingLine, AwaitingConfirmation }
+public enum TelegramManualInvoiceStage
+{
+    AwaitingCustomer,
+    AwaitingLine,
+    AwaitingLineQuantity,
+    AwaitingLineUnitAmount,
+    AwaitingLineBottleAmount,
+    AwaitingMoreLines,
+    AwaitingPhoto,
+    AwaitingConfirmation,
+    Issuing
+}
 
 public sealed class TelegramManualInvoiceDraft
 {
@@ -23,6 +34,10 @@ public sealed class TelegramManualInvoiceDraft
     public required long UserId { get; init; }
     public TelegramManualInvoiceStage Stage { get; set; } = TelegramManualInvoiceStage.AwaitingCustomer;
     public string CustomerIdentity { get; set; } = string.Empty;
+    public string ProductPhotoFileId { get; set; } = string.Empty;
+    public string PendingLineDescription { get; set; } = string.Empty;
+    public int PendingLineQuantity { get; set; }
+    public decimal PendingLineUnitAmount { get; set; }
     public List<ZibasheERP.Application.Interfaces.ManualInvoiceLineInput> Lines { get; } = [];
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -48,6 +63,28 @@ public sealed class TelegramManualInvoiceDraftStore
         _drafts.TryRemove((chatId, userId), out _);
         draft = null!;
         return false;
+    }
+
+    public bool TryBeginIssuing(long chatId, long userId, out TelegramManualInvoiceDraft draft)
+    {
+        if (!_drafts.TryGetValue((chatId, userId), out var found))
+        {
+            draft = null!;
+            return false;
+        }
+        lock (found)
+        {
+            if (found.UpdatedAt <= DateTime.UtcNow.AddMinutes(-20) ||
+                found.Stage != TelegramManualInvoiceStage.AwaitingConfirmation)
+            {
+                draft = null!;
+                return false;
+            }
+            found.Stage = TelegramManualInvoiceStage.Issuing;
+            found.UpdatedAt = DateTime.UtcNow;
+            draft = found;
+            return true;
+        }
     }
 
     public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);

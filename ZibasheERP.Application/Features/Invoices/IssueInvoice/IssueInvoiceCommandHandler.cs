@@ -157,6 +157,26 @@ public sealed class IssueInvoiceCommandHandler
                     Payload = System.Text.Json.JsonSerializer.Serialize(photo)
                 }, cancellationToken);
             }
+            if (!string.IsNullOrWhiteSpace(request.ManualProductPhotoFileId))
+            {
+                await _outboxRepository.AddAsync(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(),
+                    CreatedAt = now.AddTicks(sequence++),
+                    CustomerId = order.CustomerId,
+                    OrderId = order.Id,
+                    Channel = "Telegram",
+                    EventType = "InvoicePerfumePhoto",
+                    Recipient = notification.Recipient,
+                    Payload = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        FileId = request.ManualProductPhotoFileId.Trim(),
+                        PersianName = order.Items.OrderBy(item => item.RowNumber)
+                            .First().ManualDescription,
+                        EnglishName = (string?)null
+                    })
+                }, cancellationToken);
+            }
         }
         if (!hasDeliveryGroup)
         {

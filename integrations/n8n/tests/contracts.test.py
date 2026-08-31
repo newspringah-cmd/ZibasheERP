@@ -15,6 +15,7 @@ def load(relative_path):
 event = load("samples/invoice-issued.json")
 artifact = load("samples/artifact-callback.json")
 failure = load("samples/delivery-failure.json")
+workflow = load("workflows/production-events.json")
 
 assert event["eventType"] == "InvoiceIssued"
 assert UUID.fullmatch(event["eventId"])
@@ -32,5 +33,16 @@ assert artifact["contentType"] == "application/pdf"
 assert failure["sourceEventId"] == event["eventId"]
 assert failure["chatId"] == event["data"]["Delivery"]["ChatId"]
 assert 1 <= len(failure["error"]) <= 1000
+
+nodes = {node["name"]: node for node in workflow["nodes"]}
+assert nodes["Zibashe Events"]["parameters"]["responseMode"] == "responseNode"
+assert nodes["Record PDF Artifact"]["onError"] == "continueRegularOutput"
+assert "Acknowledge Invoice Delivery" in nodes
+telegram_buttons = nodes["Send PDF To Customer Group"]["parameters"]["inlineKeyboard"]["rows"]
+assert any(
+    "copy_text" in button.get("additionalFields", {})
+    for row in telegram_buttons
+    for button in row["row"]["buttons"]
+)
 
 print("n8n contract samples test: PASS")
