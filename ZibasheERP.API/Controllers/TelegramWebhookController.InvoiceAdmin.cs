@@ -587,9 +587,13 @@ public sealed partial class TelegramWebhookController
             if (!string.IsNullOrWhiteSpace(item.TelegramPhotoFileId) &&
                 !string.IsNullOrWhiteSpace(_options.SalesChannelId))
             {
-                var published = await _sender.SendPhotoHtmlAsync(
+                var publishedSalesList = await _salesListRepository.GetByIdAsync(
+                    item.SalesListId!.Value, ct) ?? throw new InvalidOperationException("لیست واردشده پیدا نشد.");
+                var publishedRequests = await _salesListRequestRepository.GetConfirmedAsync(publishedSalesList.Id, ct);
+                var published = await _sender.SendPhotoWithKeyboardAsync(
                     _options.SalesChannelId, item.TelegramPhotoFileId,
-                    item.RawText, ct);
+                    FormatChannelSalesList(publishedSalesList, publishedRequests),
+                    BuildChannelVolumeButtons(publishedSalesList), ct);
                 if (!published.IsSuccessful)
                     throw new InvalidOperationException($"ثبت انجام شد اما انتشار کانال ناموفق بود: {published.Error}");
                 item.PublishedMessageId = published.MessageId;

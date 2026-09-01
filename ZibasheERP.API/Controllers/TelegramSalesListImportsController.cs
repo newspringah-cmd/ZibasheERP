@@ -62,7 +62,8 @@ public sealed class TelegramSalesListImportsController(
                     new TelegramInlineButton("❌ رد", $"import:reject:{item.Id:N}") }
         };
         var sent = await sender.SendPhotoBytesWithKeyboardAsync(
-            options.Value.SalesAuditChatId, memory.ToArray(), photo.FileName, reviewText, buttons, cancellationToken);
+            options.Value.SalesAuditChatId, memory.ToArray(), photo.FileName,
+            reviewText, Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), cancellationToken);
         if (!sent.IsSuccessful)
         {
             item.Status = TelegramSalesListImportStatus.Failed;
@@ -74,7 +75,23 @@ public sealed class TelegramSalesListImportsController(
         item.ReviewMessageId = sent.MessageId;
         item.TelegramPhotoFileId = sent.ExternalFileId;
         await db.SaveChangesAsync(cancellationToken);
+
+        foreach (var chunk in SplitForTelegram(item.RawText, 3800))
+            await sender.SendInlineKeyboardAsync(options.Value.SalesAuditChatId, chunk, buttons, cancellationToken);
         return Ok(new { item.Id, item.ReviewMessageId });
+    }
+
+    private static IEnumerable<string> SplitForTelegram(string value, int maximum)
+    {
+        var text = value.Trim();
+        while (text.Length > maximum)
+        {
+            var cut = text.LastIndexOf('\n', maximum - 1);
+            if (cut < maximum / 2) cut = maximum;
+            yield return text[..cut];
+            text = text[cut..].TrimStart();
+        }
+        if (text.Length > 0) yield return text;
     }
 
     private static string BuildReviewText(TelegramSalesListImport item, string parsedPayload)
