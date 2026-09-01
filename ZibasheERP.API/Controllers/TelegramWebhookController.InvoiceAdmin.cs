@@ -470,16 +470,20 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "شناسه واردات نامعتبر است.", ct);
             return;
         }
-        if (!await IsAuthorizedInvoiceAdminAsync(callback.Message!.Chat.Id, callback.From.Id, ct))
-        {
-            await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مدیریت ندارید.", ct);
-            return;
-        }
         var item = await _db.TelegramSalesListImports.FirstOrDefaultAsync(value =>
             value.Id == importId && !value.IsDeleted, ct);
         if (item is null)
         {
             await _sender.AnswerCallbackAsync(callback.Id, "رکورد واردات پیدا نشد.", ct);
+            return;
+        }
+        var reviewChatId = item.ReviewChatId?.Trim();
+        var canReview = IsPrimaryOwner(callback.From.Id) ||
+            (reviewChatId == callback.Message.Chat.Id.ToString() &&
+             await _sender.IsChatAdministratorAsync(reviewChatId, callback.From.Id.ToString(), ct));
+        if (!canReview)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مدیریت این گروه را ندارید.", ct);
             return;
         }
         if (item.Status is TelegramSalesListImportStatus.Rejected or TelegramSalesListImportStatus.Imported)
