@@ -92,9 +92,9 @@ public static partial class TelegramSalesListImportParser
             ? brandMatch.Groups["value"].Value.Trim().Replace('_', ' ')
             : string.Empty;
         var persianName = FindPersianName(lines);
-        var topNotes = FindSection(text, "نت های اولیه", "نت‌های اولیه");
+        var topNotes = FindSection(text, "نت های اولیه", "نت‌های اولیه", "نت‌های ابتدایی", "نت های ابتدایی");
         var middleNotes = FindSection(text, "نت های میانی", "نت‌های میانی");
-        var baseNotes = FindSection(text, "نت های پایه", "نت‌های پایه");
+        var baseNotes = FindSection(text, "نت های پایه", "نت‌های پایه", "نت‌های پایانی", "نت های پایانی");
         var accords = FindLineAfterLabel(lines, "آکوردها");
         var productUrl = Regex.Match(text, @"https?://\S+", RegexOptions.IgnoreCase) is { Success: true } url
             ? url.Value.TrimEnd('.', ',', ')') : null;
@@ -254,7 +254,7 @@ public static partial class TelegramSalesListImportParser
         {
             var index = text.IndexOf(label, StringComparison.OrdinalIgnoreCase);
             if (index < 0) continue;
-            var value = text[(index + label.Length)..].TrimStart(" :🍊🌹🌬️🪵🌸".ToCharArray());
+            var value = text[(index + label.Length)..].TrimStart(" :🍊🌹🌬️🪵🌸💐🌶️".ToCharArray());
             value = value.Split("آکوردها", StringSplitOptions.None)[0];
             value = Regex.Replace(value, @"\s{2,}", " ").Trim();
             return value.Split('\n').FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?.Trim() ?? string.Empty;
