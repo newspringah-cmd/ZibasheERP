@@ -18,6 +18,11 @@ public sealed record TelegramSalesListImportParseResult(
     PerfumeGender Gender,
     int? ReleaseYear,
     string PersianName,
+    string TopNotes,
+    string MiddleNotes,
+    string BaseNotes,
+    string Accords,
+    string? ProductPageUrl,
     int? TotalVolumeMl,
     decimal? PricePerMl,
     int? MinimumRequestVolumeMl,
@@ -87,6 +92,12 @@ public static partial class TelegramSalesListImportParser
             ? brandMatch.Groups["value"].Value.Trim().Replace('_', ' ')
             : string.Empty;
         var persianName = FindPersianName(lines);
+        var topNotes = FindSection(text, "نت های اولیه", "نت‌های اولیه");
+        var middleNotes = FindSection(text, "نت های میانی", "نت‌های میانی");
+        var baseNotes = FindSection(text, "نت های پایه", "نت‌های پایه");
+        var accords = FindLineAfterLabel(lines, "آکوردها");
+        var productUrl = Regex.Match(text, @"https?://\S+", RegexOptions.IgnoreCase) is { Success: true } url
+            ? url.Value.TrimEnd('.', ',', ')') : null;
         var gender = text.Contains("#forwomen", StringComparison.OrdinalIgnoreCase) &&
                      text.Contains("#formen", StringComparison.OrdinalIgnoreCase) ||
                      text.Contains("#unisex", StringComparison.OrdinalIgnoreCase)
@@ -114,7 +125,7 @@ public static partial class TelegramSalesListImportParser
         }
 
         return new TelegramSalesListImportParseResult(
-            code, englishName, brand, gender, year, persianName, totalVolume,
+            code, englishName, brand, gender, year, persianName, topNotes, middleNotes, baseNotes, accords, productUrl, totalVolume,
             price, minimum, remaining, requests, issues.Distinct().ToArray());
     }
 
@@ -235,6 +246,26 @@ public static partial class TelegramSalesListImportParser
         return lines.Skip(yearIndex + 1)
             .FirstOrDefault(line => line.Any(character => character is >= '\u0600' and <= '\u06ff') &&
                                     !line.Contains("نت", StringComparison.Ordinal)) ?? string.Empty;
+    }
+
+    private static string FindSection(string text, params string[] labels)
+    {
+        foreach (var label in labels)
+        {
+            var index = text.IndexOf(label, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) continue;
+            var value = text[(index + label.Length)..].TrimStart(" :🍊🌹🌬️🪵🌸".ToCharArray());
+            value = value.Split("آکوردها", StringSplitOptions.None)[0];
+            value = Regex.Replace(value, @"\s{2,}", " ").Trim();
+            return value.Split('\n').FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?.Trim() ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    private static string FindLineAfterLabel(IReadOnlyList<string> lines, string label)
+    {
+        var index = Array.FindIndex(lines.ToArray(), line => line.StartsWith(label, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 ? lines[index][label.Length..].Trim(' ', ':') : string.Empty;
     }
 
     private static int? MatchInt(Regex regex, string text) =>

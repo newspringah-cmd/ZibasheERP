@@ -538,16 +538,21 @@ public sealed partial class TelegramWebhookController
             var english = value.GetProperty("englishName").GetString() ?? throw new InvalidOperationException("نام انگلیسی ناقص است.");
             var brand = value.GetProperty("displayBrand").GetString() ?? "Unknown";
             var persian = value.GetProperty("persianName").GetString() ?? english;
+            var topNotes = value.TryGetProperty("topNotes", out var top) ? top.GetString() ?? string.Empty : string.Empty;
+            var middleNotes = value.TryGetProperty("middleNotes", out var middle) ? middle.GetString() ?? string.Empty : string.Empty;
+            var baseNotes = value.TryGetProperty("baseNotes", out var bottom) ? bottom.GetString() ?? string.Empty : string.Empty;
+            var accords = value.TryGetProperty("accords", out var accordValue) ? accordValue.GetString() ?? string.Empty : string.Empty;
+            var productUrl = value.TryGetProperty("productPageUrl", out var urlValue) ? urlValue.GetString() : null;
             var price = value.GetProperty("pricePerMl").GetDecimal();
             var total = value.GetProperty("totalVolumeMl").GetInt32();
             var minimum = value.TryGetProperty("minimumRequestVolumeMl", out var min) && min.ValueKind != JsonValueKind.Null ? min.GetInt32() : 1;
             var perfume = await _mediator.Send(new CreatePerfumeCommand(persian, english, brand, price, total, null), ct);
             var created = await _mediator.Send(new CreateSalesListCommand(
                 perfume.Id, price, total, _options.SalesChannelId, "واردشده از آرشیو کانال", minimum,
-                english, null, brand,
+                english, productUrl, brand,
                 value.TryGetProperty("gender", out var gender) ? gender.GetInt32() : 3,
                 value.TryGetProperty("releaseYear", out var year) && year.ValueKind != JsonValueKind.Null ? year.GetInt32() : 0,
-                persian, null, null, null, null), ct);
+                persian, topNotes, middleNotes, baseNotes, accords), ct);
 
             var requests = value.TryGetProperty("requests", out var requestArray)
                 ? JsonSerializer.Deserialize<List<ImportedRequest>>(requestArray.GetRawText()) ?? []
