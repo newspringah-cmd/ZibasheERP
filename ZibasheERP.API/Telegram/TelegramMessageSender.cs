@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
@@ -83,6 +85,14 @@ public interface ITelegramMessageSender
         string caption,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendDocumentWithKeyboardAsync(
+        string chatId,
+        byte[] document,
+        string fileName,
+        string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> AnswerCallbackAsync(
         string callbackQueryId,
         string? message = null,
@@ -119,7 +129,8 @@ public interface ITelegramMessageSender
 public sealed record TelegramSendResult(
     bool IsSuccessful,
     string? Error = null,
-    long? MessageId = null);
+    long? MessageId = null,
+    string? ExternalFileId = null);
 public sealed record TelegramInlineButton(
     string Text,
     string? CallbackData = null,
@@ -393,6 +404,60 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             new { chat_id = chatId, document, caption },
             cancellationToken);
 
+    public async Task<TelegramSendResult> SendDocumentWithKeyboardAsync(
+        string chatId,
+        byte[] document,
+        string fileName,
+        string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_botToken))
+            return new TelegramSendResult(false, "Telegram bot token is not configured.");
+
+        using var lease = await _rateLimiter.AcquireAsync(1, cancellationToken);
+        if (!lease.IsAcquired)
+            return new TelegramSendResult(false, "Telegram send queue is full.");
+
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            content.Add(new StringContent(chatId, Encoding.UTF8), "chat_id");
+            content.Add(new StringContent(caption, Encoding.UTF8), "caption");
+            content.Add(new StringContent(JsonSerializer.Serialize(new
+            {
+                inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+            }), Encoding.UTF8, "application/json"), "reply_markup");
+
+            var fileContent = new ByteArrayContent(document);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+            content.Add(fileContent, "document", fileName);
+
+            using var response = await _httpClient.PostAsync(
+                $"./bot{_botToken}/sendDocument", content, cancellationToken);
+            var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
+                cancellationToken: cancellationToken);
+            if (response.IsSuccessStatusCode && body?.Ok == true)
+            {
+                return new TelegramSendResult(
+                    true,
+                    MessageId: ReadMessageId(body.Result),
+                    ExternalFileId: ReadDocumentFileId(body.Result));
+            }
+
+            return new TelegramSendResult(false,
+                body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return new TelegramSendResult(false, exception.Message);
+        }
+    }
+
     public async Task<TelegramSendResult> AnswerCallbackAsync(
         string callbackQueryId,
         string? message = null,
@@ -523,6 +588,13 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         value.TryGetProperty("message_id", out var messageId) &&
         messageId.TryGetInt64(out var parsed)
             ? parsed
+            : null;
+
+    private static string? ReadDocumentFileId(JsonElement? result) =>
+        result is { ValueKind: JsonValueKind.Object } value &&
+        value.TryGetProperty("document", out var document) &&
+        document.TryGetProperty("file_id", out var fileId)
+            ? fileId.GetString()
             : null;
 
     private sealed record TelegramChatMemberApiResponse(

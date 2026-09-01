@@ -130,72 +130,44 @@
     {
       "id": "telegram",
       "name": "Send PDF To Customer Group",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         1440,
         -80
       ],
       "parameters": {
-        "resource": "message",
-        "operation": "sendDocument",
-        "chatId": "={{ $('Build Invoice HTML').first().json.data.Delivery.ChatId }}",
-        "binaryData": true,
-        "binaryPropertyName": "data",
-        "replyMarkup": "inlineKeyboard",
-        "inlineKeyboard": {
-          "rows": [
+        "method": "POST",
+        "url": "https://erp.zibashe.ir/api/integrations/n8n/telegram-invoices",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
             {
-              "row": {
-                "buttons": [
-                  {
-                    "text": "✅ پرداخت‌شده",
-                    "additionalFields": {
-                      "callback_data": "={{ $('Build Invoice HTML').first().json.paidCallbackData }}"
-                    }
-                  },
-                  {
-                    "text": "⏳ در انتظار پرداخت",
-                    "additionalFields": {
-                      "callback_data": "={{ $('Build Invoice HTML').first().json.waitingCallbackData }}"
-                    }
-                  }
-                ]
-              }
+              "parameterType": "formData",
+              "name": "sourceEventId",
+              "value": "={{ $('Build Invoice HTML').first().json.eventId }}"
             },
             {
-              "row": {
-                "buttons": [
-                  {
-                    "text": "={{ $('Build Invoice HTML').first().json.firstCardCopyLabel }}",
-                    "additionalFields": {
-                      "copy_text": {
-                        "text": "={{ $('Build Invoice HTML').first().json.firstCardCopyText }}"
-                      }
-                    }
-                  }
-                ]
-              }
+              "parameterType": "formData",
+              "name": "chatId",
+              "value": "={{ $('Build Invoice HTML').first().json.data.Delivery.ChatId }}"
             },
             {
-              "row": {
-                "buttons": [
-                  {
-                    "text": "={{ $('Build Invoice HTML').first().json.secondCardCopyLabel }}",
-                    "additionalFields": {
-                      "copy_text": {
-                        "text": "={{ $('Build Invoice HTML').first().json.secondCardCopyText }}"
-                      }
-                    }
-                  }
-                ]
-              }
+              "parameterType": "formData",
+              "name": "caption",
+              "value": "={{ $('Build Invoice HTML').first().json.telegramCaption }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "document",
+              "inputDataFieldName": "data"
             }
           ]
         },
-        "additionalFields": {
-          "caption": "={{ $('Build Invoice HTML').first().json.telegramCaption }}"
-        }
+        "options": {}
       }
     },
     {
@@ -325,11 +297,6 @@
       "main": [
         [
           {
-            "node": "Acknowledge Invoice Delivery",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Build Artifact Callback",
             "type": "main",
             "index": 0
@@ -342,6 +309,17 @@
         [
           {
             "node": "Record PDF Artifact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record PDF Artifact": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Invoice Delivery",
             "type": "main",
             "index": 0
           }

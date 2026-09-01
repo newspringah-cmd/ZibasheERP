@@ -35,14 +35,19 @@ assert failure["chatId"] == event["data"]["Delivery"]["ChatId"]
 assert 1 <= len(failure["error"]) <= 1000
 
 nodes = {node["name"]: node for node in workflow["nodes"]}
+connections = workflow["connections"]
 assert nodes["Zibashe Events"]["parameters"]["responseMode"] == "responseNode"
 assert nodes["Record PDF Artifact"]["onError"] == "continueRegularOutput"
 assert "Acknowledge Invoice Delivery" in nodes
-telegram_buttons = nodes["Send PDF To Customer Group"]["parameters"]["inlineKeyboard"]["rows"]
+telegram_delivery = nodes["Send PDF To Customer Group"]
+assert telegram_delivery["type"] == "n8n-nodes-base.httpRequest"
+assert telegram_delivery["parameters"]["url"].endswith("/api/integrations/n8n/telegram-invoices")
+assert telegram_delivery["parameters"]["contentType"] == "multipart-form-data"
 assert any(
-    "copy_text" in button.get("additionalFields", {})
-    for row in telegram_buttons
-    for button in row["row"]["buttons"]
+    parameter.get("parameterType") == "formBinaryData" and parameter.get("name") == "document"
+    for parameter in telegram_delivery["parameters"]["bodyParameters"]["parameters"]
 )
+assert connections["Send PDF To Customer Group"]["main"][0][0]["node"] == "Build Artifact Callback"
+assert connections["Record PDF Artifact"]["main"][0][0]["node"] == "Acknowledge Invoice Delivery"
 
 print("n8n contract samples test: PASS")

@@ -20,15 +20,108 @@ public sealed class N8nIntegrationsController : ControllerBase
     private readonly IMediator _mediator;
     private readonly AppDbContext _context;
     private readonly TelegramOptions _telegramOptions;
+    private readonly ITelegramMessageSender _telegramSender;
 
     public N8nIntegrationsController(
         IMediator mediator,
         AppDbContext context,
-        IOptions<TelegramOptions> telegramOptions)
+        IOptions<TelegramOptions> telegramOptions,
+        ITelegramMessageSender telegramSender)
     {
         _mediator = mediator;
         _context = context;
         _telegramOptions = telegramOptions.Value;
+        _telegramSender = telegramSender;
+    }
+
+    [HttpPost("telegram-invoices")]
+    [RequestSizeLimit(25 * 1024 * 1024)]
+    public async Task<IActionResult> SendTelegramInvoice(
+        [FromForm] Guid sourceEventId,
+        [FromForm] string chatId,
+        [FromForm] string caption,
+        [FromForm] IFormFile document,
+        CancellationToken cancellationToken)
+    {
+        chatId = chatId.Trim();
+        caption = caption.Trim();
+        if (!long.TryParse(chatId, out var numericChatId) || numericChatId >= 0 ||
+            document.Length == 0 || document.Length > 20 * 1024 * 1024 ||
+            caption.Length > 1024)
+        {
+            return BadRequest(new { Message = "اطلاعات فایل یا مقصد فاکتور معتبر نیست." });
+        }
+
+        var sourceEvent = await _context.NotificationOutbox
+            .AsNoTracking()
+            .FirstOrDefaultAsync(value =>
+                value.Id == sourceEventId &&
+                value.Channel == "N8n" &&
+                value.EventType == "InvoiceIssued",
+                cancellationToken);
+        if (sourceEvent is null)
+            return NotFound(new { Message = "رویداد فاکتور پیدا نشد." });
+        if (!N8nDeliveryTargetValidator.MatchesTelegramGroup(sourceEvent.Payload, chatId))
+            return Conflict(new { Message = "مقصد فاکتور با گروه تأییدشده یکسان نیست." });
+
+        using var payload = JsonDocument.Parse(sourceEvent.Payload);
+        var data = payload.RootElement;
+        var invoiceId = data.TryGetProperty("InvoiceId", out var invoiceIdElement) &&
+            invoiceIdElement.TryGetGuid(out var parsedInvoiceId)
+                ? parsedInvoiceId
+                : Guid.Empty;
+        if (invoiceId == Guid.Empty)
+            return BadRequest(new { Message = "شناسه فاکتور در رویداد معتبر نیست." });
+
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
+        {
+            new TelegramInlineButton[]
+            {
+                new("✅ پرداخت‌شده", $"invoicepay:paid:{invoiceId:N}"),
+                new("⏳ در انتظار پرداخت", $"invoicepay:waiting:{invoiceId:N}")
+            }
+        };
+        if (data.TryGetProperty("PaymentAccounts", out var accounts) &&
+            accounts.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var account in accounts.EnumerateArray().Take(4))
+            {
+                var card = account.TryGetProperty("CardNumber", out var cardElement)
+                    ? cardElement.GetString()?.Trim()
+                    : null;
+                if (string.IsNullOrWhiteSpace(card))
+                    continue;
+                var bank = account.TryGetProperty("BankName", out var bankElement)
+                    ? bankElement.GetString()?.Trim()
+                    : null;
+                rows.Add(new TelegramInlineButton[]
+                {
+                    new($"📋 کپی شماره کارت {bank ?? string.Empty}".Trim(), CopyText: card)
+                });
+            }
+        }
+
+        await using var stream = document.OpenReadStream();
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, cancellationToken);
+        var result = await _telegramSender.SendDocumentWithKeyboardAsync(
+            chatId,
+            buffer.ToArray(),
+            string.IsNullOrWhiteSpace(document.FileName) ? "invoice.pdf" : document.FileName,
+            caption,
+            rows,
+            cancellationToken);
+        if (!result.IsSuccessful)
+            return StatusCode(StatusCodes.Status502BadGateway, new { Message = result.Error });
+
+        return Ok(new
+        {
+            result = new
+            {
+                message_id = result.MessageId,
+                document = new { file_id = result.ExternalFileId }
+            }
+        });
     }
 
     [HttpPost("order-artifacts")]
