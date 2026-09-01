@@ -464,6 +464,7 @@ public sealed partial class TelegramWebhookController
 
     private async Task HandleSalesListImportCallbackAsync(TelegramCallbackQuery callback, CancellationToken ct)
     {
+        var callbackMessage = callback.Message!;
         var parts = callback.Data!.Split(':', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 3 || !Guid.TryParseExact(parts[2], "N", out var importId))
         {
@@ -479,7 +480,8 @@ public sealed partial class TelegramWebhookController
         }
         var reviewChatId = item.ReviewChatId?.Trim();
         var canReview = IsPrimaryOwner(callback.From.Id) ||
-            (reviewChatId == callback.Message.Chat.Id.ToString() &&
+            (!string.IsNullOrWhiteSpace(reviewChatId) &&
+             reviewChatId == callbackMessage.Chat.Id.ToString() &&
              await _sender.IsChatAdministratorAsync(reviewChatId, callback.From.Id.ToString(), ct));
         if (!canReview)
         {
@@ -498,7 +500,7 @@ public sealed partial class TelegramWebhookController
                 item.ReviewedAt = DateTime.UtcNow;
                 item.ReviewedByTelegramUserId = callback.From.Id.ToString();
                 await _db.SaveChangesAsync(ct);
-                await _sender.EditCaptionWithKeyboardAsync(callback.Message.Chat.Id.ToString(), callback.Message.MessageId,
+                await _sender.EditCaptionWithKeyboardAsync(callbackMessage.Chat.Id.ToString(), callbackMessage.MessageId,
                     "❌ این لیست رد شد.", Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
                 await _sender.AnswerCallbackAsync(callback.Id, "رد شد.", ct);
                 break;
