@@ -2,6 +2,9 @@ using ZibasheERP.API.Telegram;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
+using System.Text.Json;
+using ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
+using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -242,6 +245,7 @@ public sealed partial class TelegramWebhookController
     private async Task<bool> TryHandleAdminCallbackAsync(TelegramCallbackQuery callback, CancellationToken ct)
     {
         if (callback.Message is null || callback.Data is null ||
+            callback.Data.StartsWith("import:", StringComparison.Ordinal) == false &&
             !(callback.Data.StartsWith("invoiceadmin:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoicebatch:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoicepay:", StringComparison.Ordinal) ||
@@ -249,6 +253,11 @@ public sealed partial class TelegramWebhookController
               callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal)))
             return false;
+        if (callback.Data.StartsWith("import:", StringComparison.Ordinal))
+        {
+            await HandleSalesListImportCallbackAsync(callback, ct);
+            return true;
+        }
         if (callback.Data.StartsWith("invoicepay:", StringComparison.Ordinal))
         {
             await HandleInvoicePaymentStatusCallbackAsync(callback, ct);
@@ -452,6 +461,153 @@ public sealed partial class TelegramWebhookController
         await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id, null, ct);
         return true;
     }
+
+    private async Task HandleSalesListImportCallbackAsync(TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        var parts = callback.Data!.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 || !Guid.TryParseExact(parts[2], "N", out var importId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "شناسه واردات نامعتبر است.", ct);
+            return;
+        }
+        if (!await IsAuthorizedInvoiceAdminAsync(callback.Message!.Chat.Id, callback.From.Id, ct))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مدیریت ندارید.", ct);
+            return;
+        }
+        var item = await _db.TelegramSalesListImports.FirstOrDefaultAsync(value =>
+            value.Id == importId && !value.IsDeleted, ct);
+        if (item is null)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "رکورد واردات پیدا نشد.", ct);
+            return;
+        }
+        if (item.Status is TelegramSalesListImportStatus.Rejected or TelegramSalesListImportStatus.Imported)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "این مورد قبلاً نهایی شده است.", ct);
+            return;
+        }
+        switch (parts[1])
+        {
+            case "reject":
+                item.Status = TelegramSalesListImportStatus.Rejected;
+                item.ReviewedAt = DateTime.UtcNow;
+                item.ReviewedByTelegramUserId = callback.From.Id.ToString();
+                await _db.SaveChangesAsync(ct);
+                await _sender.EditCaptionWithKeyboardAsync(callback.Message.Chat.Id.ToString(), callback.Message.MessageId,
+                    "❌ این لیست رد شد.", Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "رد شد.", ct);
+                break;
+            case "edit":
+                item.Status = TelegramSalesListImportStatus.NeedsEditing;
+                item.ReviewedAt = DateTime.UtcNow;
+                item.ReviewedByTelegramUserId = callback.From.Id.ToString();
+                await _db.SaveChangesAsync(ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "برای ویرایش، متن اصلاح‌شده را در گروه تست ارسال کنید.", ct);
+                break;
+            case "approve":
+                if (item.Status != TelegramSalesListImportStatus.PendingReview &&
+                    item.Status != TelegramSalesListImportStatus.NeedsEditing)
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "وضعیت این مورد قابل تأیید نیست.", ct);
+                    return;
+                }
+                await ImportApprovedSalesListAsync(item, callback, ct);
+                break;
+            default:
+                await _sender.AnswerCallbackAsync(callback.Id, "گزینه نامعتبر است.", ct);
+                break;
+        }
+    }
+
+    private async Task ImportApprovedSalesListAsync(
+        TelegramSalesListImport item, TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var committed = false;
+        try
+        {
+            using var json = JsonDocument.Parse(item.ParsedPayload);
+            var value = json.RootElement;
+            var english = value.GetProperty("englishName").GetString() ?? throw new InvalidOperationException("نام انگلیسی ناقص است.");
+            var brand = value.GetProperty("displayBrand").GetString() ?? "Unknown";
+            var persian = value.GetProperty("persianName").GetString() ?? english;
+            var price = value.GetProperty("pricePerMl").GetDecimal();
+            var total = value.GetProperty("totalVolumeMl").GetInt32();
+            var minimum = value.TryGetProperty("minimumRequestVolumeMl", out var min) && min.ValueKind != JsonValueKind.Null ? min.GetInt32() : 1;
+            var perfume = await _mediator.Send(new CreatePerfumeCommand(persian, english, brand, price, total, null), ct);
+            var created = await _mediator.Send(new CreateSalesListCommand(
+                perfume.Id, price, total, _options.SalesChannelId, "واردشده از آرشیو کانال", minimum,
+                english, null, brand,
+                value.TryGetProperty("gender", out var gender) ? gender.GetInt32() : 3,
+                value.TryGetProperty("releaseYear", out var year) && year.ValueKind != JsonValueKind.Null ? year.GetInt32() : 0,
+                persian, null, null, null, null), ct);
+
+            var requests = value.TryGetProperty("requests", out var requestArray)
+                ? JsonSerializer.Deserialize<List<ImportedRequest>>(requestArray.GetRawText()) ?? []
+                : [];
+            var reserved = 0;
+            foreach (var request in requests.Where(value => value.Kind == SalesListRequestKind.CurrentBottle))
+            {
+                if (request.VolumeMl <= 0 || string.IsNullOrWhiteSpace(request.TelegramUsername)) continue;
+                reserved += request.VolumeMl;
+                _db.SalesListRequests.Add(new SalesListRequest
+                {
+                    Id = Guid.NewGuid(), CreatedAt = item.SourceDate.UtcDateTime,
+                    SalesListId = created.Id, TelegramUsername = request.TelegramUsername.TrimStart('@'),
+                    TelegramUserId = $"imported:{request.TelegramUsername.TrimStart('@').ToLowerInvariant()}",
+                    VolumeMl = request.VolumeMl, IsBottleOwner = request.IsBottleOwner,
+                    IsGift = !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername),
+                    GiftRecipientTelegramUsername = request.GiftRecipientTelegramUsername,
+                    Kind = request.Kind, Status = SalesListRequestStatus.Confirmed,
+                    CreatedByAdmin = true, ConfirmedAt = item.SourceDate.UtcDateTime,
+                    ExpiresAt = DateTime.UtcNow.AddYears(10), PerfumePricePerMl = price,
+                    ExternalReference = $"telegram-import:{item.SourceChannelId}:{item.SourceMessageId}:{request.TelegramUsername}"
+                });
+            }
+            var salesList = await _db.SalesLists.FirstAsync(value => value.Id == created.Id, ct);
+            salesList.ReservedVolume = Math.Min(total, reserved);
+            salesList.HasBottleOwner = requests.Any(value => value.IsBottleOwner && value.Kind == SalesListRequestKind.CurrentBottle);
+            await _db.SaveChangesAsync(ct);
+
+            item.Status = TelegramSalesListImportStatus.Imported;
+            item.SalesListId = created.Id;
+            item.ReviewedAt = DateTime.UtcNow;
+            item.ReviewedByTelegramUserId = callback.From.Id.ToString();
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            committed = true;
+
+            if (!string.IsNullOrWhiteSpace(item.TelegramPhotoFileId) &&
+                !string.IsNullOrWhiteSpace(_options.SalesChannelId))
+            {
+                var published = await _sender.SendPhotoHtmlAsync(
+                    _options.SalesChannelId, item.TelegramPhotoFileId,
+                    item.RawText, ct);
+                if (!published.IsSuccessful)
+                    throw new InvalidOperationException($"ثبت انجام شد اما انتشار کانال ناموفق بود: {published.Error}");
+                item.PublishedMessageId = published.MessageId;
+                item.Status = TelegramSalesListImportStatus.Published;
+                await _db.SaveChangesAsync(ct);
+            }
+
+            await _sender.AnswerCallbackAsync(callback.Id, "ثبت شد ✅", ct);
+            await ReplyAsync(callback.Message!.Chat.Id, $"✅ لیست کد {created.PublicCode} ثبت شد. انتشار کانال بعد از کنترل نهایی انجام می‌شود.", ct);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or JsonException)
+        {
+            item.Status = TelegramSalesListImportStatus.Failed;
+            item.LastError = exception.Message;
+            if (!committed) await transaction.RollbackAsync(ct);
+            await _db.SaveChangesAsync(ct);
+            await _sender.AnswerCallbackAsync(callback.Id, "ثبت ناموفق بود؛ رکورد برای بررسی باقی ماند.", ct);
+            await ReplyAsync(callback.Message!.Chat.Id, exception.Message, ct);
+        }
+    }
+
+    private sealed record ImportedRequest(
+        string TelegramUsername, int VolumeMl, SalesListRequestKind Kind,
+        bool IsBottleOwner, string? GiftRecipientTelegramUsername);
 
     private async Task HandleInvoicePaymentStatusCallbackAsync(
         TelegramCallbackQuery callback,

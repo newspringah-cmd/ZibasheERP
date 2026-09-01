@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<Batch> Batches => Set<Batch>();
     public DbSet<SalesList> SalesLists => Set<SalesList>();
     public DbSet<SalesListRequest> SalesListRequests => Set<SalesListRequest>();
+    public DbSet<TelegramSalesListImport> TelegramSalesListImports => Set<TelegramSalesListImport>();
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderArtifact> OrderArtifacts => Set<OrderArtifact>();
@@ -48,6 +49,7 @@ public class AppDbContext : DbContext
         ConfigureBatch(modelBuilder);
         ConfigureSalesList(modelBuilder);
         ConfigureSalesListRequest(modelBuilder);
+        ConfigureTelegramSalesListImport(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderArtifact(modelBuilder);
         ConfigureTelegramOrderDraft(modelBuilder);
@@ -215,6 +217,31 @@ public class AppDbContext : DbContext
             .HasOne(x => x.FixedBottle)
             .WithMany()
             .HasForeignKey(x => x.FixedBottleId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureTelegramSalesListImport(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TelegramSalesListImport>()
+            .HasIndex(value => new { value.SourceChannelId, value.SourceMessageId })
+            .IsUnique();
+
+        modelBuilder.Entity<TelegramSalesListImport>()
+            .Property(value => value.RawText)
+            .HasColumnType("nvarchar(max)");
+
+        modelBuilder.Entity<TelegramSalesListImport>()
+            .Property(value => value.ParsedPayload)
+            .HasColumnType("nvarchar(max)");
+
+        modelBuilder.Entity<TelegramSalesListImport>()
+            .Property(value => value.ParseIssues)
+            .HasColumnType("nvarchar(max)");
+
+        modelBuilder.Entity<TelegramSalesListImport>()
+            .HasOne(value => value.SalesList)
+            .WithMany()
+            .HasForeignKey(value => value.SalesListId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 

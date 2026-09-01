@@ -64,6 +64,11 @@ public interface ITelegramMessageSender
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendPhotoBytesWithKeyboardAsync(
+        string chatId, byte[] photo, string fileName, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> EditPhotoCaptionAsync(
         string chatId,
         long messageId,
@@ -315,6 +320,35 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 }
             },
             cancellationToken);
+
+    public async Task<TelegramSendResult> SendPhotoBytesWithKeyboardAsync(
+        string chatId, byte[] photo, string fileName, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(chatId, Encoding.UTF8), "chat_id");
+        content.Add(new StringContent(caption, Encoding.UTF8), "caption");
+        content.Add(new StringContent(JsonSerializer.Serialize(new
+        {
+            inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+        }), Encoding.UTF8, "application/json"), "reply_markup");
+        var file = new ByteArrayContent(photo);
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        content.Add(file, "photo", fileName);
+        return await SendMultipartRequestAsync("sendPhoto", content, cancellationToken);
+    }
+
+    private async Task<TelegramSendResult> SendMultipartRequestAsync(
+        string method, MultipartFormDataContent content, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.PostAsync($"./bot{_botToken}/{method}", content, cancellationToken);
+        var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(cancellationToken: cancellationToken);
+        if (!response.IsSuccessStatusCode || body?.Ok != true)
+            return new TelegramSendResult(false, body?.Description ?? $"Telegram HTTP {(int)response.StatusCode}");
+        return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result),
+            ExternalFileId: ReadPhotoFileId(body.Result));
+    }
 
     public async Task<TelegramSendResult> EditPhotoCaptionAsync(
         string chatId,
@@ -595,6 +629,14 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         value.TryGetProperty("document", out var document) &&
         document.TryGetProperty("file_id", out var fileId)
             ? fileId.GetString()
+            : null;
+
+    private static string? ReadPhotoFileId(JsonElement? result) =>
+        result is { ValueKind: JsonValueKind.Object } value &&
+        value.TryGetProperty("photo", out var photo) &&
+        photo.ValueKind == JsonValueKind.Array && photo.GetArrayLength() > 0
+            ? photo.EnumerateArray().Last().TryGetProperty("file_id", out var fileId)
+                ? fileId.GetString() : null
             : null;
 
     private sealed record TelegramChatMemberApiResponse(

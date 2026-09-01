@@ -26,6 +26,7 @@ using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Application.Notifications;
+using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -60,6 +61,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramInvoiceStickerDraftStore _invoiceStickerDrafts;
     private readonly TelegramInvoiceInventoryDraftStore _invoiceInventoryDrafts;
     private readonly IInvoiceInventoryService _invoiceInventoryService;
+    private readonly AppDbContext _db;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -84,6 +86,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramInvoiceStickerDraftStore invoiceStickerDrafts,
         TelegramInvoiceInventoryDraftStore invoiceInventoryDrafts,
         IInvoiceInventoryService invoiceInventoryService,
+        AppDbContext db,
         ILogger<TelegramWebhookController> logger)
     {
         _mediator = mediator;
@@ -108,6 +111,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _invoiceStickerDrafts = invoiceStickerDrafts;
         _invoiceInventoryDrafts = invoiceInventoryDrafts;
         _invoiceInventoryService = invoiceInventoryService;
+        _db = db;
         _logger = logger;
     }
 
