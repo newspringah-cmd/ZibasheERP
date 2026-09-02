@@ -154,6 +154,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (!string.Equals(message.Chat.Type, "private", StringComparison.OrdinalIgnoreCase))
             return Ok();
 
+        if (await TryHandleAdminMessageAsync(message, cancellationToken))
+            return Ok();
+
         if (message.Contact is not null)
         {
             var contactResponse = "برای امنیت حساب، فقط شماره متعلق به خودتان را با دکمه ربات ارسال کنید.";
@@ -795,25 +798,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
-        if (await TryHandleInvoiceInventoryMessageAsync(message, cancellationToken))
-            return;
-
-        if (await TryHandleInvoiceStickerMessageAsync(message, cancellationToken))
-            return;
-
-        if (await TryHandleAdminCommandAsync(message, cancellationToken))
-            return;
-
-        if (await TryHandleOwnerPricingMessageAsync(message, cancellationToken))
-            return;
-
-        if (await TryHandleManualInvoiceMessageAsync(message, cancellationToken))
-            return;
-
-        if (await TryHandleAdminRequestMessageAsync(message, cancellationToken))
-            return;
-
-        if (await TryHandleAdminSalesListMessageAsync(message, cancellationToken))
+        if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;
 
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))
@@ -862,6 +847,31 @@ public sealed partial class TelegramWebhookController : ControllerBase
             _ => "اتصال گروه انجام نشد. لطفاً دوباره تلاش کنید."
         };
         await ReplyAsync(message.Chat.Id, response, cancellationToken);
+    }
+
+    private async Task<bool> TryHandleAdminMessageAsync(
+        TelegramMessage message,
+        CancellationToken cancellationToken)
+    {
+        if (await TryHandleInvoiceInventoryMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleInvoiceStickerMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleAdminCommandAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleOwnerPricingMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleManualInvoiceMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleAdminRequestMessageAsync(message, cancellationToken))
+            return true;
+
+        return await TryHandleAdminSalesListMessageAsync(message, cancellationToken);
     }
 
     private static string FormatQueuedInvoiceNotice(int count) => count > 0
