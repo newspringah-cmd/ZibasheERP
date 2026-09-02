@@ -257,6 +257,18 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task SetOmitIdentityOnLabelAsync(
+        Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(value =>
+            value.Id == requestId && !value.IsDeleted &&
+            value.Status == SalesListRequestStatus.Confirmed,
+            cancellationToken) ?? throw new InvalidOperationException("آیتم فعال پیدا نشد.");
+        request.OmitIdentityOnLabel = true;
+        request.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<int> CountActiveCustomerRequestsAsync(
         string identity, CancellationToken cancellationToken = default)
     {

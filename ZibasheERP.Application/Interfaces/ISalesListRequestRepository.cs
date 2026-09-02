@@ -17,6 +17,7 @@ public interface ISalesListRequestRepository
     Task PromoteNextBottleOwnerAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task UpdateConfirmedVolumeAsync(Guid requestId, int volumeMl, CancellationToken cancellationToken = default);
     Task UpdateBottleOwnerIdentityAsync(Guid requestId, string identity, CancellationToken cancellationToken = default);
+    Task SetOmitIdentityOnLabelAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task<int> CountActiveCustomerRequestsAsync(string identity, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<Guid>> RemoveAllActiveCustomerRequestsAsync(string identity, CancellationToken cancellationToken = default);
     Task SaveChangesAsync(CancellationToken cancellationToken = default);

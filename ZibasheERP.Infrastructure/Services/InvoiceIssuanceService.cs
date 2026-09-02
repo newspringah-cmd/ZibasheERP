@@ -534,6 +534,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             identity += " 👑";
         if (request.Bottle?.Type == BottleType.Fancy)
             identity += " F";
+        if (request.OmitIdentityOnLabel)
+            identity += " B Id";
         return identity;
     }
 
@@ -565,6 +567,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 identity += " 👑";
             if (request.Bottle?.Type == BottleType.Fancy)
                 identity += " F";
+            if (request.OmitIdentityOnLabel)
+                identity += " B Id";
             labelRows.Add((volume, request.ConfirmedAt ?? request.CreatedAt, identity));
         }
 
