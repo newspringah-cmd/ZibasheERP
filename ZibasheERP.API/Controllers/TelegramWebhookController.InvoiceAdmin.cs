@@ -1728,9 +1728,18 @@ public sealed partial class TelegramWebhookController
         if (!long.TryParse(_options.AdminChatId, out var adminChatId) ||
             (chatId != adminChatId && chatId != userId))
             return false;
-        return IsPrimaryOwner(userId) ||
-               await _sender.IsChatAdministratorAsync(
-                   adminChatId.ToString(), userId.ToString(), ct);
+        if (IsPrimaryOwner(userId))
+            return true;
+        if (AuthorizedAdminUntil.TryGetValue(userId, out var expiresAt) &&
+            expiresAt > DateTime.UtcNow)
+            return true;
+        var isAdministrator = await _sender.IsChatAdministratorAsync(
+            adminChatId.ToString(), userId.ToString(), ct);
+        if (isAdministrator)
+            AuthorizedAdminUntil[userId] = DateTime.UtcNow.AddMinutes(3);
+        else
+            AuthorizedAdminUntil.TryRemove(userId, out _);
+        return isAdministrator;
     }
 
     private async Task<bool> IsAuthorizedInvoiceActionAdminAsync(long userId, CancellationToken ct) =>

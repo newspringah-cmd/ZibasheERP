@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -38,6 +39,7 @@ namespace ZibasheERP.API.Controllers;
 public sealed partial class TelegramWebhookController : ControllerBase
 {
     private const string SecretHeader = "X-Telegram-Bot-Api-Secret-Token";
+    private static readonly ConcurrentDictionary<long, DateTime> AuthorizedAdminUntil = new();
     private readonly IMediator _mediator;
     private readonly ITelegramMessageSender _sender;
     private readonly TelegramOptions _options;
