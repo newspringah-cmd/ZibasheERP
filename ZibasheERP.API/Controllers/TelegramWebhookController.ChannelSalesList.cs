@@ -581,25 +581,25 @@ public sealed partial class TelegramWebhookController
             ? englishName
             : $"<a href=\"{HtmlClipped(list.ProductPageUrl, 180)}\">{englishName}</a>";
         var brandTag = "#" + HtmlClipped(ToHashtag(list.DisplayBrand), 45);
-        var header = $"کد: <b>{list.PublicCode}</b>\n" +
-            $"{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
+        var header = $"کد: <b>{list.PublicCode}</b>\n\n" +
+            $"{linkedName}\n\n{brandTag}\n\n{gender}\n\nL.{list.ReleaseYear}\n\n" +
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
-            $"🍊 نت‌های ابتدایی: {HtmlClipped(list.TopNotes, 40)}\n" +
-            $"🌸 نت‌های میانی: {HtmlClipped(list.MiddleNotes, 40)}\n" +
-            $"🌳 نت‌های پایانی: {HtmlClipped(list.BaseNotes, 40)}\n" +
+            $"🍊 نت‌های ابتدایی: {HtmlClipped(list.TopNotes, 40)}\n\n" +
+            $"🌸 نت‌های میانی: {HtmlClipped(list.MiddleNotes, 40)}\n\n" +
+            $"🌳 نت‌های پایانی: {HtmlClipped(list.BaseNotes, 40)}\n\n" +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
-            $"حجم کل: {list.TotalVolume}ml\nقیمت هر میل: {list.PricePerMl:N0} تومان\n" +
+            $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
             $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل | باقی‌مانده: {list.RemainingVolume} میل";
         var nextUsers = next.Select(item => Html(DisplayUser(item))).ToArray();
         var nextSection = nextUsers.Length == 0
             ? "Next Bottle: اولین نفر صف باتل باشید 😘😘"
             : BuildCompactUserLine("Next Bottle", nextUsers, 220);
         if (header.Length > 760)
-            header = $"کد: <b>{list.PublicCode}</b> | {linkedName}\n{brandTag} | {gender} | L.{list.ReleaseYear}\n" +
-                $"{HtmlClipped(list.PersianName, 35)}\n" +
-                $"🍊 {HtmlClipped(list.TopNotes, 22)} | 🌸 {HtmlClipped(list.MiddleNotes, 22)}\n" +
-                $"🌳 {HtmlClipped(list.BaseNotes, 22)} | 🎼 {HtmlClipped(list.Accords, 22)}\n" +
-                $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n" +
+            header = $"کد: <b>{list.PublicCode}</b> | {linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
+                $"{HtmlClipped(list.PersianName, 35)}\n\n" +
+                $"🍊 {HtmlClipped(list.TopNotes, 22)} | 🌸 {HtmlClipped(list.MiddleNotes, 22)}\n\n" +
+                $"🌳 {HtmlClipped(list.BaseNotes, 22)} | 🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
+                $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
                 $"حداقل: {list.MinimumRequestVolumeMl} | باقی‌مانده: {list.RemainingVolume} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);
         var rosterLines = rosterGroups.SelectMany(group =>
