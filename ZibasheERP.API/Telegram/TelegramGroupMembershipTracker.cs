@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Features.Integrations.TrackTelegramGroupMembership;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -157,6 +158,7 @@ public sealed class TelegramGroupMembershipTracker(
         var invoices = await context.Invoices
             .Include(value => value.Order)
                 .ThenInclude(value => value!.Customer)
+                    .ThenInclude(value => value!.TelegramGroup)
             .Include(value => value.Order)
                 .ThenInclude(value => value!.Items)
                     .ThenInclude(value => value.Perfume)
@@ -177,7 +179,7 @@ public sealed class TelegramGroupMembershipTracker(
 
         var orderIds = invoices.Select(value => value.OrderId).ToArray();
         var alreadyQueuedOrderIds = await context.NotificationOutbox.AsNoTracking()
-            .Where(value => !value.IsDeleted && value.Channel == "Telegram" &&
+            .Where(value => !value.IsDeleted && value.Channel == "N8n" &&
                 value.EventType == "InvoiceIssued" && value.OrderId.HasValue &&
                 orderIds.Contains(value.OrderId.Value) &&
                 (value.Status == NotificationOutboxStatus.Pending ||
@@ -223,18 +225,12 @@ public sealed class TelegramGroupMembershipTracker(
                     Payload = JsonSerializer.Serialize(photo)
                 });
             }
-            context.NotificationOutbox.Add(new NotificationOutbox
-            {
-                Id = Guid.NewGuid(),
-                CreatedAt = now.AddTicks(sequence),
-                CustomerId = order.CustomerId,
-                OrderId = order.Id,
-                Channel = "Telegram",
-                EventType = "InvoiceIssued",
-                Recipient = chatId,
-                Payload = JsonSerializer.Serialize(new
+            context.NotificationOutbox.Add(N8nIntegrationEventFactory.Create(
+                order,
+                "InvoiceIssued",
+                new
                 {
-                    order.Id,
+                    OrderId = order.Id,
                     order.OrderNumber,
                     InvoiceId = invoice.Id,
                     invoice.InvoiceNumber,
@@ -242,7 +238,14 @@ public sealed class TelegramGroupMembershipTracker(
                     invoice.PerfumeTotal,
                     invoice.BottleTotal,
                     invoice.TotalAmount,
-                    CustomerUsername = order.Customer?.Username,
+                    Customer = new
+                    {
+                        order.Customer!.Id,
+                        order.Customer.FullName,
+                        order.Customer.Mobile,
+                        order.Customer.TelegramId,
+                        order.Customer.Username
+                    },
                     PaymentDeadlineHours = 24,
                     PaymentAccounts = paymentAccounts,
                     Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
@@ -252,14 +255,15 @@ public sealed class TelegramGroupMembershipTracker(
                         PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
                         PerfumeBrand = item.Perfume?.Brand,
                         item.RequestedVolumeMl,
+                        item.PerfumePricePerMl,
                         item.PerfumeAmount,
                         item.IsBottleOwner,
                         BottleName = item.Bottle?.Name,
                         item.BottlePrice,
                         item.LineTotal
                     })
-                })
-            });
+                },
+                now.AddTicks(sequence)));
             invoice.DeliveryStatus = InvoiceDeliveryStatus.RetryScheduled;
             invoice.DeliveryStatusChangedAt = now;
             invoice.DeliveryStatusNote = "ارسال مجدد پس از اتصال گروه مشتری در صف قرار گرفت.";
