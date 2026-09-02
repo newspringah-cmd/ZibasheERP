@@ -1731,18 +1731,15 @@ public sealed partial class TelegramWebhookController
             return true;
 
         var isPrivateChat = chatId == userId;
-        var isAdminChat = long.TryParse(_options.AdminChatId, out var adminChatId) &&
-            chatId == adminChatId;
-        var isReviewChat = long.TryParse(_options.SalesAuditChatId, out var reviewChatId) &&
-            chatId == reviewChatId;
-        if (!isPrivateChat && !isAdminChat && !isReviewChat)
-            return false;
-
         if (AuthorizedAdminUntil.TryGetValue(userId, out var expiresAt) &&
             expiresAt > DateTime.UtcNow)
             return true;
 
-        var authorizationChatId = isReviewChat ? reviewChatId : adminChatId;
+        var hasAdminChat = long.TryParse(_options.AdminChatId, out var adminChatId);
+        if (isPrivateChat && !hasAdminChat)
+            return false;
+
+        var authorizationChatId = isPrivateChat ? adminChatId : chatId;
         var isAdministrator = await _sender.IsChatAdministratorAsync(
             authorizationChatId.ToString(), userId.ToString(), ct);
         if (isAdministrator)
