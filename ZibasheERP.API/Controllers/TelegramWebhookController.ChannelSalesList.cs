@@ -375,7 +375,10 @@ public sealed partial class TelegramWebhookController
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست با موفقیت ثبت شد ✅", cancellationToken);
     }
 
-    private async Task RefreshChannelSalesListAsync(Guid salesListId, CancellationToken cancellationToken)
+    private async Task RefreshChannelSalesListAsync(
+        Guid salesListId,
+        CancellationToken cancellationToken,
+        bool includeCompletedRequests = false)
     {
         var refreshLock = SalesListRefreshLocks.GetOrAdd(salesListId, _ => new SemaphoreSlim(1, 1));
         await refreshLock.WaitAsync(cancellationToken);
@@ -385,7 +388,9 @@ public sealed partial class TelegramWebhookController
                 ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
             if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
                 return;
-            var requests = await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
+            var requests = includeCompletedRequests
+                ? await _salesListRequestRepository.GetForLabelAdministrationAsync(salesListId, cancellationToken)
+                : await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
             var captions = FormatChannelSalesListPages(salesList, requests);
             await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
             await _sender.EditPhotoCaptionAsync(

@@ -6,6 +6,7 @@ public interface ISalesListRequestRepository
 {
     Task<SalesListRequest?> GetAsync(Guid id, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<SalesListRequest>> GetConfirmedAsync(Guid salesListId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<SalesListRequest>> GetForLabelAdministrationAsync(Guid salesListId, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<SalesListRequest>> GetConfirmedForUserAsync(Guid salesListId, string telegramUserId, CancellationToken cancellationToken = default);
     Task AddAsync(SalesListRequest request, CancellationToken cancellationToken = default);
     Task SetGiftRecipientAsync(Guid requestId, string telegramUserId, string recipientIdentity, CancellationToken cancellationToken = default);

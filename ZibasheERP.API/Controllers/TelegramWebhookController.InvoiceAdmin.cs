@@ -26,7 +26,8 @@ public sealed partial class TelegramWebhookController
 
         if ((text.Equals("/whoami", StringComparison.OrdinalIgnoreCase) ||
              text.StartsWith("/whoami@", StringComparison.OrdinalIgnoreCase)) &&
-            long.TryParse(_options.AdminChatId, out var adminChatId) && adminChatId == message.Chat.Id)
+            message.From is not null &&
+            await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
         {
             await ReplyAsync(message.Chat.Id, $"Telegram User ID دریافت‌شده توسط ربات: {message.From!.Id}", ct);
             return true;
@@ -34,7 +35,8 @@ public sealed partial class TelegramWebhookController
 
         if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From!.Id, ct))
         {
-            await ReplyAsync(message.Chat.Id, "این بخش فقط برای مدیران گروه حسابداری فعال است.", ct);
+            await ReplyAsync(message.Chat.Id,
+                "این بخش فقط برای مدیران گروه حسابداری، داخل گروه مدیریت یا چت خصوصی ربات فعال است.", ct);
             return true;
         }
 
@@ -1718,10 +1720,15 @@ public sealed partial class TelegramWebhookController
             System.Globalization.CultureInfo.InvariantCulture,
             out amount) && amount >= 0;
 
-    private async Task<bool> IsAuthorizedInvoiceAdminAsync(long chatId, long userId, CancellationToken ct) =>
-        long.TryParse(_options.AdminChatId, out var configured) && configured == chatId &&
-        (IsPrimaryOwner(userId) ||
-         await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct));
+    private async Task<bool> IsAuthorizedInvoiceAdminAsync(long chatId, long userId, CancellationToken ct)
+    {
+        if (!long.TryParse(_options.AdminChatId, out var adminChatId) ||
+            (chatId != adminChatId && chatId != userId))
+            return false;
+        return IsPrimaryOwner(userId) ||
+               await _sender.IsChatAdministratorAsync(
+                   adminChatId.ToString(), userId.ToString(), ct);
+    }
 
     private async Task<bool> IsAuthorizedInvoiceActionAdminAsync(long userId, CancellationToken ct) =>
         IsPrimaryOwner(userId) ||
@@ -2025,7 +2032,7 @@ public sealed partial class TelegramWebhookController
                     throw new InvalidOperationException("آیتم فعال پیدا نشد.");
                 await _salesListRequestRepository.SetOmitIdentityOnLabelAsync(labelRequestId, ct);
                 changed.OmitIdentityOnLabel = true;
-                await RefreshChannelSalesListAsync(changed.SalesListId, ct);
+                await RefreshChannelSalesListAsync(changed.SalesListId, ct, includeCompletedRequests: true);
                 var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
                     ? _options.AdminChatId : _options.SalesAuditChatId;
                 await _sender.SendAsync(auditChatId,
@@ -2110,7 +2117,7 @@ public sealed partial class TelegramWebhookController
                     throw new InvalidOperationException("عملیات نامعتبر است.");
                 var changed = await _salesListRequestRepository.GetAsync(requestId, ct);
                 if (changed is not null)
-                    await RefreshChannelSalesListAsync(changed.SalesListId, ct);
+                    await RefreshChannelSalesListAsync(changed.SalesListId, ct, includeCompletedRequests: true);
                 var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
                     ? _options.AdminChatId : _options.SalesAuditChatId;
                 await _sender.SendAsync(auditChatId,
@@ -2192,7 +2199,10 @@ public sealed partial class TelegramWebhookController
             var query = input.Trim();
             var normalizedCode = new string(query.Where(char.IsDigit).ToArray());
             var lists = (await _salesListRepository.GetForAdminAsync(200, ct))
-                .Where(x => x.Status is SalesListStatus.Open or SalesListStatus.Full)
+                .Where(x => draft.Kind is TelegramAdminRequestKind.OmitRequestIdentityOnLabel or
+                    TelegramAdminRequestKind.SetRequestLabelIdentityText
+                    ? x.Status != SalesListStatus.Cancelled
+                    : x.Status is SalesListStatus.Open or SalesListStatus.Full)
                 .Where(x =>
                     (!string.IsNullOrEmpty(normalizedCode) && x.PublicCode.ToString().Contains(normalizedCode, StringComparison.Ordinal)) ||
                     x.EnglishName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
@@ -2331,7 +2341,10 @@ public sealed partial class TelegramWebhookController
                     await ReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", ct);
                     return true;
                 }
-                var requests = await _salesListRequestRepository.GetConfirmedAsync(draft.SalesListId, ct);
+                var requests = draft.Kind is TelegramAdminRequestKind.OmitRequestIdentityOnLabel or
+                    TelegramAdminRequestKind.SetRequestLabelIdentityText
+                    ? await _salesListRequestRepository.GetForLabelAdministrationAsync(draft.SalesListId, ct)
+                    : await _salesListRequestRepository.GetConfirmedAsync(draft.SalesListId, ct);
                 var matches = requests
                     .Where(request =>
                         ((!string.IsNullOrWhiteSpace(request.TelegramUsername) &&

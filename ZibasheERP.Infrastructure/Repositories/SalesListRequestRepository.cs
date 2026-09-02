@@ -25,6 +25,19 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt)
             .ToArrayAsync(cancellationToken);
 
+    public async Task<IReadOnlyCollection<SalesListRequest>> GetForLabelAdministrationAsync(
+        Guid salesListId, CancellationToken cancellationToken = default) =>
+        await _dbContext.SalesListRequests.AsNoTracking()
+            .Include(value => value.Bottle)
+            .Where(value => value.SalesListId == salesListId && !value.IsDeleted &&
+                value.Kind == SalesListRequestKind.CurrentBottle &&
+                (value.Status == SalesListRequestStatus.Confirmed ||
+                 value.Status == SalesListRequestStatus.Promoted ||
+                 value.Status == SalesListRequestStatus.QueuedForInvoice ||
+                 value.Status == SalesListRequestStatus.Invoiced))
+            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt)
+            .ToArrayAsync(cancellationToken);
+
     public async Task<IReadOnlyCollection<SalesListRequest>> GetConfirmedForUserAsync(
         Guid salesListId, string telegramUserId, CancellationToken cancellationToken = default) =>
         await _dbContext.SalesListRequests.AsNoTracking()
@@ -262,7 +275,10 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     {
         var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(value =>
             value.Id == requestId && !value.IsDeleted &&
-            value.Status == SalesListRequestStatus.Confirmed,
+            (value.Status == SalesListRequestStatus.Confirmed ||
+             value.Status == SalesListRequestStatus.Promoted ||
+             value.Status == SalesListRequestStatus.QueuedForInvoice ||
+             value.Status == SalesListRequestStatus.Invoiced),
             cancellationToken) ?? throw new InvalidOperationException("آیتم فعال پیدا نشد.");
         request.OmitIdentityOnLabel = true;
         request.LabelIdentityText = null;
@@ -278,7 +294,10 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             throw new InvalidOperationException("نام روی لیبل باید بین ۱ تا ۸۰ نویسه باشد.");
         var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(item =>
             item.Id == requestId && !item.IsDeleted &&
-            item.Status == SalesListRequestStatus.Confirmed,
+            (item.Status == SalesListRequestStatus.Confirmed ||
+             item.Status == SalesListRequestStatus.Promoted ||
+             item.Status == SalesListRequestStatus.QueuedForInvoice ||
+             item.Status == SalesListRequestStatus.Invoiced),
             cancellationToken) ?? throw new InvalidOperationException("آیتم فعال پیدا نشد.");
         request.LabelIdentityText = value;
         request.OmitIdentityOnLabel = false;
