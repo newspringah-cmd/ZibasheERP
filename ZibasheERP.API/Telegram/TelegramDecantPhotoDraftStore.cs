@@ -18,6 +18,7 @@ public sealed class TelegramDecantPhotoDraft
     public Guid SalesListId { get; set; }
     public int PublicCode { get; set; }
     public string SalesListName { get; set; } = string.Empty;
+    public string? LegacyRosterText { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

@@ -151,7 +151,8 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
-        var listCode = ParseSalesListCode(message.Text ?? message.Caption);
+        var rosterText = message.Text ?? message.Caption;
+        var listCode = ParseSalesListCode(rosterText);
         if (!listCode.HasValue)
         {
             await ReplyAsync(message.Chat.Id, "کد لیست از پیام پیدا نشد. فقط عدد کد را بفرستید؛ مثال: 16716", ct);
@@ -161,22 +162,38 @@ public sealed partial class TelegramWebhookController
         var list = await _db.SalesLists.AsNoTracking().FirstOrDefaultAsync(
             value => value.PublicCode == listCode.Value && !value.IsDeleted,
             ct);
+        IReadOnlyList<DecantTarget> targets;
         if (list is null)
         {
-            await ReplyAsync(message.Chat.Id, $"لیستی با کد {listCode.Value} پیدا نشد.", ct);
-            return true;
+            var legacyIdentities = ExtractLegacyDecantRecipients(rosterText);
+            if (legacyIdentities.Count == 0)
+            {
+                await ReplyAsync(
+                    message.Chat.Id,
+                    $"لیست {listCode.Value} در دیتابیس جدید نیست و از متن هم آیدی قابل‌ارسال پیدا نشد. متن کامل لیست را فوروارد کنید.",
+                    ct);
+                return true;
+            }
+            targets = await ResolveDecantTargetsAsync(legacyIdentities, ct);
+            draft.SalesListId = Guid.Empty;
+            draft.PublicCode = listCode.Value;
+            draft.SalesListName = $"لیست قدیمی {listCode.Value}";
+            draft.LegacyRosterText = rosterText;
         }
-
-        var targets = await ResolveDecantTargetsAsync(list.Id, ct);
+        else
+        {
+            targets = await ResolveDecantTargetsAsync(list.Id, ct);
+            draft.SalesListId = list.Id;
+            draft.PublicCode = list.PublicCode;
+            draft.SalesListName = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
+            draft.LegacyRosterText = null;
+        }
         if (targets.Count == 0)
         {
             await ReplyAsync(message.Chat.Id, "این لیست گیرندهٔ قابل استخراج ندارد.", ct);
             return true;
         }
 
-        draft.SalesListId = list.Id;
-        draft.PublicCode = list.PublicCode;
-        draft.SalesListName = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
         draft.Stage = TelegramDecantPhotoStage.AwaitingConfirmation;
         _decantPhotoDrafts.Set(draft);
         var matched = targets.Count(value => value.CustomerId.HasValue);
@@ -215,7 +232,9 @@ public sealed partial class TelegramWebhookController
         TelegramDecantPhotoDraft draft,
         CancellationToken ct)
     {
-        var targets = await ResolveDecantTargetsAsync(draft.SalesListId, ct);
+        var targets = draft.SalesListId == Guid.Empty
+            ? await ResolveDecantTargetsAsync(ExtractLegacyDecantRecipients(draft.LegacyRosterText), ct)
+            : await ResolveDecantTargetsAsync(draft.SalesListId, ct);
         var ready = 0;
         var waiting = 0;
         var unmatched = 0;
@@ -302,12 +321,19 @@ public sealed partial class TelegramWebhookController
                     : value.TelegramUserId
             })
             .ToArrayAsync(ct);
-        var identities = requests
-            .Select(value => new
-            {
-                Username = NormalizeDecantUsername(value.Username),
-                TelegramId = NormalizeDecantTelegramId(value.TelegramId)
-            })
+        return await ResolveDecantTargetsAsync(
+            requests.Select(value => new DecantIdentity(value.Username, value.TelegramId)),
+            ct);
+    }
+
+    private async Task<IReadOnlyList<DecantTarget>> ResolveDecantTargetsAsync(
+        IEnumerable<DecantIdentity> sourceIdentities,
+        CancellationToken ct)
+    {
+        var identities = sourceIdentities
+            .Select(value => new DecantIdentity(
+                NormalizeDecantUsername(value.Username),
+                NormalizeDecantTelegramId(value.TelegramId)))
             .Where(value => value.Username is not null || value.TelegramId is not null)
             .GroupBy(value => value.Username is not null
                 ? "u:" + value.Username.ToLowerInvariant()
@@ -345,6 +371,23 @@ public sealed partial class TelegramWebhookController
                 display,
                 display);
         }).ToArray();
+    }
+
+    private static IReadOnlyList<DecantIdentity> ExtractLegacyDecantRecipients(string? rosterText)
+    {
+        if (string.IsNullOrWhiteSpace(rosterText))
+            return [];
+        var beforeNextBottle = new Regex(@"^\s*next\s+bottle\s*:", RegexOptions.IgnoreCase | RegexOptions.Multiline)
+            .Split(rosterText, 2)[0];
+        var matches = Regex.Matches(
+            beforeNextBottle,
+            @"(?im)^\s*@(?<sender>[A-Za-z0-9_]{5,})\b(?:\s+for\s+@(?<recipient>[A-Za-z0-9_]{5,})\b)?");
+        return matches.Select(match => new DecantIdentity(
+                match.Groups["recipient"].Success
+                    ? match.Groups["recipient"].Value
+                    : match.Groups["sender"].Value,
+                null))
+            .ToArray();
     }
 
     private NotificationOutbox CreateDecantAdminAlert(
@@ -416,6 +459,8 @@ public sealed partial class TelegramWebhookController
         string? ActiveGroupChatId,
         string DisplayIdentity,
         string CopyIdentity);
+
+    private sealed record DecantIdentity(string? Username, string? TelegramId);
 
     private sealed record DecantQueueResult(int Ready, int Waiting, int Unmatched);
 }
