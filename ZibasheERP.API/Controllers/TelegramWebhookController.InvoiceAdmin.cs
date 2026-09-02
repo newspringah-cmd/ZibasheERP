@@ -559,7 +559,9 @@ public sealed partial class TelegramWebhookController
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []
                 : [];
             var reserved = 0;
-            foreach (var request in requests.Where(value => value.Kind == SalesListRequestKind.CurrentBottle))
+            foreach (var (request, requestIndex) in requests
+                         .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
+                         .Select((request, index) => (request, index)))
             {
                 if (request.VolumeMl <= 0 || string.IsNullOrWhiteSpace(request.TelegramUsername)) continue;
                 reserved += request.VolumeMl;
@@ -574,7 +576,7 @@ public sealed partial class TelegramWebhookController
                     Kind = request.Kind, Status = SalesListRequestStatus.Confirmed,
                     CreatedByAdmin = true, ConfirmedAt = item.SourceDate.UtcDateTime,
                     ExpiresAt = DateTime.UtcNow.AddYears(10), PerfumePricePerMl = price,
-                    ExternalReference = $"telegram-import:{item.SourceChannelId}:{item.SourceMessageId}:{request.TelegramUsername}"
+                    ExternalReference = $"telegram-import:{item.SourceChannelId}:{item.SourceMessageId}:{requestIndex}"
                 });
             }
             var salesList = await _db.SalesLists.FirstAsync(value => value.Id == created.Id, ct);
@@ -602,6 +604,13 @@ public sealed partial class TelegramWebhookController
                     BuildChannelVolumeButtons(publishedSalesList), ct);
                 if (!published.IsSuccessful)
                     throw new InvalidOperationException($"ثبت انجام شد اما انتشار کانال ناموفق بود: {published.Error}");
+                // Imported lists must carry the same Telegram metadata as lists
+                // created through the normal channel flow so customer callbacks
+                // can find and update the published post.
+                publishedSalesList.TelegramChannelId = _options.SalesChannelId;
+                publishedSalesList.TelegramMessageId = published.MessageId;
+                publishedSalesList.TelegramPhotoFileId = item.TelegramPhotoFileId;
+                await _db.SaveChangesAsync(ct);
                 item.PublishedMessageId = published.MessageId;
                 item.Status = TelegramSalesListImportStatus.Published;
                 await _db.SaveChangesAsync(ct);
