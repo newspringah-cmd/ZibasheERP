@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
 using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
 
@@ -466,7 +467,8 @@ public sealed partial class TelegramWebhookController
     {
         var callbackMessage = callback.Message!;
         var parts = callback.Data!.Split(':', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 3 || !Guid.TryParseExact(parts[2], "N", out var importId))
+        if ((parts.Length != 3 && parts.Length != 4) ||
+            !Guid.TryParseExact(parts[^1], "N", out var importId))
         {
             await _sender.AnswerCallbackAsync(callback.Id, "شناسه واردات نامعتبر است.", ct);
             return;
@@ -518,12 +520,61 @@ public sealed partial class TelegramWebhookController
                     await _sender.AnswerCallbackAsync(callback.Id, "وضعیت این مورد قابل تأیید نیست.", ct);
                     return;
                 }
+                if (NeedsBottleOwnerDecision(item.ParsedPayload))
+                {
+                    var ownerButtons = new[]
+                    {
+                        new[]
+                        {
+                            new TelegramInlineButton("✅ بیشترین میل صاحب باتل است", $"import:owner:auto:{item.Id:N}"),
+                            new TelegramInlineButton("⏭️ بدون صاحب باتل", $"import:owner:none:{item.Id:N}")
+                        }
+                    };
+                    await _sender.SendInlineKeyboardAsync(
+                        callbackMessage.Chat.Id.ToString(),
+                        "صاحب باتل در دادهٔ اصلی مشخص نشده است. انتخاب کنید:",
+                        ownerButtons,
+                        ct);
+                    await _sender.AnswerCallbackAsync(callback.Id, "ابتدا وضعیت صاحب باتل را انتخاب کنید.", ct);
+                    return;
+                }
+                await ImportApprovedSalesListAsync(item, callback, ct);
+                break;
+            case "owner" when parts.Length == 4 && parts[2] is "auto" or "none":
+                if (parts[2] == "auto")
+                    SetHighestVolumeBottleOwner(item);
+                await _db.SaveChangesAsync(ct);
                 await ImportApprovedSalesListAsync(item, callback, ct);
                 break;
             default:
                 await _sender.AnswerCallbackAsync(callback.Id, "گزینه نامعتبر است.", ct);
                 break;
         }
+    }
+
+    private static bool NeedsBottleOwnerDecision(string parsedPayload)
+    {
+        using var json = JsonDocument.Parse(parsedPayload);
+        if (!json.RootElement.TryGetProperty("requests", out var requests) ||
+            requests.ValueKind != JsonValueKind.Array)
+            return false;
+        return !requests.EnumerateArray().Any(request =>
+            request.TryGetProperty("isBottleOwner", out var owner) && owner.ValueKind == JsonValueKind.True);
+    }
+
+    private static void SetHighestVolumeBottleOwner(TelegramSalesListImport item)
+    {
+        var root = JsonNode.Parse(item.ParsedPayload)?.AsObject()
+            ?? throw new JsonException("ساختار درخواست‌های واردات نامعتبر است.");
+        if (root["requests"] is not JsonArray requests || requests.Count == 0) return;
+        var selected = requests
+            .OfType<JsonObject>()
+            .OrderByDescending(request => request["volumeMl"]?.GetValue<int>() ?? 0)
+            .FirstOrDefault();
+        if (selected is null) return;
+        foreach (var request in requests.OfType<JsonObject>())
+            request["isBottleOwner"] = ReferenceEquals(request, selected);
+        item.ParsedPayload = root.ToJsonString();
     }
 
     private async Task ImportApprovedSalesListAsync(
