@@ -2,10 +2,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ZibasheERP.Application.Features.Integrations.ImportTelegramSalesLists;
 
-if (args.Length is < 1 or > 3)
+if (args.Length is < 1 or > 4)
 {
     Console.Error.WriteLine(
-        "Usage: dotnet run --project tools/TelegramSalesListImport -- <result.json> [output-directory] [pilot-count]");
+        "Usage: dotnet run --project tools/TelegramSalesListImport -- <result.json> [output-directory] [batch-count] [skip-count]");
     return 2;
 }
 
@@ -14,9 +14,12 @@ var exportDirectory = Path.GetDirectoryName(inputPath)
     ?? throw new InvalidOperationException("The Telegram export directory could not be resolved.");
 var outputDirectory = Path.GetFullPath(args.ElementAtOrDefault(1) ??
     Path.Combine(Environment.CurrentDirectory, "output", "telegram-sales-list-import"));
-var pilotCount = args.Length == 3 && int.TryParse(args[2], out var requestedCount)
-    ? Math.Clamp(requestedCount, 1, 100)
+var batchCount = args.Length >= 3 && int.TryParse(args[2], out var requestedCount)
+    ? Math.Clamp(requestedCount, 1, 10_000)
     : 20;
+var skipCount = args.Length == 4 && int.TryParse(args[3], out var requestedSkip)
+    ? Math.Max(requestedSkip, 0)
+    : 0;
 
 if (!File.Exists(inputPath))
 {
@@ -58,7 +61,8 @@ foreach (var message in export.Messages.OrderBy(value => value.Id))
         text, parsed, parsed.IsSafeForAutomaticReview && photoExists));
 }
 
-var safe = candidates.Where(value => value.IsSafeForPilot).Take(pilotCount).ToArray();
+var allSafe = candidates.Where(value => value.IsSafeForPilot).ToArray();
+var safe = allSafe.Skip(skipCount).Take(batchCount).ToArray();
 var review = candidates.Where(value => !value.IsSafeForPilot).ToArray();
 
 await WriteJsonAsync(Path.Combine(outputDirectory, "pilot-manifest.json"), safe);
@@ -70,8 +74,10 @@ await WriteJsonAsync(Path.Combine(outputDirectory, "import-summary.json"), new
     TotalMessages = export.Messages.Count,
     PhotoMessages = photoMessages,
     ParsedCandidates = candidates.Count,
-    SafeCandidates = candidates.Count(value => value.IsSafeForPilot),
+    SafeCandidates = allSafe.Length,
+    SkippedSafeCandidates = Math.Min(skipCount, allSafe.Length),
     PilotItems = safe.Length,
+    RemainingSafeCandidates = Math.Max(allSafe.Length - skipCount - safe.Length, 0),
     ManualReviewItems = review.Length,
     Issues = issues.OrderByDescending(value => value.Value)
 });
@@ -80,10 +86,12 @@ Console.WriteLine($"Channel: {export.Name} ({export.Id})");
 Console.WriteLine($"Photo messages: {photoMessages}");
 Console.WriteLine($"Parsed candidates: {candidates.Count}");
 Console.WriteLine($"Safe candidates: {candidates.Count(value => value.IsSafeForPilot)}");
+Console.WriteLine($"Skipped safe candidates: {Math.Min(skipCount, allSafe.Length)}");
 Console.WriteLine($"Pilot manifest: {safe.Length} item(s)");
+Console.WriteLine($"Remaining safe candidates: {Math.Max(allSafe.Length - skipCount - safe.Length, 0)}");
 Console.WriteLine($"Manual review: {review.Length} item(s)");
 Console.WriteLine($"Output: {outputDirectory}");
-return safe.Length == pilotCount ? 0 : 1;
+return safe.Length > 0 ? 0 : 1;
 
 static string ExtractText(JsonElement value)
 {

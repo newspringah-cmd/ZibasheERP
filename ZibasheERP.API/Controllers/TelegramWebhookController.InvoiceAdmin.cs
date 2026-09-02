@@ -652,9 +652,25 @@ public sealed partial class TelegramWebhookController
             var price = value.GetProperty("pricePerMl").GetDecimal();
             var total = value.GetProperty("totalVolumeMl").GetInt32();
             var minimum = value.TryGetProperty("minimumRequestVolumeMl", out var min) && min.ValueKind != JsonValueKind.Null ? min.GetInt32() : 1;
-            var perfume = await _mediator.Send(new CreatePerfumeCommand(persian, english, brand, price, total, null), ct);
+            // A perfume may already exist in the catalog (including one created
+            // during a previous migration test). Imported archive entries must
+            // create a new sales list for that perfume instead of failing while
+            // trying to create the catalog entry again.
+            var normalizedEnglish = english.Trim();
+            var normalizedBrand = brand.Trim();
+            var existingPerfume = await _db.Perfumes.FirstOrDefaultAsync(value =>
+                !value.IsDeleted &&
+                value.Brand == normalizedBrand &&
+                value.EnglishName == normalizedEnglish, ct);
+            var perfumeId = existingPerfume?.Id;
+            if (perfumeId is null)
+            {
+                var perfume = await _mediator.Send(new CreatePerfumeCommand(
+                    persian, normalizedEnglish, normalizedBrand, price, total, null), ct);
+                perfumeId = perfume.Id;
+            }
             var created = await _mediator.Send(new CreateSalesListCommand(
-                perfume.Id, price, total, _options.SalesChannelId, "واردشده از آرشیو کانال", minimum,
+                perfumeId.Value, price, total, _options.SalesChannelId, "واردشده از آرشیو کانال", minimum,
                 english, productUrl, brand,
                 value.TryGetProperty("gender", out var gender) ? gender.GetInt32() : 3,
                 value.TryGetProperty("releaseYear", out var year) && year.ValueKind != JsonValueKind.Null ? year.GetInt32() : 0,
