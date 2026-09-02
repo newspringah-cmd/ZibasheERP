@@ -555,7 +555,8 @@ public sealed partial class TelegramWebhookController
                 persian, topNotes, middleNotes, baseNotes, accords), ct);
 
             var requests = value.TryGetProperty("requests", out var requestArray)
-                ? JsonSerializer.Deserialize<List<ImportedRequest>>(requestArray.GetRawText()) ?? []
+                ? JsonSerializer.Deserialize<List<ImportedRequest>>(requestArray.GetRawText(),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []
                 : [];
             var reserved = 0;
             foreach (var request in requests.Where(value => value.Kind == SalesListRequestKind.CurrentBottle))

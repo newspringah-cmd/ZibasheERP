@@ -95,7 +95,7 @@ public static partial class TelegramSalesListImportParser
         var topNotes = FindSection(text, "نت های اولیه", "نت‌های اولیه", "نت‌های ابتدایی", "نت های ابتدایی");
         var middleNotes = FindSection(text, "نت های میانی", "نت‌های میانی");
         var baseNotes = FindSection(text, "نت های پایه", "نت‌های پایه", "نت‌های پایانی", "نت های پایانی");
-        var accords = FindLineAfterLabel(lines, "آکوردها");
+        var accords = FindLineAfterLabel(lines, "آکوردها", "آکورد ها", "اکوردها", "اکورد ها");
         var productUrl = Regex.Match(text, @"https?://\S+", RegexOptions.IgnoreCase) is { Success: true } url
             ? url.Value.TrimEnd('.', ',', ')') : null;
         var gender = text.Contains("#forwomen", StringComparison.OrdinalIgnoreCase) &&
@@ -255,17 +255,32 @@ public static partial class TelegramSalesListImportParser
             var index = text.IndexOf(label, StringComparison.OrdinalIgnoreCase);
             if (index < 0) continue;
             var value = text[(index + label.Length)..].TrimStart(" :🍊🌹🌬️🪵🌸💐🌶️".ToCharArray());
-            value = value.Split("آکوردها", StringSplitOptions.None)[0];
+            var boundaries = new[] { "نت های اولیه", "نت‌های اولیه", "نت‌های ابتدایی", "نت های ابتدایی",
+                "نت های میانی", "نت‌های میانی", "نت های پایه", "نت‌های پایه", "نت‌های پایانی", "نت های پایانی",
+                "آکوردها", "آکورد ها", "اکوردها", "اکورد ها", "100ml", "قیمت هر میل", "حداقل میل" };
+            var boundary = boundaries
+                .Where(other => !string.Equals(other, label, StringComparison.OrdinalIgnoreCase))
+                .Select(other => value.IndexOf(other, StringComparison.OrdinalIgnoreCase))
+                .Where(position => position >= 0)
+                .DefaultIfEmpty(value.Length)
+                .Min();
+            value = value[..boundary];
             value = Regex.Replace(value, @"\s{2,}", " ").Trim();
             return value.Split('\n').FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?.Trim() ?? string.Empty;
         }
         return string.Empty;
     }
 
-    private static string FindLineAfterLabel(IReadOnlyList<string> lines, string label)
+    private static string FindLineAfterLabel(IReadOnlyList<string> lines, params string[] labels)
     {
-        var index = Array.FindIndex(lines.ToArray(), line => line.StartsWith(label, StringComparison.OrdinalIgnoreCase));
-        return index >= 0 ? lines[index][label.Length..].Trim(' ', ':') : string.Empty;
+        foreach (var label in labels)
+        {
+            var index = Array.FindIndex(lines.ToArray(), line => line.StartsWith(label, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+                return lines[index][label.Length..].Trim(' ', ':');
+        }
+
+        return string.Empty;
     }
 
     private static int? MatchInt(Regex regex, string text) =>
