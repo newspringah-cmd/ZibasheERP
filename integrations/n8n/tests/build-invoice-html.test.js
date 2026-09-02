@@ -65,6 +65,11 @@ if (!result.json.invoiceHtml.includes('class="field date"') ||
     result.json.invoiceHtml.includes('جمع شیشه</span>')) {
   throw new Error('Invoice renderer did not use the Persian date or combined total layout.');
 }
+if (!result.json.invoiceHtml.includes('grid-template-rows:repeat(8,1fr)') ||
+    !result.json.invoiceHtml.includes('font-size:10px;line-height:1.2') ||
+    result.json.invoiceHtml.includes('flex:1;font-size:8.3px')) {
+  throw new Error('Invoice rows are not fixed to readable aligned table slots.');
+}
 if (!result.json.telegramCaption.includes('INV-TEST')) {
   throw new Error('Invoice renderer did not prepare the PDF Telegram caption.');
 }
