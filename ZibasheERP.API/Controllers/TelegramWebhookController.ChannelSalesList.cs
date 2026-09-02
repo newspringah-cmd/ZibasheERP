@@ -592,7 +592,7 @@ public sealed partial class TelegramWebhookController
             $"باقی‌مانده: {list.RemainingVolume} میل";
         var nextUsers = next.Select(item => Html(DisplayUser(item))).ToArray();
         var nextSection = nextUsers.Length == 0
-            ? "Next Bottle: اولین نفر صف باتل باشید 😘😘"
+            ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
             : BuildCompactUserLine("Next Bottle", nextUsers, 220);
         if (header.Length > 760)
             header = $"{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
@@ -657,12 +657,13 @@ public sealed partial class TelegramWebhookController
         var shown = new List<string>();
         foreach (var user in users)
         {
-            var candidate = $"{label}: {string.Join("، ", shown.Append(user))}";
+            var candidate = $"{label}:\n\n{string.Join("، ", shown.Append(user))}";
             if (candidate.Length > maximumLength - 14) break;
             shown.Add(user);
         }
         var omitted = users.Length - shown.Count;
-        return $"{label}: {string.Join("، ", shown)}" + (omitted > 0 ? $" … +{omitted} نفر" : string.Empty);
+        return $"{label}:\n\n{string.Join("، ", shown)}" +
+            (omitted > 0 ? $" … +{omitted} نفر" : string.Empty);
     }
 
     private static string DisplayUser(SalesListRequest request) =>
