@@ -497,6 +497,39 @@ public sealed partial class TelegramWebhookController
         }
         switch (parts[1])
         {
+            case "next":
+            {
+                var next = await _db.TelegramSalesListImports
+                    .Where(value => !value.IsDeleted &&
+                                    value.Status == TelegramSalesListImportStatus.PendingReview &&
+                                    value.Id != item.Id)
+                    .OrderBy(value => value.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+                if (next is null)
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "لیست آمادهٔ دیگری در صف نیست.", ct);
+                    return;
+                }
+
+                var nextButtons = new[]
+                {
+                    new[]
+                    {
+                        new TelegramInlineButton("✅ تأیید", $"import:approve:{next.Id:N}"),
+                        new TelegramInlineButton("✏️ ویرایش", $"import:edit:{next.Id:N}"),
+                        new TelegramInlineButton("❌ رد", $"import:reject:{next.Id:N}")
+                    }
+                };
+                if (!string.IsNullOrWhiteSpace(next.TelegramPhotoFileId))
+                    await _sender.SendPhotoWithKeyboardAsync(
+                        callbackMessage.Chat.Id.ToString(), next.TelegramPhotoFileId,
+                        BuildReviewText(next, next.ParsedPayload),
+                        Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
+                foreach (var chunk in SplitForTelegram(next.RawText, 3800))
+                    await _sender.SendInlineKeyboardAsync(callbackMessage.Chat.Id.ToString(), chunk, nextButtons, ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "لیست بعدی ارسال شد.", ct);
+                return;
+            }
             case "reject":
                 item.Status = TelegramSalesListImportStatus.Rejected;
                 item.ReviewedAt = DateTime.UtcNow;
@@ -575,6 +608,28 @@ public sealed partial class TelegramWebhookController
         foreach (var request in requests.OfType<JsonObject>())
             request["isBottleOwner"] = ReferenceEquals(request, selected);
         item.ParsedPayload = root.ToJsonString();
+    }
+
+    private static IEnumerable<string> SplitForTelegram(string value, int maximum)
+    {
+        var text = value.Trim();
+        while (text.Length > maximum)
+        {
+            var cut = text.LastIndexOf('\n', maximum - 1);
+            if (cut < maximum / 2) cut = maximum;
+            yield return text[..cut];
+            text = text[cut..].TrimStart();
+        }
+        if (text.Length > 0) yield return text;
+    }
+
+    private static string BuildReviewText(TelegramSalesListImport item, string parsedPayload)
+    {
+        using var json = JsonDocument.Parse(parsedPayload);
+        var parsed = json.RootElement;
+        var code = parsed.TryGetProperty("publicCode", out var codeValue) ? codeValue.ToString() : "-";
+        var name = parsed.TryGetProperty("englishName", out var nameValue) ? nameValue.GetString() : "-";
+        return $"🔎 بررسی واردات لیست فروش\nکد: {code}\nعطر: {name}\nپیام مبدأ: {item.SourceMessageId}";
     }
 
     private async Task ImportApprovedSalesListAsync(
@@ -661,6 +716,14 @@ public sealed partial class TelegramWebhookController
                 publishedSalesList.TelegramChannelId = _options.SalesChannelId;
                 publishedSalesList.TelegramMessageId = published.MessageId;
                 publishedSalesList.TelegramPhotoFileId = item.TelegramPhotoFileId;
+                var discussion = await _sender.SendAsync(
+                    _options.SalesChannelId,
+                    $"💬 هر سؤالی در رابطه با عطر «{publishedSalesList.EnglishName}» دارید، اینجا بپرسید.\n" +
+                    $"کد لیست: {publishedSalesList.PublicCode}\n" +
+                    "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.",
+                    ct);
+                if (discussion.IsSuccessful)
+                    publishedSalesList.TelegramDiscussionMessageId = discussion.MessageId;
                 await _db.SaveChangesAsync(ct);
                 item.PublishedMessageId = published.MessageId;
                 item.Status = TelegramSalesListImportStatus.Published;
@@ -669,6 +732,15 @@ public sealed partial class TelegramWebhookController
 
             await _sender.AnswerCallbackAsync(callback.Id, "ثبت شد ✅", ct);
             await ReplyAsync(callback.Message!.Chat.Id, $"✅ لیست کد {created.PublicCode} ثبت شد. انتشار کانال بعد از کنترل نهایی انجام می‌شود.", ct);
+            var nextButton = new[]
+            {
+                new[] { new TelegramInlineButton("📥 لیست بعدی", $"import:next:{item.Id:N}") }
+            };
+            await _sender.SendInlineKeyboardAsync(
+                callback.Message!.Chat.Id.ToString(),
+                "برای بررسی مورد بعدی روی دکمهٔ زیر بزنید:",
+                nextButton,
+                ct);
         }
         catch (Exception exception) when (exception is InvalidOperationException or JsonException)
         {
