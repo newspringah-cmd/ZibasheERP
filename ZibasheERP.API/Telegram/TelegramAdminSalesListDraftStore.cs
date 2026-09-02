@@ -171,9 +171,10 @@ public enum TelegramAdminRequestKind
     ManageBottleQueue,
     RemoveCustomerRequests,
     RemoveSingleRequest,
-    OmitRequestIdentityOnLabel
+    OmitRequestIdentityOnLabel,
+    SetRequestLabelIdentityText
 }
-public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingConfirmation }
+public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingLabelIdentityText, AwaitingConfirmation }
 
 public sealed class TelegramAdminRequestDraft
 {

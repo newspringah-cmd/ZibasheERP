@@ -1088,6 +1088,9 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("🏷 حذف آیدی از لیبل آیتم", "adminrequest:start:labelnoid")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("✏️ نام دلخواه روی لیبل آیتم", "adminrequest:start:labeltext")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("🎁 ثبت دستی هدیه", "adminrequest:start:gift")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
@@ -1881,6 +1884,7 @@ public sealed partial class TelegramWebhookController
                 "gift" => TelegramAdminRequestKind.GiftRequest,
                 "removeitem" => TelegramAdminRequestKind.RemoveSingleRequest,
                 "labelnoid" => TelegramAdminRequestKind.OmitRequestIdentityOnLabel,
+                "labeltext" => TelegramAdminRequestKind.SetRequestLabelIdentityText,
                 "removeall" => TelegramAdminRequestKind.RemoveCustomerRequests,
                 _ => TelegramAdminRequestKind.CustomRequest
             };
@@ -2038,6 +2042,30 @@ public sealed partial class TelegramWebhookController
             {
                 await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
             }
+            return;
+        }
+
+        if (parts.Length == 3 && parts[1] == "labeltext" &&
+            Guid.TryParseExact(parts[2], "N", out var customLabelRequestId))
+        {
+            if (!_adminRequestDrafts.TryGet(chatId, userId, out var labelDraft) ||
+                labelDraft.Kind != TelegramAdminRequestKind.SetRequestLabelIdentityText)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return;
+            }
+            var request = await _salesListRequestRepository.GetAsync(customLabelRequestId, ct);
+            if (request is null || request.SalesListId != labelDraft.SalesListId)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "آیتم فعال پیدا نشد.", ct, true);
+                return;
+            }
+            labelDraft.SelectedRequestId = customLabelRequestId;
+            labelDraft.Stage = TelegramAdminRequestStage.AwaitingLabelIdentityText;
+            _adminRequestDrafts.Set(labelDraft);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(chatId,
+                "متن دلخواه روی لیبل را وارد کنید؛ مثال: ماه\nحداکثر ۸۰ نویسه.", ct);
             return;
         }
 
@@ -2260,10 +2288,40 @@ public sealed partial class TelegramWebhookController
             }
             return true;
         }
+        if (draft.Stage == TelegramAdminRequestStage.AwaitingLabelIdentityText)
+        {
+            try
+            {
+                await _salesListRequestRepository.SetLabelIdentityTextAsync(
+                    draft.SelectedRequestId, input, ct);
+                var changed = await _salesListRequestRepository.GetAsync(draft.SelectedRequestId, ct);
+                if (changed is null || changed.SalesListId != draft.SalesListId)
+                    throw new InvalidOperationException("آیتم فعال پیدا نشد.");
+                changed.LabelIdentityText = input.Trim();
+                changed.OmitIdentityOnLabel = false;
+                await RefreshChannelSalesListAsync(changed.SalesListId, ct);
+                var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+                    ? _options.AdminChatId : _options.SalesAuditChatId;
+                await _sender.SendAsync(auditChatId,
+                    $"✏️ ثبت نام دلخواه روی لیبل\nثبت‌کننده: {DisplayTelegramUser(message.From)}\n" +
+                    $"لیست: {draft.PublicCode} — {draft.SalesListName}\n" +
+                    $"مشتری/هدیه‌گیرنده: {DisplayUser(changed)}\nمتن لیبل: {input.Trim()}\n" +
+                    $"درخواست: {draft.SelectedRequestId:N}", ct);
+                _adminRequestDrafts.Remove(message.Chat.Id, message.From.Id);
+                await ReplyAsync(message.Chat.Id,
+                    $"نام «{input.Trim()}» برای لیبل ثبت و لیست به‌روزرسانی شد ✅", ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await ReplyAsync(message.Chat.Id, exception.Message, ct);
+            }
+            return true;
+        }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingIdentity)
         {
             if (draft.Kind is TelegramAdminRequestKind.RemoveSingleRequest or
-                TelegramAdminRequestKind.OmitRequestIdentityOnLabel)
+                TelegramAdminRequestKind.OmitRequestIdentityOnLabel or
+                TelegramAdminRequestKind.SetRequestLabelIdentityText)
             {
                 var identity = input.Trim();
                 var username = identity.TrimStart('@');
@@ -2301,15 +2359,15 @@ public sealed partial class TelegramWebhookController
                     (IReadOnlyCollection<TelegramInlineButton>)new[]
                     {
                         new TelegramInlineButton(
-                            $"{(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "🗑" : "🏷")} " +
+                            $"{(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "🗑" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "🏷" : "✏️")} " +
                             $"{DisplayUser(request)}{(request.IsGift ? $" برای @{request.GiftRecipientTelegramUsername ?? request.GiftRecipientTelegramUserId}" : string.Empty)} — {request.VolumeMl} میل",
-                            $"adminrequest:{(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "removeitem" : "labelnoid")}:{request.Id:N}")
+                            $"adminrequest:{(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "removeitem" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "labelnoid" : "labeltext")}:{request.Id:N}")
                     }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
                     {
                         new TelegramInlineButton("❌ لغو", "adminrequest:cancel")
                     }).ToArray();
                 await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
-                    $"آیتم موردنظر را برای {(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "حذف" : "حذف آیدی از لیبل")} انتخاب کنید:\n" +
+                    $"آیتم موردنظر را برای {(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "حذف" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "حذف آیدی از لیبل" : "ثبت نام دلخواه روی لیبل")} انتخاب کنید:\n" +
                     $"لیست {draft.PublicCode} — {draft.SalesListName}",
                     rows, ct);
                 return true;

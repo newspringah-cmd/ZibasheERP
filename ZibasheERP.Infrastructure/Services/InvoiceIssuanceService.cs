@@ -536,6 +536,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             identity += " F";
         if (request.OmitIdentityOnLabel)
             identity += " B Id";
+        else if (!string.IsNullOrWhiteSpace(request.LabelIdentityText))
+            identity += $" {request.LabelIdentityText.Trim()}=L";
         return identity;
     }
 
@@ -560,14 +562,16 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             var volume = request.IsBottleOwner
                 ? request.VolumeMl + ownerGiftVolume
                 : request.VolumeMl;
-            var identity = request.IsGift
-                ? GiftRecipientIdentity(request)
-                : BaseIdentity(request);
+            var identity = !string.IsNullOrWhiteSpace(request.LabelIdentityText)
+                ? request.LabelIdentityText.Trim()
+                : request.IsGift
+                    ? GiftRecipientIdentity(request)
+                    : BaseIdentity(request);
             if (request.IsBottleOwner)
                 identity += " 👑";
             if (request.Bottle?.Type == BottleType.Fancy)
                 identity += " F";
-            if (request.OmitIdentityOnLabel)
+            if (request.OmitIdentityOnLabel && string.IsNullOrWhiteSpace(request.LabelIdentityText))
                 identity += " B Id";
             labelRows.Add((volume, request.ConfirmedAt ?? request.CreatedAt, identity));
         }

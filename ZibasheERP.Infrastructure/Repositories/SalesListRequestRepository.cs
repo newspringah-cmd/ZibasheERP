@@ -265,6 +265,23 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             value.Status == SalesListRequestStatus.Confirmed,
             cancellationToken) ?? throw new InvalidOperationException("آیتم فعال پیدا نشد.");
         request.OmitIdentityOnLabel = true;
+        request.LabelIdentityText = null;
+        request.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task SetLabelIdentityTextAsync(
+        Guid requestId, string labelIdentityText, CancellationToken cancellationToken = default)
+    {
+        var value = labelIdentityText.Trim();
+        if (value.Length is 0 or > 80)
+            throw new InvalidOperationException("نام روی لیبل باید بین ۱ تا ۸۰ نویسه باشد.");
+        var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(item =>
+            item.Id == requestId && !item.IsDeleted &&
+            item.Status == SalesListRequestStatus.Confirmed,
+            cancellationToken) ?? throw new InvalidOperationException("آیتم فعال پیدا نشد.");
+        request.LabelIdentityText = value;
+        request.OmitIdentityOnLabel = false;
         request.UpdatedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
