@@ -14,6 +14,7 @@ public sealed partial class TelegramWebhookController
 {
     private static readonly int[] ChannelVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SalesListRefreshLocks = new();
+    private static readonly ConcurrentDictionary<Guid, long> SalesListRefreshVersions = new();
 
     private async Task<bool> TryHandleChannelSalesListCallbackAsync(
         TelegramCallbackQuery callback, CancellationToken cancellationToken)
@@ -380,28 +381,36 @@ public sealed partial class TelegramWebhookController
         CancellationToken cancellationToken,
         bool includeCompletedRequests = false)
     {
+        SalesListRefreshVersions.AddOrUpdate(salesListId, 1, (_, version) => version + 1);
         var refreshLock = SalesListRefreshLocks.GetOrAdd(salesListId, _ => new SemaphoreSlim(1, 1));
-        await refreshLock.WaitAsync(cancellationToken);
+        if (!await refreshLock.WaitAsync(0, cancellationToken))
+            return;
         try
         {
-            var salesList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
-                ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
-            if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
-                return;
-            var requests = includeCompletedRequests
-                ? await _salesListRequestRepository.GetForLabelAdministrationAsync(salesListId, cancellationToken)
-                : await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
-            var captions = FormatChannelSalesListPages(salesList, requests);
-            await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
-            await _sender.EditPhotoCaptionAsync(
-                salesList.TelegramChannelId,
-                salesList.TelegramMessageId.Value,
-                captions.Main,
-                BuildChannelVolumeButtons(salesList, salesList.TelegramContinuationMessageId),
-                cancellationToken);
-            await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
-            if (salesList.Status == SalesListStatus.Full)
-                await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
+            while (true)
+            {
+                var version = SalesListRefreshVersions[salesListId];
+                var salesList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
+                    ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
+                if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
+                    return;
+                var requests = includeCompletedRequests
+                    ? await _salesListRequestRepository.GetForLabelAdministrationAsync(salesListId, cancellationToken)
+                    : await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
+                var captions = FormatChannelSalesListPages(salesList, requests);
+                await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
+                await _sender.EditPhotoCaptionAsync(
+                    salesList.TelegramChannelId,
+                    salesList.TelegramMessageId.Value,
+                    captions.Main,
+                    BuildChannelVolumeButtons(salesList, salesList.TelegramContinuationMessageId),
+                    cancellationToken);
+                await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
+                if (salesList.Status == SalesListStatus.Full)
+                    await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
+                if (SalesListRefreshVersions[salesListId] == version)
+                    return;
+            }
         }
         finally
         {

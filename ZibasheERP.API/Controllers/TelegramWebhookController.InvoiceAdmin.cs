@@ -2678,6 +2678,7 @@ public sealed partial class TelegramWebhookController
         await _salesListRequestRepository.SaveChangesAsync(ct);
         if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
             await _salesListRequestRepository.ConfirmCurrentBottleAsync(request.Id, telegramId, ct);
+        await _sender.AnswerCallbackAsync(callback.Id, "درخواست ثبت شد ✅", ct);
         await RefreshChannelSalesListAsync(list.Id, ct);
         var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
             ? _options.AdminChatId
@@ -2715,7 +2716,6 @@ public sealed partial class TelegramWebhookController
                 $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل", ct);
         }
         _adminRequestDrafts.Remove(chatId, callback.From.Id);
-        await _sender.AnswerCallbackAsync(callback.Id, "درخواست ثبت شد ✅", ct);
         await ReplyAsync(chatId, "درخواست با موفقیت ثبت و لیست فروش به‌روزرسانی شد ✅", ct);
     }
 
