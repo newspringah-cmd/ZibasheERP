@@ -45,8 +45,14 @@ if (!result.json.invoiceHtml.includes('&lt;script&gt;') ||
     result.json.invoiceHtml.includes('<script>مشتری')) {
   throw new Error('Invoice renderer did not escape customer input.');
 }
-if (result.json.invoiceFileName !== 'invoice-INV-TEST.pdf') {
+if (result.json.invoiceFileName !== 'INV-TEST.pdf') {
   throw new Error('Invoice renderer produced an unexpected filename.');
+}
+const usernameEvent = structuredClone(event);
+usernameEvent.data.Customer.Username = '@test_customer';
+const [usernameResult] = run({ first: () => ({ json: usernameEvent }) });
+if (usernameResult.json.invoiceFileName !== 'test_customer.pdf') {
+  throw new Error('Invoice renderer did not use the customer username as the PDF filename.');
 }
 if (result.json.artifactType !== 'InvoicePdf') {
   throw new Error('Invoice renderer produced an unexpected artifact type.');
