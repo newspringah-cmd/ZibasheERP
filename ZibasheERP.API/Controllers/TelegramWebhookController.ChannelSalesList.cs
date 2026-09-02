@@ -3,6 +3,7 @@ using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 using System.Net;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
@@ -689,8 +690,13 @@ public sealed partial class TelegramWebhookController
     private static string HtmlClipped(string? value, int maximumCharacters)
     {
         var text = value?.Trim() ?? string.Empty;
-        if (text.Length > maximumCharacters)
-            text = text[..Math.Max(0, maximumCharacters - 1)] + "…";
+        var elementStarts = StringInfo.ParseCombiningCharacters(text);
+        if (elementStarts.Length > maximumCharacters)
+        {
+            var retainedElements = Math.Max(0, maximumCharacters - 1);
+            var endIndex = retainedElements == 0 ? 0 : elementStarts[retainedElements];
+            text = text[..endIndex] + "…";
+        }
         return Html(text);
     }
     private static string ToHashtag(string value) =>
