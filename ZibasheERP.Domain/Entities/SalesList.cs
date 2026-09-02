@@ -77,6 +77,12 @@ public class SalesList : BaseEntity
     // حجم باقی مانده
     public int RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
 
+    // Persisted alert markers prevent repeated Telegram notifications when a
+    // request is edited or removed after the list crosses a threshold.
+    public DateTime? LowStockAlertSentAt { get; set; }
+
+    public DateTime? PromotionAlertSentAt { get; set; }
+
     // آیا صاحب باتل مشخص شده است؟
     public bool HasBottleOwner { get; set; }
 

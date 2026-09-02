@@ -83,6 +83,10 @@ builder.Services.AddOptions<TelegramOptions>()
          (long.TryParse(options.AdminChatId, out var adminChatId) && adminChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.SalesAuditChatId) ||
          (long.TryParse(options.SalesAuditChatId, out var salesAuditChatId) && salesAuditChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.LowStockAlertChatId) ||
+         (long.TryParse(options.LowStockAlertChatId, out var lowStockAlertChatId) && lowStockAlertChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.PromotionAlertChatId) ||
+         (long.TryParse(options.PromotionAlertChatId, out var promotionAlertChatId) && promotionAlertChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.CompletedSalesListsChatId) ||
          (long.TryParse(options.CompletedSalesListsChatId, out var completedListsChatId) && completedListsChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.InvoiceFailureChatId) ||

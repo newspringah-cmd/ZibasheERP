@@ -11,6 +11,8 @@ public sealed class TelegramOptions
     public string SalesChannelId { get; set; } = string.Empty;
     public string SalesDiscussionChatId { get; set; } = string.Empty;
     public string SalesAuditChatId { get; set; } = string.Empty;
+    public string LowStockAlertChatId { get; set; } = string.Empty;
+    public string PromotionAlertChatId { get; set; } = string.Empty;
     public string CompletedSalesListsChatId { get; set; } = string.Empty;
     public string InvoiceFailureChatId { get; set; } = string.Empty;
     public string DecantChatId { get; set; } = string.Empty;

@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using ZibasheERP.Infrastructure.Persistence;
 namespace ZibasheERP.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260902083039_AddSalesListRemainingVolumeAlerts")]
+    partial class AddSalesListRemainingVolumeAlerts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1401,90 +1404,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.ToTable("TelegramProcessedUpdates");
                 });
 
-            modelBuilder.Entity("ZibasheERP.Domain.Entities.TelegramSalesListImport", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("LastError")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<string>("ParseIssues")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<long?>("PublishedMessageId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ParsedPayload")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("RawText")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("ReviewChatId")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<long?>("ReviewMessageId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("ReviewedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ReviewedByTelegramUserId")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<Guid?>("SalesListId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("SourceChannelId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTimeOffset>("SourceDate")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long>("SourceMessageId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("SourcePhotoPath")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<string>("TelegramPhotoFileId")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SalesListId");
-
-                    b.HasIndex("SourceChannelId", "SourceMessageId")
-                        .IsUnique();
-
-                    b.ToTable("TelegramSalesListImports");
-                });
-
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Address", b =>
                 {
                     b.HasOne("ZibasheERP.Domain.Entities.Customer", "Customer")
@@ -1700,16 +1619,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Order");
-                });
-
-            modelBuilder.Entity("ZibasheERP.Domain.Entities.TelegramSalesListImport", b =>
-                {
-                    b.HasOne("ZibasheERP.Domain.Entities.SalesList", "SalesList")
-                        .WithMany()
-                        .HasForeignKey("SalesListId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("SalesList");
                 });
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Customer", b =>

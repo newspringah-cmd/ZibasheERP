@@ -394,6 +394,7 @@ public sealed partial class TelegramWebhookController
                 captions.Main,
                 BuildChannelVolumeButtons(salesList, salesList.TelegramContinuationMessageId),
                 cancellationToken);
+            await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
             if (salesList.Status == SalesListStatus.Full)
                 await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
         }
@@ -401,6 +402,58 @@ public sealed partial class TelegramWebhookController
         {
             refreshLock.Release();
         }
+    }
+
+    private async Task SendRemainingVolumeAlertsAsync(
+        SalesList list, CancellationToken cancellationToken)
+    {
+        if (!list.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(list.TelegramChannelId))
+            return;
+
+        var changed = false;
+        var postUrl = BuildTelegramDiscussionMessageUrl(
+            list.TelegramChannelId, list.TelegramMessageId.Value);
+
+        if (list.RemainingVolume < 25 &&
+            list.LowStockAlertSentAt is null &&
+            !string.IsNullOrWhiteSpace(_options.LowStockAlertChatId))
+        {
+            var result = await _sender.SendHtmlAsync(
+                _options.LowStockAlertChatId,
+                "⚠️ <b>هشدار کاهش موجودی لیست فروش</b>\n\n" +
+                $"عطر: {Html(list.EnglishName)}\n" +
+                $"باقی‌مانده: <b>{list.RemainingVolume} میل</b>\n\n" +
+                $"<a href=\"{Html(postUrl)}\">مشاهده پست در کانال</a>",
+                cancellationToken);
+            if (result.IsSuccessful)
+            {
+                list.LowStockAlertSentAt = DateTime.UtcNow;
+                changed = true;
+            }
+        }
+
+        if (list.RemainingVolume < 11 &&
+            list.PromotionAlertSentAt is null &&
+            !string.IsNullOrWhiteSpace(_options.PromotionAlertChatId))
+        {
+            var result = await _sender.SendHtmlAsync(
+                _options.PromotionAlertChatId,
+                "📣 <b>این لیست نیاز به تبلیغات دارد</b>\n\n" +
+                $"عطر: {Html(list.EnglishName)}\n" +
+                $"فقط <b>{list.RemainingVolume} میل</b> باقی مانده است.\n\n" +
+                $"<a href=\"{Html(postUrl)}\">مشاهده پست و شروع تبلیغات</a>",
+                cancellationToken);
+            if (result.IsSuccessful)
+            {
+                list.PromotionAlertSentAt = DateTime.UtcNow;
+                changed = true;
+            }
+        }
+
+        if (!changed) return;
+        list.UpdatedAt = DateTime.UtcNow;
+        await _salesListRepository.UpdateAsync(list, cancellationToken);
+        await _salesListRepository.SaveChangesAsync(cancellationToken);
     }
 
     private async Task SynchronizeContinuationPostAsync(

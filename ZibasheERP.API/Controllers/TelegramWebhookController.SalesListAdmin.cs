@@ -720,6 +720,7 @@ public sealed partial class TelegramWebhookController
             if (discussion.IsSuccessful)
                 salesList.TelegramDiscussionMessageId = discussion.MessageId;
             await _salesListRepository.SaveChangesAsync(cancellationToken);
+            await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
 
             _adminSalesListDrafts.Remove(chatId, callback.From.Id);
             await _sender.AnswerCallbackAsync(callback.Id, "منتشر شد ✅", cancellationToken);

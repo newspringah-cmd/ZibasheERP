@@ -743,6 +743,7 @@ public sealed partial class TelegramWebhookController
                 item.PublishedMessageId = published.MessageId;
                 item.Status = TelegramSalesListImportStatus.Published;
                 await _db.SaveChangesAsync(ct);
+                await SendRemainingVolumeAlertsAsync(publishedSalesList, ct);
             }
 
             await _sender.AnswerCallbackAsync(callback.Id, "ثبت شد ✅", ct);
