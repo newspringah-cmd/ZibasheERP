@@ -254,13 +254,10 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 : null;
             if (string.IsNullOrWhiteSpace(fileId))
                 return new TelegramSendResult(false, "Decant photo file id is missing.");
-            var caption = root.TryGetProperty("Caption", out var captionValue)
-                ? captionValue.GetString()
-                : null;
             return await _sender.SendPhotoAsync(
                 recipient,
                 fileId,
-                string.IsNullOrWhiteSpace(caption) ? "📸 عکس دکانت" : caption,
+                string.Empty,
                 cancellationToken);
         }
 

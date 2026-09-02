@@ -331,7 +331,6 @@ public sealed partial class TelegramWebhookController
             .Include(value => value.TelegramGroup)
             .FirstOrDefaultAsync(value => !value.IsDeleted && value.Username != null &&
                 value.Username.ToLower() == username.ToLower(), ct);
-        var permanentConnection = false;
         if (customer is not null)
         {
             var conflictingGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
@@ -374,7 +373,6 @@ public sealed partial class TelegramWebhookController
                 customer.TelegramGroup.LastSeenAt = DateTime.UtcNow;
                 customer.TelegramGroup.UpdatedAt = DateTime.UtcNow;
             }
-            permanentConnection = true;
         }
 
         var pending = await _db.NotificationOutbox
@@ -403,11 +401,7 @@ public sealed partial class TelegramWebhookController
         }
         await _db.SaveChangesAsync(ct);
         await ReplyAsync(message.Chat.Id,
-            $"✅ اتصال عکس دکانت به این گروه انجام شد.\n" +
-            (permanentConnection
-                ? "🧾 این گروه برای فاکتورهای بعدی هم متصل شد؛ دیگر /connect لازم نیست.\n"
-                : "⚠️ آیدی هنوز مشتری ثبت‌شده ندارد؛ فعلاً فقط عکس دکانت به این گروه متصل شد.\n") +
-            $"📸 {matches.Length} عکس برای @{username} در صف ارسال همین گروه قرار گرفت.", ct);
+            "✅ اتصال عکس دکانت به این گروه انجام شد.", ct);
         return true;
     }
 
