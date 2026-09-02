@@ -1067,7 +1067,7 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("✍️ ثبت آیتم دستی", "adminrequest:start:custom")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
-            new TelegramInlineButton("🗑 حذف آیتم دستی", "adminrequest:start:removeitem")
+            new TelegramInlineButton("🗑 حذف یک آیتم", "adminrequest:start:removeitem")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton("🎁 ثبت دستی هدیه", "adminrequest:start:gift")
@@ -1959,10 +1959,9 @@ public sealed partial class TelegramWebhookController
                 return;
             }
             var removable = await _salesListRequestRepository.GetAsync(removableRequestId, ct);
-            if (removable is null || removable.SalesListId != removalDraft.SalesListId ||
-                !removable.CreatedByAdmin)
+            if (removable is null || removable.SalesListId != removalDraft.SalesListId)
             {
-                await _sender.AnswerCallbackAsync(callback.Id, "آیتم دستی پیدا نشد.", ct, true);
+                await _sender.AnswerCallbackAsync(callback.Id, "آیتم فعال پیدا نشد.", ct, true);
                 return;
             }
             try
@@ -1972,13 +1971,13 @@ public sealed partial class TelegramWebhookController
                 var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
                     ? _options.AdminChatId : _options.SalesAuditChatId;
                 await _sender.SendAsync(auditChatId,
-                    $"🗑 حذف آیتم دستی\nثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
+                    $"🗑 حذف یک آیتم\nثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"لیست: {removalDraft.PublicCode} — {removalDraft.SalesListName}\n" +
                     $"مشتری: {DisplayUser(removable)}\nمقدار: {removable.VolumeMl} میل\n" +
                     $"درخواست: {removableRequestId:N}", ct);
                 _adminRequestDrafts.Remove(chatId, userId);
-                await _sender.AnswerCallbackAsync(callback.Id, "آیتم دستی حذف شد ✅", ct);
-                await ReplyAsync(chatId, "آیتم دستی حذف و پست کانال به‌روزرسانی شد ✅", ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "آیتم حذف شد ✅", ct);
+                await ReplyAsync(chatId, "آیتم حذف و پست کانال به‌روزرسانی شد ✅", ct);
             }
             catch (InvalidOperationException exception)
             {
@@ -2220,18 +2219,24 @@ public sealed partial class TelegramWebhookController
                 }
                 var requests = await _salesListRequestRepository.GetConfirmedAsync(draft.SalesListId, ct);
                 var matches = requests
-                    .Where(request => request.CreatedByAdmin &&
+                    .Where(request =>
                         ((!string.IsNullOrWhiteSpace(request.TelegramUsername) &&
                           string.Equals(request.TelegramUsername.TrimStart('@'), username,
                               StringComparison.OrdinalIgnoreCase)) ||
                          (!string.IsNullOrWhiteSpace(telegramId) &&
-                          string.Equals(request.TelegramUserId, telegramId, StringComparison.Ordinal))))
+                          string.Equals(request.TelegramUserId, telegramId, StringComparison.Ordinal)) ||
+                         (!string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername) &&
+                          string.Equals(request.GiftRecipientTelegramUsername.TrimStart('@'), username,
+                              StringComparison.OrdinalIgnoreCase)) ||
+                         (!string.IsNullOrWhiteSpace(telegramId) &&
+                          string.Equals(request.GiftRecipientTelegramUserId, telegramId,
+                              StringComparison.Ordinal))))
                     .OrderBy(request => request.CreatedAt)
                     .ToArray();
                 if (matches.Length == 0)
                 {
                     await ReplyAsync(message.Chat.Id,
-                        "آیتم دستی فعالی برای این مشتری در لیست انتخاب‌شده پیدا نشد.", ct);
+                        "آیتم فعالی برای این مشتری در لیست انتخاب‌شده پیدا نشد.", ct);
                     return true;
                 }
                 draft.Identity = identity;
@@ -2240,14 +2245,14 @@ public sealed partial class TelegramWebhookController
                     (IReadOnlyCollection<TelegramInlineButton>)new[]
                     {
                         new TelegramInlineButton(
-                            $"🗑 {DisplayUser(request)} — {request.VolumeMl} میل",
+                            $"🗑 {DisplayUser(request)}{(request.IsGift ? $" برای @{request.GiftRecipientTelegramUsername ?? request.GiftRecipientTelegramUserId}" : string.Empty)} — {request.VolumeMl} میل",
                             $"adminrequest:removeitem:{request.Id:N}")
                     }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
                     {
                         new TelegramInlineButton("❌ لغو", "adminrequest:cancel")
                     }).ToArray();
                 await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
-                    $"آیتم دستی موردنظر را برای حذف انتخاب کنید:\nلیست {draft.PublicCode} — {draft.SalesListName}",
+                    $"آیتم موردنظر را برای حذف انتخاب کنید:\nلیست {draft.PublicCode} — {draft.SalesListName}",
                     rows, ct);
                 return true;
             }
