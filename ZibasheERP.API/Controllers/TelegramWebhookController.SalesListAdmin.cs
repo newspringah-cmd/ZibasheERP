@@ -714,11 +714,12 @@ public sealed partial class TelegramWebhookController
 
             if (!string.IsNullOrWhiteSpace(_options.SalesDiscussionChatId))
             {
-                var discussion = await _sender.SendAsync(
-                    _options.SalesChannelId,
+                var discussion = await _sender.SendReplyAsync(
+                    _options.SalesDiscussionChatId,
                     $"💬 هر سؤالی در رابطه با عطر «{draft.EnglishName}» دارید، اینجا بپرسید.\n" +
                     $"کد لیست: {salesList.PublicCode}\n" +
                     "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.",
+                    result.MessageId!.Value,
                     cancellationToken);
                 if (discussion.IsSuccessful)
                     salesList.TelegramDiscussionMessageId = discussion.MessageId;

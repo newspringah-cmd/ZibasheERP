@@ -522,9 +522,9 @@ public sealed partial class TelegramWebhookController
             return;
         }
         nextList.TelegramMessageId = post.MessageId;
-        var discussion = await _sender.SendAsync(_options.SalesChannelId,
+        var discussion = await _sender.SendReplyAsync(_options.SalesDiscussionChatId,
             $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\nکد لیست: {nextList.PublicCode}\n" +
-            "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.", ct);
+            "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.", post.MessageId!.Value, ct);
         if (discussion.IsSuccessful) nextList.TelegramDiscussionMessageId = discussion.MessageId;
         await _salesListRepository.UpdateAsync(nextList, ct);
         await _salesListRepository.SaveChangesAsync(ct);

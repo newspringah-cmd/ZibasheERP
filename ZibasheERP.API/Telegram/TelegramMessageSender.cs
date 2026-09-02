@@ -19,6 +19,12 @@ public interface ITelegramMessageSender
         string message,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendReplyAsync(
+        string chatId,
+        string message,
+        long replyToMessageId,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> SendHtmlAsync(
         string chatId,
         string message,
@@ -173,6 +179,21 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         => await SendRequestAsync(
             "sendMessage",
             new { chat_id = chatId, text = message },
+            cancellationToken);
+
+    public async Task<TelegramSendResult> SendReplyAsync(
+        string chatId,
+        string message,
+        long replyToMessageId,
+        CancellationToken cancellationToken = default)
+        => await SendRequestAsync(
+            "sendMessage",
+            new
+            {
+                chat_id = chatId,
+                text = message,
+                reply_parameters = new { message_id = replyToMessageId, allow_sending_without_reply = true }
+            },
             cancellationToken);
 
     public async Task<TelegramSendResult> RequestContactAsync(

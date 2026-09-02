@@ -161,7 +161,17 @@ public sealed class TelegramInvoiceStickerDraftStore
         _values.TryRemove((chatId, userId), out _);
 }
 
-public enum TelegramAdminRequestKind { NextBottle, CustomRequest, GiftRequest, EditList, CleanupList, ManageBottleQueue, RemoveCustomerRequests }
+public enum TelegramAdminRequestKind
+{
+    NextBottle,
+    CustomRequest,
+    GiftRequest,
+    EditList,
+    CleanupList,
+    ManageBottleQueue,
+    RemoveCustomerRequests,
+    RemoveSingleRequest
+}
 public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingConfirmation }
 
 public sealed class TelegramAdminRequestDraft
