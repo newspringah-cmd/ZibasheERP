@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,8 @@ public sealed class TelegramSalesListImportsController(
             value.SourceChannelId == sourceChannelId && value.SourceMessageId == sourceMessageId,
             cancellationToken);
         if (exists) return Conflict(new { Message = "این پیام قبلاً وارد صف شده است." });
+
+        parsedPayload = await ApplyCurrentCatalogPriceAsync(parsedPayload, cancellationToken);
 
         await using var stream = photo.OpenReadStream();
         using var memory = new MemoryStream();
@@ -79,6 +82,26 @@ public sealed class TelegramSalesListImportsController(
         foreach (var chunk in SplitForTelegram(item.RawText, 3800))
             await sender.SendInlineKeyboardAsync(options.Value.SalesAuditChatId, chunk, buttons, cancellationToken);
         return Ok(new { item.Id, item.ReviewMessageId });
+    }
+
+    private async Task<string> ApplyCurrentCatalogPriceAsync(
+        string parsedPayload,
+        CancellationToken cancellationToken)
+    {
+        var parsed = JsonNode.Parse(parsedPayload)?.AsObject();
+        var englishName = parsed?["englishName"]?.GetValue<string>()?.Trim();
+        var brand = parsed?["displayBrand"]?.GetValue<string>()?.Trim();
+        if (parsed is null || string.IsNullOrWhiteSpace(englishName) || string.IsNullOrWhiteSpace(brand))
+            return parsedPayload;
+
+        var currentPrice = await db.Perfumes.AsNoTracking()
+            .Where(value => !value.IsDeleted &&
+                value.EnglishName == englishName && value.Brand == brand)
+            .Select(value => (decimal?)value.PricePerMl)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (currentPrice is > 0)
+            parsed["pricePerMl"] = currentPrice.Value;
+        return parsed.ToJsonString();
     }
 
     private static IEnumerable<string> SplitForTelegram(string value, int maximum)

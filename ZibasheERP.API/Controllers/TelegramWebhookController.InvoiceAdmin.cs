@@ -664,6 +664,8 @@ public sealed partial class TelegramWebhookController
                 !value.IsDeleted &&
                 value.Brand == normalizedBrand &&
                 value.EnglishName == normalizedEnglish, ct);
+            if (existingPerfume is not null && existingPerfume.PricePerMl > 0)
+                price = existingPerfume.PricePerMl;
             var perfumeId = existingPerfume?.Id;
             if (perfumeId is null)
             {
