@@ -525,12 +525,8 @@ public sealed partial class TelegramWebhookController
         var discussionText =
             $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\nکد لیست: {nextList.PublicCode}\n" +
             "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.";
-        var discussion = string.IsNullOrWhiteSpace(_options.SalesDiscussionChatId)
-            ? new TelegramSendResult(false, "Discussion chat is not configured.")
-            : await _sender.SendReplyAsync(_options.SalesDiscussionChatId, discussionText,
-                post.MessageId!.Value, ct);
-        if (!discussion.IsSuccessful)
-            discussion = await _sender.SendAsync(_options.SalesChannelId, discussionText, ct);
+        var discussion = await _sender.SendReplyAsync(
+            _options.SalesChannelId, discussionText, post.MessageId!.Value, ct);
         if (discussion.IsSuccessful) nextList.TelegramDiscussionMessageId = discussion.MessageId;
         await _salesListRepository.UpdateAsync(nextList, ct);
         await _salesListRepository.SaveChangesAsync(ct);

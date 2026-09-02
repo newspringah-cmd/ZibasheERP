@@ -192,7 +192,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             {
                 chat_id = chatId,
                 text = message,
-                reply_parameters = new { message_id = replyToMessageId, allow_sending_without_reply = true }
+                reply_parameters = new { message_id = replyToMessageId }
             },
             cancellationToken);
 
