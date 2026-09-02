@@ -523,7 +523,7 @@ public sealed partial class TelegramWebhookController
         }
         nextList.TelegramMessageId = post.MessageId;
         var discussionText =
-            $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\nکد لیست: {nextList.PublicCode}\n" +
+            $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\n" +
             "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.";
         var discussion = await _sender.SendReplyAsync(
             _options.SalesChannelId, discussionText, post.MessageId!.Value, ct);
@@ -581,26 +581,27 @@ public sealed partial class TelegramWebhookController
             ? englishName
             : $"<a href=\"{HtmlClipped(list.ProductPageUrl, 180)}\">{englishName}</a>";
         var brandTag = "#" + HtmlClipped(ToHashtag(list.DisplayBrand), 45);
-        var header = $"کد: <b>{list.PublicCode}</b>\n\n" +
-            $"{linkedName}\n\n{brandTag}\n\n{gender}\n\nL.{list.ReleaseYear}\n\n" +
+        var header = $"{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
             $"🍊 نت‌های ابتدایی: {HtmlClipped(list.TopNotes, 40)}\n\n" +
             $"🌸 نت‌های میانی: {HtmlClipped(list.MiddleNotes, 40)}\n\n" +
             $"🌳 نت‌های پایانی: {HtmlClipped(list.BaseNotes, 40)}\n\n" +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
             $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
-            $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل | باقی‌مانده: {list.RemainingVolume} میل";
+            $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل\n\n" +
+            $"باقی‌مانده: {list.RemainingVolume} میل";
         var nextUsers = next.Select(item => Html(DisplayUser(item))).ToArray();
         var nextSection = nextUsers.Length == 0
             ? "Next Bottle: اولین نفر صف باتل باشید 😘😘"
             : BuildCompactUserLine("Next Bottle", nextUsers, 220);
         if (header.Length > 760)
-            header = $"کد: <b>{list.PublicCode}</b> | {linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
+            header = $"{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
                 $"🍊 {HtmlClipped(list.TopNotes, 22)} | 🌸 {HtmlClipped(list.MiddleNotes, 22)}\n\n" +
                 $"🌳 {HtmlClipped(list.BaseNotes, 22)} | 🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
                 $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
-                $"حداقل: {list.MinimumRequestVolumeMl} | باقی‌مانده: {list.RemainingVolume} میل";
+                $"حداقل: {list.MinimumRequestVolumeMl} میل\n\n" +
+                $"باقی‌مانده: {list.RemainingVolume} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);
         var rosterLines = rosterGroups.SelectMany(group =>
             new[] { $"{group.Volume} ml:" }.Concat(group.Users)).ToArray();
@@ -637,7 +638,7 @@ public sealed partial class TelegramWebhookController
             header, string.Join("\n", mainLines), nextSection
         }.Where(value => value.Length > 0));
         if (continuationLines.Count == 0) return (main, null);
-        var continuationHeader = $"ادامه فهرست سفارش‌ها — کد <b>{list.PublicCode}</b>\n{HtmlClipped(list.EnglishName, 60)}\n\n";
+        var continuationHeader = $"ادامه فهرست سفارش‌ها\n{HtmlClipped(list.EnglishName, 60)}\n\n";
         var shown = new List<string>();
         foreach (var line in continuationLines)
         {

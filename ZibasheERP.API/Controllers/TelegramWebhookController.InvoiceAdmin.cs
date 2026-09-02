@@ -734,7 +734,6 @@ public sealed partial class TelegramWebhookController
                 publishedSalesList.TelegramPhotoFileId = item.TelegramPhotoFileId;
                 var discussionText =
                     $"💬 هر سؤالی در رابطه با عطر «{publishedSalesList.EnglishName}» دارید، اینجا بپرسید.\n" +
-                    $"کد لیست: {publishedSalesList.PublicCode}\n" +
                     "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.";
                 var discussion = await _sender.SendReplyAsync(
                     _options.SalesChannelId, discussionText, published.MessageId!.Value, ct);
