@@ -277,7 +277,12 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 : null;
             var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
             if (!string.IsNullOrWhiteSpace(identity))
-                rows.Add(new[] { new TelegramInlineButton("📋 کپی آیدی", CopyText: identity) });
+                rows.Add(new[]
+                {
+                    new TelegramInlineButton(
+                        "📋 کپی فرمان اتصال",
+                        CopyText: $"/connectdecant {identity}")
+                });
             if (notification.EventType == "DecantPhotoDeliveryFailed" &&
                 root.TryGetProperty("NotificationId", out var notificationIdValue) &&
                 Guid.TryParse(notificationIdValue.GetString(), out var notificationId))

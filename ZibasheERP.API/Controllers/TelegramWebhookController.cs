@@ -807,6 +807,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;
 
+        if (await TryHandleDecantGroupConnectionAsync(message, cancellationToken))
+            return;
+
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))
             return;
 

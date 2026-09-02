@@ -243,14 +243,16 @@ public sealed partial class TelegramWebhookController
 
         foreach (var target in targets)
         {
+            var customerId = target.CustomerId ?? Guid.Empty;
             if (!target.CustomerId.HasValue)
             {
                 unmatched++;
                 await SendDecantFailureAlertAsync(
-                    $"⚠️ گیرنده عکس دکانت در مشتریان پیدا نشد.\nعطر: {draft.SalesListName}\nگیرنده: {target.DisplayIdentity}",
+                    $"⚠️ گیرنده عکس دکانت در مشتریان پیدا نشد.\nعطر: {draft.SalesListName}\nگیرنده: {target.DisplayIdentity}\n" +
+                    "پس از افزودن ربات به گروه مشتری، داخل همان گروه بزنید:\n" +
+                    $"/connectdecant {target.CopyIdentity}",
                     target.CopyIdentity,
                     ct);
-                continue;
             }
 
             var payload = JsonSerializer.Serialize(new
@@ -263,7 +265,7 @@ public sealed partial class TelegramWebhookController
                 TargetIdentity = target.DisplayIdentity
             });
             var existing = await _db.NotificationOutbox.AsNoTracking().AnyAsync(value =>
-                !value.IsDeleted && value.CustomerId == target.CustomerId.Value &&
+                !value.IsDeleted && value.CustomerId == customerId &&
                 value.EventType == DecantPhotoDeliveryEvent && value.Payload == payload,
                 ct);
             if (existing)
@@ -274,7 +276,7 @@ public sealed partial class TelegramWebhookController
             {
                 Id = Guid.NewGuid(),
                 CreatedAt = now.AddTicks(ready + waiting),
-                CustomerId = target.CustomerId.Value,
+                CustomerId = customerId,
                 Channel = "Telegram",
                 EventType = DecantPhotoDeliveryEvent,
                 Recipient = target.ActiveGroupChatId ?? string.Empty,
@@ -284,11 +286,11 @@ public sealed partial class TelegramWebhookController
             });
             if (isReady)
                 ready++;
-            else
+            else if (target.CustomerId.HasValue)
             {
                 waiting++;
                 _db.NotificationOutbox.Add(CreateDecantAdminAlert(
-                    target.CustomerId.Value,
+                    customerId,
                     DecantPhotoWaitingEvent,
                     $"⏳ عکس دکانت در انتظار اتصال گروه است.\nعطر: {draft.SalesListName}\nگیرنده: {target.DisplayIdentity}",
                     target.CopyIdentity,
@@ -298,6 +300,56 @@ public sealed partial class TelegramWebhookController
 
         await _db.SaveChangesAsync(ct);
         return new DecantQueueResult(ready, waiting, unmatched);
+    }
+
+    private async Task<bool> TryHandleDecantGroupConnectionAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null || string.IsNullOrWhiteSpace(message.Text))
+            return false;
+        var parts = message.Text.Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+        if (!string.Equals(parts[0].Split('@', 2)[0], "/connectdecant", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (parts.Length != 2 || NormalizeDecantUsername(parts[1]) is not { } username)
+        {
+            await ReplyAsync(message.Chat.Id, "فرمت صحیح:\n/connectdecant @username", ct);
+            return true;
+        }
+        if (!await _sender.IsChatAdministratorAsync(
+                message.Chat.Id.ToString(), message.From.Id.ToString(), ct))
+        {
+            await ReplyAsync(message.Chat.Id, "فقط مدیر این گروه می‌تواند عکس دکانت را به این گروه متصل کند.", ct);
+            return true;
+        }
+
+        var pending = await _db.NotificationOutbox
+            .Where(value => !value.IsDeleted && value.Channel == "Telegram" &&
+                value.EventType == DecantPhotoDeliveryEvent &&
+                value.CustomerId == Guid.Empty && value.Status == NotificationOutboxStatus.Failed)
+            .ToArrayAsync(ct);
+        var matches = pending.Where(value => DecantNotificationTargetsUsername(value.Payload, username)).ToArray();
+        if (matches.Length == 0)
+        {
+            await ReplyAsync(message.Chat.Id, $"عکس دکانت معوقی برای @{username} پیدا نشد.", ct);
+            return true;
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var notification in matches)
+        {
+            notification.Recipient = message.Chat.Id.ToString();
+            notification.Status = NotificationOutboxStatus.Pending;
+            notification.Attempts = 0;
+            notification.LastError = null;
+            notification.LockedUntil = null;
+            notification.NextAttemptAt = now;
+            notification.UpdatedAt = now;
+        }
+        await _db.SaveChangesAsync(ct);
+        await ReplyAsync(message.Chat.Id,
+            $"📸 {matches.Length} عکس دکانت برای @{username} در صف ارسال همین گروه قرار گرفت.", ct);
+        return true;
     }
 
     private async Task<IReadOnlyList<DecantTarget>> ResolveDecantTargetsAsync(
@@ -421,7 +473,9 @@ public sealed partial class TelegramWebhookController
             {
                 (IReadOnlyCollection<TelegramInlineButton>)new[]
                 {
-                    new TelegramInlineButton("📋 کپی آیدی", CopyText: copyIdentity)
+                    new TelegramInlineButton(
+                        "📋 کپی فرمان اتصال",
+                        CopyText: $"/connectdecant {copyIdentity}")
                 }
             },
             ct);
@@ -452,6 +506,24 @@ public sealed partial class TelegramWebhookController
     {
         var normalized = value?.Trim();
         return long.TryParse(normalized, out _) ? normalized : null;
+    }
+
+    private static bool DecantNotificationTargetsUsername(string payload, string username)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (!document.RootElement.TryGetProperty("TargetIdentity", out var value))
+                return false;
+            return string.Equals(
+                NormalizeDecantUsername(value.GetString()),
+                username,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private sealed record DecantTarget(
