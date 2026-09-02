@@ -6,11 +6,14 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
 using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
+using System.Collections.Concurrent;
 
 namespace ZibasheERP.API.Controllers;
 
 public sealed partial class TelegramWebhookController
 {
+    private static readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramSalesListImportEditDraft> ImportEditDrafts = new();
+
     private async Task<bool> TryHandleAdminCommandAsync(TelegramMessage message, CancellationToken ct)
     {
         var text = message.Text?.Trim();
@@ -547,7 +550,25 @@ public sealed partial class TelegramWebhookController
                 item.ReviewedAt = DateTime.UtcNow;
                 item.ReviewedByTelegramUserId = callback.From.Id.ToString();
                 await _db.SaveChangesAsync(ct);
-                await _sender.AnswerCallbackAsync(callback.Id, "برای ویرایش، متن اصلاح‌شده را در گروه تست ارسال کنید.", ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "فیلد موردنظر را انتخاب کنید.", ct);
+                await SendImportEditMenuAsync(callbackMessage.Chat.Id, item.Id, ct);
+                break;
+            case "field" when parts.Length == 4:
+                if (!ImportEditFields.TryGetValue(parts[2], out var prompt))
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "فیلد ویرایش نامعتبر است.", ct);
+                    return;
+                }
+                ImportEditDrafts[(callbackMessage.Chat.Id, callback.From.Id)] = new TelegramSalesListImportEditDraft(
+                    item.Id, parts[2], DateTime.UtcNow.AddMinutes(10));
+                await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+                await ReplyAsync(callbackMessage.Chat.Id, prompt, ct);
+                break;
+            case "editdone":
+                ImportEditDrafts.TryRemove((callbackMessage.Chat.Id, callback.From.Id), out _);
+                await _sender.AnswerCallbackAsync(callback.Id, "ویرایش‌ها ذخیره شد.", ct);
+                await _sender.SendInlineKeyboardAsync(callbackMessage.Chat.Id.ToString(),
+                    BuildReviewText(item, item.ParsedPayload), BuildImportReviewButtons(item.Id), ct);
                 break;
             case "approve":
                 if (item.Status != TelegramSalesListImportStatus.PendingReview &&
@@ -597,6 +618,108 @@ public sealed partial class TelegramWebhookController
         return !requests.EnumerateArray().Any(request =>
             request.TryGetProperty("isBottleOwner", out var owner) && owner.ValueKind == JsonValueKind.True);
     }
+
+    private static readonly IReadOnlyDictionary<string, string> ImportEditFields =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["english"] = "نام انگلیسی جدید عطر را وارد کنید.",
+            ["persian"] = "نام فارسی جدید عطر را وارد کنید.",
+            ["brand"] = "برند جدید را وارد کنید.",
+            ["price"] = "قیمت هر میل جدید را فقط به تومان وارد کنید. مثال: 250000",
+            ["total"] = "حجم کل جدید را فقط به میل وارد کنید. مثال: 100",
+            ["minimum"] = "حداقل میل درخواستی جدید را وارد کنید. مثال: 5",
+            ["top"] = "نت‌های ابتدایی جدید را وارد کنید.",
+            ["middle"] = "نت‌های میانی جدید را وارد کنید.",
+            ["base"] = "نت‌های پایانی جدید را وارد کنید.",
+            ["accords"] = "آکوردهای اصلی جدید را وارد کنید."
+        };
+
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildImportReviewButtons(Guid id) =>
+    [
+        [new TelegramInlineButton("✅ تأیید", $"import:approve:{id:N}"),
+         new TelegramInlineButton("✏️ ویرایش", $"import:edit:{id:N}"),
+         new TelegramInlineButton("❌ رد", $"import:reject:{id:N}")]
+    ];
+
+    private async Task SendImportEditMenuAsync(long chatId, Guid importId, CancellationToken ct)
+    {
+        var buttons = new[]
+        {
+            new[] { new TelegramInlineButton("نام انگلیسی", $"import:field:english:{importId:N}"), new TelegramInlineButton("نام فارسی", $"import:field:persian:{importId:N}") },
+            new[] { new TelegramInlineButton("برند", $"import:field:brand:{importId:N}"), new TelegramInlineButton("قیمت هر میل", $"import:field:price:{importId:N}") },
+            new[] { new TelegramInlineButton("حجم کل", $"import:field:total:{importId:N}"), new TelegramInlineButton("حداقل میل", $"import:field:minimum:{importId:N}") },
+            new[] { new TelegramInlineButton("نت ابتدایی", $"import:field:top:{importId:N}"), new TelegramInlineButton("نت میانی", $"import:field:middle:{importId:N}") },
+            new[] { new TelegramInlineButton("نت پایانی", $"import:field:base:{importId:N}"), new TelegramInlineButton("آکوردها", $"import:field:accords:{importId:N}") },
+            new[] { new TelegramInlineButton("✅ پایان و تأیید", $"import:editdone:{importId:N}") }
+        };
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), "فیلد موردنظر را انتخاب کنید. پس از هر ثبت می‌توانید فیلد دیگری را ویرایش کنید.", buttons, ct);
+    }
+
+    private async Task<bool> TryHandleSalesListImportEditMessageAsync(TelegramMessage message, CancellationToken ct)
+    {
+        if (message.From is null || !ImportEditDrafts.TryGetValue((message.Chat.Id, message.From.Id), out var draft))
+            return false;
+        if (draft.ExpiresAt <= DateTime.UtcNow)
+        {
+            ImportEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "زمان ویرایش تمام شد؛ دوباره دکمه «ویرایش» را بزنید.", ct);
+            return true;
+        }
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+            return false;
+        var input = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            await ReplyAsync(message.Chat.Id, "مقدار را به صورت متن ارسال کنید.", ct);
+            return true;
+        }
+        var item = await _db.TelegramSalesListImports.FirstOrDefaultAsync(value => value.Id == draft.ImportId && !value.IsDeleted, ct);
+        if (item is null || item.Status is TelegramSalesListImportStatus.Imported or TelegramSalesListImportStatus.Rejected)
+        {
+            ImportEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "این لیست دیگر قابل ویرایش نیست.", ct);
+            return true;
+        }
+        var root = JsonNode.Parse(item.ParsedPayload)?.AsObject();
+        if (root is null)
+        {
+            await ReplyAsync(message.Chat.Id, "دادهٔ لیست قابل ویرایش نیست.", ct);
+            return true;
+        }
+        try
+        {
+            switch (draft.Field)
+            {
+                case "english": root["englishName"] = RequireImportEditText(input); break;
+                case "persian": root["persianName"] = RequireImportEditText(input); break;
+                case "brand": root["displayBrand"] = RequireImportEditText(input); break;
+                case "top": root["topNotes"] = input; break;
+                case "middle": root["middleNotes"] = input; break;
+                case "base": root["baseNotes"] = input; break;
+                case "accords": root["accords"] = input; break;
+                case "price" when TryParseNonNegativeDecimal(input, out var price) && price > 0: root["pricePerMl"] = price; break;
+                case "total" when int.TryParse(NormalizeNumber(input), out var total) && total > 0: root["totalVolumeMl"] = total; break;
+                case "minimum" when int.TryParse(NormalizeNumber(input), out var minimum) && minimum > 0: root["minimumRequestVolumeMl"] = minimum; break;
+                default: throw new InvalidOperationException("مقدار واردشده معتبر نیست.");
+            }
+        }
+        catch (InvalidOperationException exception)
+        {
+            await ReplyAsync(message.Chat.Id, exception.Message, ct);
+            return true;
+        }
+        item.ParsedPayload = root.ToJsonString();
+        item.ReviewedAt = DateTime.UtcNow;
+        item.ReviewedByTelegramUserId = message.From.Id.ToString();
+        await _db.SaveChangesAsync(ct);
+        ImportEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+        await ReplyAsync(message.Chat.Id, "ویرایش ذخیره شد ✅", ct);
+        await SendImportEditMenuAsync(message.Chat.Id, item.Id, ct);
+        return true;
+    }
+
+    private static string RequireImportEditText(string value) =>
+        string.IsNullOrWhiteSpace(value) ? throw new InvalidOperationException("این فیلد نمی‌تواند خالی باشد.") : value.Trim();
 
     private static void SetHighestVolumeBottleOwner(TelegramSalesListImport item)
     {
@@ -773,6 +896,9 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(callback.Message!.Chat.Id, exception.Message, ct);
         }
     }
+
+    private sealed record TelegramSalesListImportEditDraft(
+        Guid ImportId, string Field, DateTime ExpiresAt);
 
     private sealed record ImportedRequest(
         string TelegramUsername, int VolumeMl, SalesListRequestKind Kind,
