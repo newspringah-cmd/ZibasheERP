@@ -29,7 +29,8 @@ public enum TelegramGroupLinkStatus
 public sealed record TelegramGroupLinkResult(
     TelegramGroupLinkStatus Status,
     string? CustomerName = null,
-    int QueuedInvoiceCount = 0);
+    int QueuedInvoiceCount = 0,
+    int QueuedDecantPhotoCount = 0);
 
 public sealed class TelegramGroupMembershipTracker(
     AppDbContext context,
@@ -55,16 +56,29 @@ public sealed class TelegramGroupMembershipTracker(
         }
 
         var now = DateTime.UtcNow;
-        group.IsActive = TelegramGroupMembershipPolicy.CanDeliver(
+        var canDeliver = TelegramGroupMembershipPolicy.CanDeliver(
             update.NewChatMember.Status,
             update.NewChatMember.IsMember,
             update.NewChatMember.CanSendMessages);
+        group.IsActive = canDeliver;
         if (!string.IsNullOrWhiteSpace(update.Chat.Title))
             group.Title = update.Chat.Title.Trim();
         group.Username = NormalizeUsername(update.Chat.Username);
         group.LastSeenAt = now;
         group.UpdatedAt = now;
         await context.SaveChangesAsync(cancellationToken);
+        if (canDeliver)
+        {
+            var queued = await QueueUndeliveredDecantPhotosAsync(
+                group.CustomerId,
+                chatId,
+                cancellationToken);
+            if (queued > 0)
+                logger.LogInformation(
+                    "Queued {Count} deferred decant photos after Telegram bot joined group {TelegramGroupChatId}.",
+                    queued,
+                    chatId);
+        }
     }
 
     public async Task MarkUnavailableAsync(
@@ -143,11 +157,44 @@ public sealed class TelegramGroupMembershipTracker(
             customer.Id,
             chatId,
             cancellationToken);
+        var queuedDecantPhotoCount = await QueueUndeliveredDecantPhotosAsync(
+            customer.Id,
+            chatId,
+            cancellationToken);
 
         return new TelegramGroupLinkResult(
             alreadyLinked ? TelegramGroupLinkStatus.AlreadyLinked : TelegramGroupLinkStatus.Linked,
             customer.FullName,
-            queuedInvoiceCount);
+            queuedInvoiceCount,
+            queuedDecantPhotoCount);
+    }
+
+    private async Task<int> QueueUndeliveredDecantPhotosAsync(
+        Guid customerId,
+        string chatId,
+        CancellationToken cancellationToken)
+    {
+        var notifications = await context.NotificationOutbox
+            .Where(value => !value.IsDeleted && value.CustomerId == customerId &&
+                value.Channel == "Telegram" && value.EventType == "DecantPhotoDelivery" &&
+                value.Status == NotificationOutboxStatus.Failed)
+            .ToArrayAsync(cancellationToken);
+        if (notifications.Length == 0)
+            return 0;
+
+        var now = DateTime.UtcNow;
+        foreach (var notification in notifications)
+        {
+            notification.Recipient = chatId;
+            notification.Status = NotificationOutboxStatus.Pending;
+            notification.Attempts = 0;
+            notification.LastError = null;
+            notification.LockedUntil = null;
+            notification.NextAttemptAt = now;
+            notification.UpdatedAt = now;
+        }
+        await context.SaveChangesAsync(cancellationToken);
+        return notifications.Length;
     }
 
     private async Task<int> QueueUndeliveredInvoicesAsync(

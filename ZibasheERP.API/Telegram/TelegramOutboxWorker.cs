@@ -180,6 +180,15 @@ public sealed class TelegramOutboxWorker : BackgroundService
                         now,
                         cancellationToken);
                 }
+                else if (notification.EventType == "DecantPhotoDelivery" &&
+                         notification.Status == NotificationOutboxStatus.Failed)
+                {
+                    await QueueAdminFailureAlertAsync(
+                        repository,
+                        notification,
+                        now,
+                        cancellationToken);
+                }
             }
 
             await repository.SaveChangesAsync(cancellationToken);
@@ -233,6 +242,53 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 recipient,
                 fileId,
                 string.IsNullOrWhiteSpace(title) ? "عطر فاکتور" : title,
+                cancellationToken);
+        }
+
+        if (notification.EventType == "DecantPhotoDelivery")
+        {
+            using var document = JsonDocument.Parse(notification.Payload);
+            var root = document.RootElement;
+            var fileId = root.TryGetProperty("FileId", out var fileValue)
+                ? fileValue.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(fileId))
+                return new TelegramSendResult(false, "Decant photo file id is missing.");
+            var caption = root.TryGetProperty("Caption", out var captionValue)
+                ? captionValue.GetString()
+                : null;
+            return await _sender.SendPhotoAsync(
+                recipient,
+                fileId,
+                string.IsNullOrWhiteSpace(caption) ? "📸 عکس دکانت" : caption,
+                cancellationToken);
+        }
+
+        if (notification.EventType is "DecantPhotoWaitingForGroup" or
+            "DecantPhotoRecipientUnmatched" or "DecantPhotoDeliveryFailed")
+        {
+            using var document = JsonDocument.Parse(notification.Payload);
+            var root = document.RootElement;
+            var alertMessage = root.TryGetProperty("Message", out var messageValue)
+                ? messageValue.GetString()
+                : null;
+            var identity = root.TryGetProperty("CopyIdentity", out var identityValue)
+                ? identityValue.GetString()
+                : null;
+            var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
+            if (!string.IsNullOrWhiteSpace(identity))
+                rows.Add(new[] { new TelegramInlineButton("📋 کپی آیدی", CopyText: identity) });
+            if (notification.EventType == "DecantPhotoDeliveryFailed" &&
+                root.TryGetProperty("NotificationId", out var notificationIdValue) &&
+                Guid.TryParse(notificationIdValue.GetString(), out var notificationId))
+                rows.Add(new[]
+                {
+                    new TelegramInlineButton("🔄 ارسال مجدد", $"decantphoto:retry:{notificationId:N}")
+                });
+            return await _sender.SendInlineKeyboardAsync(
+                recipient,
+                string.IsNullOrWhiteSpace(alertMessage) ? "خطا در ارسال عکس دکانت." : alertMessage,
+                rows.ToArray(),
                 cancellationToken);
         }
 
@@ -299,9 +355,13 @@ public sealed class TelegramOutboxWorker : BackgroundService
         DateTime now,
         CancellationToken cancellationToken)
     {
-        var adminChatId = string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
+        var isDecantPhoto = failedNotification.EventType == "DecantPhotoDelivery";
+        var configuredFailureChatId = isDecantPhoto
+            ? _options.DecantPhotoFailureChatId
+            : _options.InvoiceFailureChatId;
+        var adminChatId = string.IsNullOrWhiteSpace(configuredFailureChatId)
             ? _options.AdminChatId.Trim()
-            : _options.InvoiceFailureChatId.Trim();
+            : configuredFailureChatId.Trim();
         if (string.IsNullOrWhiteSpace(adminChatId))
         {
             _logger.LogWarning(
@@ -310,15 +370,35 @@ public sealed class TelegramOutboxWorker : BackgroundService
             return;
         }
 
+        string? identity = null;
+        string? salesListName = null;
+        if (isDecantPhoto)
+        {
+            using var document = JsonDocument.Parse(failedNotification.Payload);
+            identity = document.RootElement.TryGetProperty("TargetIdentity", out var identityValue)
+                ? identityValue.GetString()
+                : null;
+            salesListName = document.RootElement.TryGetProperty("SalesListName", out var nameValue)
+                ? nameValue.GetString()
+                : null;
+        }
+
         await repository.AddAsync(new NotificationOutbox
         {
             Id = Guid.NewGuid(),
             CreatedAt = now,
             CustomerId = failedNotification.CustomerId,
             Channel = "Telegram",
-            EventType = "TelegramGroupDeliveryFailed",
+            EventType = isDecantPhoto ? "DecantPhotoDeliveryFailed" : "TelegramGroupDeliveryFailed",
             Recipient = adminChatId,
-            Payload = JsonSerializer.Serialize(new
+            Payload = isDecantPhoto
+                ? JsonSerializer.Serialize(new
+                {
+                    Message = $"❌ ارسال عکس دکانت ناموفق بود.\nعطر: {salesListName}\nگیرنده: {identity}\nخطا: {failedNotification.LastError}",
+                    CopyIdentity = identity,
+                    NotificationId = failedNotification.Id
+                })
+                : JsonSerializer.Serialize(new
             {
                 failedNotification.CustomerId,
                 GroupChatId = failedNotification.Recipient,

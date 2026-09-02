@@ -60,6 +60,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramTemporaryMessageCleaner _temporaryMessageCleaner;
     private readonly TelegramInvoiceStickerDraftStore _invoiceStickerDrafts;
     private readonly TelegramInvoiceInventoryDraftStore _invoiceInventoryDrafts;
+    private readonly TelegramDecantPhotoDraftStore _decantPhotoDrafts;
     private readonly IInvoiceInventoryService _invoiceInventoryService;
     private readonly AppDbContext _db;
 
@@ -85,6 +86,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramTemporaryMessageCleaner temporaryMessageCleaner,
         TelegramInvoiceStickerDraftStore invoiceStickerDrafts,
         TelegramInvoiceInventoryDraftStore invoiceInventoryDrafts,
+        TelegramDecantPhotoDraftStore decantPhotoDrafts,
         IInvoiceInventoryService invoiceInventoryService,
         AppDbContext db,
         ILogger<TelegramWebhookController> logger)
@@ -110,6 +112,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _temporaryMessageCleaner = temporaryMessageCleaner;
         _invoiceStickerDrafts = invoiceStickerDrafts;
         _invoiceInventoryDrafts = invoiceInventoryDrafts;
+        _decantPhotoDrafts = decantPhotoDrafts;
         _invoiceInventoryService = invoiceInventoryService;
         _db = db;
         _logger = logger;
@@ -394,6 +397,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return;
 
         if (await TryHandleAdminSalesListCallbackAsync(callback, cancellationToken))
+            return;
+
+        if (await TryHandleDecantPhotoCallbackAsync(callback, cancellationToken))
             return;
 
         if (await TryHandleAdminCallbackAsync(callback, cancellationToken))
@@ -834,10 +840,10 @@ public sealed partial class TelegramWebhookController : ControllerBase
         {
             TelegramGroupLinkStatus.Linked =>
                 $"گروه با موفقیت به حساب {result.CustomerName} متصل شد ✅\nاز این پس فاکتور و مدارک سفارش در همین گروه ارسال می‌شود." +
-                FormatQueuedInvoiceNotice(result.QueuedInvoiceCount),
+                FormatQueuedDeliveryNotice(result.QueuedInvoiceCount, result.QueuedDecantPhotoCount),
             TelegramGroupLinkStatus.AlreadyLinked =>
                 $"این گروه قبلاً به حساب {result.CustomerName} متصل شده است ✅" +
-                FormatQueuedInvoiceNotice(result.QueuedInvoiceCount),
+                FormatQueuedDeliveryNotice(result.QueuedInvoiceCount, result.QueuedDecantPhotoCount),
             TelegramGroupLinkStatus.InvoiceNotFound =>
                 "فاکتوری با این شماره پیدا نشد. شماره فاکتور را دقیقاً مطابق فاکتور وارد کنید.",
             TelegramGroupLinkStatus.GroupLinkedToAnotherCustomer =>
@@ -854,6 +860,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         CancellationToken cancellationToken)
     {
         if (await TryHandleInvoiceInventoryMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleDecantPhotoMessageAsync(message, cancellationToken))
             return true;
 
         if (await TryHandleInvoiceStickerMessageAsync(message, cancellationToken))
@@ -874,9 +883,15 @@ public sealed partial class TelegramWebhookController : ControllerBase
         return await TryHandleAdminSalesListMessageAsync(message, cancellationToken);
     }
 
-    private static string FormatQueuedInvoiceNotice(int count) => count > 0
-        ? $"\n\n🧾 {count} فاکتور تحویل‌نشده به‌صورت خودکار در صف ارسال این گروه قرار گرفت."
-        : string.Empty;
+    private static string FormatQueuedDeliveryNotice(int invoiceCount, int decantPhotoCount)
+    {
+        var notices = new List<string>();
+        if (invoiceCount > 0)
+            notices.Add($"🧾 {invoiceCount} فاکتور تحویل‌نشده در صف ارسال قرار گرفت.");
+        if (decantPhotoCount > 0)
+            notices.Add($"📸 {decantPhotoCount} عکس دکانت معوق در صف ارسال قرار گرفت.");
+        return notices.Count == 0 ? string.Empty : "\n\n" + string.Join("\n", notices);
+    }
 
     private static bool TryParseConnectCommand(string? text, out string invoiceNumber)
     {

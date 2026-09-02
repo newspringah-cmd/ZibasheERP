@@ -1075,6 +1075,9 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("📦 مخزن انتظار عطرها", "invoiceadmin:waiting")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("📸 ارسال عکس دکانت", "decantphoto:start")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {

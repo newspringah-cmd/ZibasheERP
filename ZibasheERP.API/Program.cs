@@ -69,6 +69,7 @@ builder.Services.AddScoped<IInvoicePaymentStatusService, InvoicePaymentStatusSer
 builder.Services.AddScoped<IInvoiceInventoryService, InvoiceInventoryService>();
 builder.Services.AddSingleton<TelegramInvoiceStickerDraftStore>();
 builder.Services.AddSingleton<TelegramInvoiceInventoryDraftStore>();
+builder.Services.AddSingleton<TelegramDecantPhotoDraftStore>();
 
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
