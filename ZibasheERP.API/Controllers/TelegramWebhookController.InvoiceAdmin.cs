@@ -484,6 +484,7 @@ public sealed partial class TelegramWebhookController
         }
         var reviewChatId = item.ReviewChatId?.Trim();
         var canReview = IsPrimaryOwner(callback.From.Id) ||
+            await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, ct) ||
             (!string.IsNullOrWhiteSpace(reviewChatId) &&
              reviewChatId == callbackMessage.Chat.Id.ToString() &&
              await _sender.IsChatAdministratorAsync(reviewChatId, callback.From.Id.ToString(), ct));
