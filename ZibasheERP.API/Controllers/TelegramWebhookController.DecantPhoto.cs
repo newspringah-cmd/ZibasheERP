@@ -247,12 +247,6 @@ public sealed partial class TelegramWebhookController
             if (!target.CustomerId.HasValue)
             {
                 unmatched++;
-                await SendDecantFailureAlertAsync(
-                    $"⚠️ گیرنده عکس دکانت در مشتریان پیدا نشد.\nعطر: {draft.SalesListName}\nگیرنده: {target.DisplayIdentity}\n" +
-                    "پس از افزودن ربات به گروه مشتری، داخل همان گروه بزنید:\n" +
-                    $"/connectdecant {target.CopyIdentity}",
-                    target.CopyIdentity,
-                    ct);
             }
 
             var payload = JsonSerializer.Serialize(new
@@ -296,6 +290,16 @@ public sealed partial class TelegramWebhookController
                     target.CopyIdentity,
                     now.AddTicks(ready + waiting)));
             }
+            else
+            {
+                _db.NotificationOutbox.Add(CreateDecantAdminAlert(
+                    Guid.Empty,
+                    "DecantPhotoRecipientUnmatched",
+                    $"⚠️ گیرنده عکس دکانت در مشتریان پیدا نشد.\nعطر: {draft.SalesListName}\nگیرنده: {target.DisplayIdentity}\n" +
+                    "ربات را به گروه مشتری اضافه کنید، سپس دکمهٔ زیر را داخل آن گروه Paste کنید.",
+                    target.CopyIdentity,
+                    now.AddTicks(ready + waiting + unmatched)));
+            }
         }
 
         await _db.SaveChangesAsync(ct);
@@ -323,10 +327,61 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        var customer = await _db.Customers
+            .Include(value => value.TelegramGroup)
+            .FirstOrDefaultAsync(value => !value.IsDeleted && value.Username != null &&
+                value.Username.ToLower() == username.ToLower(), ct);
+        var permanentConnection = false;
+        if (customer is not null)
+        {
+            var conflictingGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
+                value.ChatId == message.Chat.Id.ToString() && !value.IsDeleted &&
+                value.CustomerId != customer.Id, ct);
+            if (conflictingGroup is not null)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "این گروه قبلاً به مشتری دیگری متصل شده است؛ اتصال تغییر نکرد.", ct);
+                return true;
+            }
+            if (customer.TelegramGroup is not null &&
+                !string.Equals(customer.TelegramGroup.ChatId, message.Chat.Id.ToString(), StringComparison.Ordinal))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "این مشتری قبلاً گروه دیگری دارد؛ اتصال تغییر نکرد.", ct);
+                return true;
+            }
+            if (customer.TelegramGroup is null)
+            {
+                customer.TelegramGroup = new CustomerTelegramGroup
+                {
+                    Id = Guid.NewGuid(),
+                    CustomerId = customer.Id,
+                    ChatId = message.Chat.Id.ToString(),
+                    Title = string.IsNullOrWhiteSpace(message.Chat.Title)
+                        ? message.Chat.Id.ToString()
+                        : message.Chat.Title.Trim(),
+                    Username = NormalizeDecantUsername(message.Chat.Username),
+                    IsActive = true,
+                    LinkedAt = DateTime.UtcNow,
+                    LastSeenAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _db.CustomerTelegramGroups.Add(customer.TelegramGroup);
+            }
+            else
+            {
+                customer.TelegramGroup.IsActive = true;
+                customer.TelegramGroup.LastSeenAt = DateTime.UtcNow;
+                customer.TelegramGroup.UpdatedAt = DateTime.UtcNow;
+            }
+            permanentConnection = true;
+        }
+
         var pending = await _db.NotificationOutbox
             .Where(value => !value.IsDeleted && value.Channel == "Telegram" &&
                 value.EventType == DecantPhotoDeliveryEvent &&
-                value.CustomerId == Guid.Empty && value.Status == NotificationOutboxStatus.Failed)
+                value.Status == NotificationOutboxStatus.Failed &&
+                string.IsNullOrWhiteSpace(value.Recipient))
             .ToArrayAsync(ct);
         var matches = pending.Where(value => DecantNotificationTargetsUsername(value.Payload, username)).ToArray();
         if (matches.Length == 0)
@@ -348,7 +403,11 @@ public sealed partial class TelegramWebhookController
         }
         await _db.SaveChangesAsync(ct);
         await ReplyAsync(message.Chat.Id,
-            $"📸 {matches.Length} عکس دکانت برای @{username} در صف ارسال همین گروه قرار گرفت.", ct);
+            $"✅ اتصال عکس دکانت به این گروه انجام شد.\n" +
+            (permanentConnection
+                ? "🧾 این گروه برای فاکتورهای بعدی هم متصل شد؛ دیگر /connect لازم نیست.\n"
+                : "⚠️ آیدی هنوز مشتری ثبت‌شده ندارد؛ فعلاً فقط عکس دکانت به این گروه متصل شد.\n") +
+            $"📸 {matches.Length} عکس برای @{username} در صف ارسال همین گروه قرار گرفت.", ct);
         return true;
     }
 
@@ -457,29 +516,6 @@ public sealed partial class TelegramWebhookController
             Recipient = DecantFailureChatId(),
             Payload = JsonSerializer.Serialize(new { Message = message, CopyIdentity = copyIdentity })
         };
-
-    private async Task SendDecantFailureAlertAsync(string message, string copyIdentity, CancellationToken ct)
-    {
-        var chatId = DecantFailureChatId();
-        if (string.IsNullOrWhiteSpace(chatId))
-        {
-            _logger.LogWarning("Decant photo failure chat is not configured: {Message}", message);
-            return;
-        }
-        await _sender.SendInlineKeyboardAsync(
-            chatId,
-            message,
-            new[]
-            {
-                (IReadOnlyCollection<TelegramInlineButton>)new[]
-                {
-                    new TelegramInlineButton(
-                        "📋 کپی فرمان اتصال",
-                        CopyText: $"/connectdecant {copyIdentity}")
-                }
-            },
-            ct);
-    }
 
     private string DecantFailureChatId() => string.IsNullOrWhiteSpace(_options.DecantPhotoFailureChatId)
         ? _options.InvoiceFailureChatId.Trim()
