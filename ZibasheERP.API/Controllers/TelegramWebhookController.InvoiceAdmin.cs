@@ -43,6 +43,15 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        var command = text.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries)[0]
+            .Split('@', 2)[0];
+        if (string.Equals(command, "/admin", StringComparison.OrdinalIgnoreCase))
+        {
+            ClearAdminWorkflowDrafts(message.Chat.Id, message.From.Id);
+            await SendInvoiceAdminMenuAsync(message.Chat.Id, null, ct);
+            return true;
+        }
+
         if (text.StartsWith("/bottleprice ", StringComparison.OrdinalIgnoreCase) ||
             text.StartsWith("/perfumepercent ", StringComparison.OrdinalIgnoreCase))
         {
@@ -2027,6 +2036,7 @@ public sealed partial class TelegramWebhookController
 
         if (parts.Length == 3 && parts[1] == "start")
         {
+            ClearAdminWorkflowDrafts(chatId, userId);
             var kind = parts[2] switch
             {
                 "next" => TelegramAdminRequestKind.NextBottle,
@@ -2309,6 +2319,19 @@ public sealed partial class TelegramWebhookController
         }
 
         await _sender.AnswerCallbackAsync(callback.Id, "گزینه نامعتبر است.", ct);
+    }
+
+    private void ClearAdminWorkflowDrafts(long chatId, long userId)
+    {
+        _adminSalesListDrafts.Remove(chatId, userId);
+        _ownerPricingDrafts.Remove(chatId, userId);
+        _adminRequestDrafts.Remove(chatId, userId);
+        _invoiceIssuanceDrafts.Remove(chatId, userId);
+        _manualInvoiceDrafts.Remove(chatId, userId);
+        _invoiceStickerDrafts.Remove(chatId, userId);
+        _invoiceInventoryDrafts.Remove(chatId, userId);
+        _decantPhotoDrafts.Remove(chatId, userId);
+        ImportEditDrafts.TryRemove((chatId, userId), out _);
     }
 
     private async Task<bool> TryHandleAdminRequestMessageAsync(TelegramMessage message, CancellationToken ct)
