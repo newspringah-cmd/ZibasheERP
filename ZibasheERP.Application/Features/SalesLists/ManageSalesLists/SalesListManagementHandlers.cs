@@ -75,7 +75,7 @@ public sealed class CreateSalesListCommandHandler
     {
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            var code = Random.Shared.Next(10000, 100000);
+            var code = Random.Shared.Next(1000, 10000);
             if (!await _salesListRepository.PublicCodeExistsAsync(code, cancellationToken))
                 return code;
         }

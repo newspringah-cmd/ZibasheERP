@@ -542,7 +542,7 @@ public sealed partial class TelegramWebhookController
             return;
 
         int publicCode;
-        do publicCode = Random.Shared.Next(10000, 100000);
+        do publicCode = Random.Shared.Next(1000, 10000);
         while (await _salesListRepository.PublicCodeExistsAsync(publicCode, ct));
         var now = DateTime.UtcNow;
         var nextList = new SalesList
@@ -650,7 +650,7 @@ public sealed partial class TelegramWebhookController
             : $"<a href=\"{HtmlClipped(list.ProductPageUrl, 180)}\">{englishName}</a>";
         var brandTag = "#" + HtmlClipped(ToHashtag(list.DisplayBrand), 45);
         var notesSection = FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, false);
-        var header = $"{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
+        var header = $"\u200F⁽{ToSmallDigits(list.PublicCode)}⁾\n{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
             notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
@@ -662,7 +662,7 @@ public sealed partial class TelegramWebhookController
             ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
             : BuildCompactUserLine("Next Bottle", nextUsers, 220);
         if (header.Length > 760)
-            header = $"{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
+            header = $"\u200F⁽{ToSmallDigits(list.PublicCode)}⁾\n{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
                 FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
                 $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
@@ -735,6 +735,13 @@ public sealed partial class TelegramWebhookController
             ? $"{item.Emoji} {HtmlClipped(item.Value, 22)}"
             : $"{item.Emoji} {item.Label}: {HtmlClipped(item.Value, 40)}");
         return string.Join(compact ? " | " : "\n\n", lines) + "\n\n";
+    }
+
+    private static string ToSmallDigits(int value)
+    {
+        const string smallDigits = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+        return string.Concat(value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            .Select(character => smallDigits[character - '0']));
     }
 
     private static string BuildCompactUserLine(string label, string[] users, int maximumLength)
