@@ -137,6 +137,7 @@ builder.Services.AddHostedService(serviceProvider =>
 builder.Services.AddSingleton<TelegramSalesListRebuildWorker>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramSalesListRebuildWorker>());
+builder.Services.AddHostedService<TelegramImportedNextBottleBackfillWorker>();
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddScoped<ITelegramGroupMembershipTracker, TelegramGroupMembershipTracker>();
 builder.Services.AddHostedService<TelegramBotMenuInitializer>();

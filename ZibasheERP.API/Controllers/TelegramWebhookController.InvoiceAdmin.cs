@@ -834,20 +834,23 @@ public sealed partial class TelegramWebhookController
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []
                 : [];
             var reserved = 0;
-            foreach (var (request, requestIndex) in requests
-                         .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
-                         .Select((request, index) => (request, index)))
+            foreach (var (request, requestIndex) in requests.Select((request, index) => (request, index)))
             {
                 if (request.VolumeMl <= 0 || string.IsNullOrWhiteSpace(request.TelegramUsername)) continue;
-                reserved += request.VolumeMl;
+                if (request.Kind == SalesListRequestKind.CurrentBottle)
+                    reserved += request.VolumeMl;
+                var normalizedUsername = request.TelegramUsername.Trim().TrimStart('@');
+                var normalizedGiftRecipient = string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
+                    ? null
+                    : request.GiftRecipientTelegramUsername.Trim().TrimStart('@');
                 _db.SalesListRequests.Add(new SalesListRequest
                 {
                     Id = Guid.NewGuid(), CreatedAt = item.SourceDate.UtcDateTime,
-                    SalesListId = created.Id, TelegramUsername = request.TelegramUsername.TrimStart('@'),
-                    TelegramUserId = $"imported:{request.TelegramUsername.TrimStart('@').ToLowerInvariant()}",
+                    SalesListId = created.Id, TelegramUsername = normalizedUsername,
+                    TelegramUserId = $"imported:{normalizedUsername.ToLowerInvariant()}",
                     VolumeMl = request.VolumeMl, IsBottleOwner = request.IsBottleOwner,
-                    IsGift = !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername),
-                    GiftRecipientTelegramUsername = request.GiftRecipientTelegramUsername,
+                    IsGift = normalizedGiftRecipient is not null,
+                    GiftRecipientTelegramUsername = normalizedGiftRecipient,
                     Kind = request.Kind, Status = SalesListRequestStatus.Confirmed,
                     CreatedByAdmin = true, ConfirmedAt = item.SourceDate.UtcDateTime,
                     ExpiresAt = DateTime.UtcNow.AddYears(10), PerfumePricePerMl = price,
