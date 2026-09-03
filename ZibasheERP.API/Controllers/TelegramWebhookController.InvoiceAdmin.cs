@@ -2072,7 +2072,7 @@ public sealed partial class TelegramWebhookController
 
         if (parts.Length == 4 && parts[1] == "list" && Guid.TryParseExact(parts[3], "N", out var listId))
         {
-            var list = (await _salesListRepository.GetForAdminAsync(200, ct)).FirstOrDefault(x => x.Id == listId);
+            var list = await _salesListRepository.GetByIdAsync(listId, ct);
             if (list is null)
             {
                 await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct);
@@ -2799,7 +2799,7 @@ public sealed partial class TelegramWebhookController
         var identity = draft.Identity.Trim();
         var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
         var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
-        var list = (await _salesListRepository.GetForAdminAsync(200, ct)).FirstOrDefault(x => x.Id == draft.SalesListId);
+        var list = await _salesListRepository.GetByIdAsync(draft.SalesListId, ct);
         if (list is null)
         {
             await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct);
