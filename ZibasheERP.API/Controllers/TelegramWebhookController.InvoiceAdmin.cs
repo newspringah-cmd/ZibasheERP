@@ -2769,6 +2769,37 @@ public sealed partial class TelegramWebhookController
         var identity = draft.Identity.Trim();
         var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
         var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
+        var list = (await _salesListRepository.GetForAdminAsync(200, ct)).FirstOrDefault(x => x.Id == draft.SalesListId);
+        if (list is null)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct);
+            return;
+        }
+
+        var giftRecipientUsername = draft.IsGift && draft.GiftRecipientIdentity.StartsWith('@')
+            ? draft.GiftRecipientIdentity.TrimStart('@') : null;
+        var giftRecipientTelegramId = draft.IsGift && !draft.GiftRecipientIdentity.StartsWith('@')
+            ? new string(draft.GiftRecipientIdentity.Where(char.IsDigit).ToArray()) : null;
+        var effectiveIsBottleOwner = draft.IsBottleOwner;
+        if (draft.IsBottleOwner && list.HasBottleOwner)
+        {
+            var recipientIsCurrentOwner = draft.IsGift && await _db.SalesListRequests.AsNoTracking().AnyAsync(value =>
+                value.SalesListId == list.Id && !value.IsDeleted && value.IsBottleOwner &&
+                value.Status == SalesListRequestStatus.Confirmed &&
+                ((!string.IsNullOrWhiteSpace(giftRecipientTelegramId) && value.TelegramUserId == giftRecipientTelegramId) ||
+                 (!string.IsNullOrWhiteSpace(giftRecipientUsername) && value.TelegramUsername == giftRecipientUsername)), ct);
+            if (!recipientIsCurrentOwner)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id,
+                    "این لیست قبلاً صاحب باتل دارد؛ شیشه رایگان فقط برای همان صاحب قابل ثبت است.", ct, showAlert: true);
+                return;
+            }
+
+            // The gift recipient already owns the bottle. This request receives
+            // the owner's free bottle without creating a second bottle owner.
+            effectiveIsBottleOwner = false;
+        }
+
         Bottle? bottle = null;
         if (draft.Kind is (TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest) && !draft.IsBottleOwner)
         {
@@ -2782,22 +2813,14 @@ public sealed partial class TelegramWebhookController
             }
             bottle = await _bottleRepository.GetByIdAsync(summary.Id, ct);
         }
-        var list = (await _salesListRepository.GetForAdminAsync(200, ct)).FirstOrDefault(x => x.Id == draft.SalesListId);
-        if (list is null)
-        {
-            await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct);
-            return;
-        }
         var request = new SalesListRequest
         {
             Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, SalesListId = list.Id,
             TelegramUserId = telegramId, TelegramUsername = username, VolumeMl = draft.VolumeMl,
             IsGift = draft.IsGift,
-            GiftRecipientTelegramUsername = draft.IsGift && draft.GiftRecipientIdentity.StartsWith('@')
-                ? draft.GiftRecipientIdentity.TrimStart('@') : null,
-            GiftRecipientTelegramUserId = draft.IsGift && !draft.GiftRecipientIdentity.StartsWith('@')
-                ? new string(draft.GiftRecipientIdentity.Where(char.IsDigit).ToArray()) : null,
-            IsBottleOwner = draft.IsBottleOwner,
+            GiftRecipientTelegramUsername = giftRecipientUsername,
+            GiftRecipientTelegramUserId = giftRecipientTelegramId,
+            IsBottleOwner = effectiveIsBottleOwner,
             BottleId = bottle?.Id, PerfumePricePerMl = list.PricePerMl, BottlePrice = bottle?.SalePrice ?? 0,
             Kind = draft.Kind == TelegramAdminRequestKind.NextBottle
                 ? SalesListRequestKind.NextBottle : SalesListRequestKind.CurrentBottle,
@@ -2808,10 +2831,22 @@ public sealed partial class TelegramWebhookController
             ConfirmedAt = draft.Kind == TelegramAdminRequestKind.NextBottle ? DateTime.UtcNow : null,
             ExternalReference = $"admin-interactive:{Guid.NewGuid():N}"
         };
-        await _salesListRequestRepository.AddAsync(request, ct);
-        await _salesListRequestRepository.SaveChangesAsync(ct);
-        if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
-            await _salesListRequestRepository.ConfirmCurrentBottleAsync(request.Id, telegramId, ct);
+        try
+        {
+            await _salesListRequestRepository.AddAsync(request, ct);
+            await _salesListRequestRepository.SaveChangesAsync(ct);
+            if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
+                await _salesListRequestRepository.ConfirmCurrentBottleAsync(request.Id, telegramId, ct);
+        }
+        catch (InvalidOperationException exception)
+        {
+            request.Status = SalesListRequestStatus.Cancelled;
+            request.IsDeleted = true;
+            request.UpdatedAt = DateTime.UtcNow;
+            await _salesListRequestRepository.SaveChangesAsync(ct);
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, showAlert: true);
+            return;
+        }
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست ثبت شد ✅", ct);
         await RefreshChannelSalesListAsync(list.Id, ct);
         var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
