@@ -63,6 +63,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramInvoiceStickerDraftStore _invoiceStickerDrafts;
     private readonly TelegramInvoiceInventoryDraftStore _invoiceInventoryDrafts;
     private readonly TelegramDecantPhotoDraftStore _decantPhotoDrafts;
+    private readonly TelegramSalesListRebuildWorker _salesListRebuildWorker;
     private readonly IInvoiceInventoryService _invoiceInventoryService;
     private readonly AppDbContext _db;
 
@@ -89,6 +90,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramInvoiceStickerDraftStore invoiceStickerDrafts,
         TelegramInvoiceInventoryDraftStore invoiceInventoryDrafts,
         TelegramDecantPhotoDraftStore decantPhotoDrafts,
+        TelegramSalesListRebuildWorker salesListRebuildWorker,
         IInvoiceInventoryService invoiceInventoryService,
         AppDbContext db,
         ILogger<TelegramWebhookController> logger)
@@ -115,6 +117,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _invoiceStickerDrafts = invoiceStickerDrafts;
         _invoiceInventoryDrafts = invoiceInventoryDrafts;
         _decantPhotoDrafts = decantPhotoDrafts;
+        _salesListRebuildWorker = salesListRebuildWorker;
         _invoiceInventoryService = invoiceInventoryService;
         _db = db;
         _logger = logger;

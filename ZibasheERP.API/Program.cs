@@ -134,6 +134,9 @@ builder.Services.AddSingleton<TelegramManualInvoiceDraftStore>();
 builder.Services.AddSingleton<TelegramTemporaryMessageCleaner>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramTemporaryMessageCleaner>());
+builder.Services.AddSingleton<TelegramSalesListRebuildWorker>();
+builder.Services.AddHostedService(serviceProvider =>
+    serviceProvider.GetRequiredService<TelegramSalesListRebuildWorker>());
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();
 builder.Services.AddScoped<ITelegramGroupMembershipTracker, TelegramGroupMembershipTracker>();
 builder.Services.AddHostedService<TelegramBotMenuInitializer>();

@@ -382,6 +382,23 @@ public sealed partial class TelegramWebhookController
             await ApplyOwnerPricingDraftAsync(callback, ct);
             return true;
         }
+
+        if (callback.Data == "invoiceadmin:rebuild-sales-lists")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فقط مدیر سیستم مجاز است.", ct, showAlert: true);
+                return true;
+            }
+            var queued = _salesListRebuildWorker.TryQueue(callback.Message.Chat.Id);
+            await _sender.AnswerCallbackAsync(callback.Id,
+                queued ? "بازسازی پست‌ها در صف قرار گرفت ✅" : "بازسازی از قبل در حال اجرا یا در صف است.", ct,
+                showAlert: !queued);
+            if (queued)
+                await ReplyAsync(callback.Message.Chat.Id,
+                    "بازسازی همه پست‌های فعال کانال در پس‌زمینه شروع می‌شود. پس از پایان، گزارش ارسال خواهد شد.", ct);
+            return true;
+        }
         if (callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal))
         {
             await HandleAdminRequestCallbackAsync(callback, ct);
@@ -1247,7 +1264,7 @@ public sealed partial class TelegramWebhookController
         {
             new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup")
         }).ToList();
-        if (long.TryParse(_options.OwnerUserId, out _))
+        if (long.TryParse(_options.OwnerUserId, out var ownerUserId))
         {
             buttons.Add(new[] { new TelegramInlineButton("💰 مدیریت قیمت‌ها", "invoiceadmin:pricing") });
             buttons.Add(new[]
@@ -1255,6 +1272,11 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("👋 تغییر استیکر سلام", "invoiceadmin:sticker"),
                 new TelegramInlineButton("🗑 حذف استیکر", "invoiceadmin:sticker-clear")
             });
+            if (chatId == ownerUserId)
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("🔄 بازسازی همه پست‌های لیست", "invoiceadmin:rebuild-sales-lists")
+                });
         }
         var message = (notice is null ? "" : notice + "\n\n") +
             $"⚙️ تنظیمات فاکتور زیباشی\n⏱ مهلت پرداخت: ۲۴ ساعت\n👋 استیکر سلام: {(string.IsNullOrWhiteSpace(greetingSticker) ? "پیام متنی" : "فعال")}\n🏦 حساب‌ها: {accounts.Count}/4 (پیشنهاد: ۲ حساب فعال)\n\nحساب‌های بانکی:\n" + lines +

@@ -602,7 +602,7 @@ public sealed partial class TelegramWebhookController
             $"لیست بعدی به‌صورت خودکار منتشر شد ✅\nکد جدید: {nextList.PublicCode}\nصاحب باتل: {DisplayUser(queue[0])} — {queue[0].VolumeMl} میل", ct);
     }
 
-    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(
+    internal static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(
         SalesList list, long? continuationMessageId = null)
     {
         continuationMessageId ??= list.TelegramContinuationMessageId;
@@ -627,7 +627,7 @@ public sealed partial class TelegramWebhookController
         SalesList list, IReadOnlyCollection<SalesListRequest> requests)
         => FormatChannelSalesListPages(list, requests).Main;
 
-    private static (string Main, string? Continuation) FormatChannelSalesListPages(
+    internal static (string Main, string? Continuation) FormatChannelSalesListPages(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests)
     {
         const int safeCaptionLength = 1000;
@@ -703,7 +703,7 @@ public sealed partial class TelegramWebhookController
         var main = string.Join("\n\n", new[]
         {
             header, string.Join("\n", mainLines), nextSection
-        }.Where(value => value.Length > 0));
+        }.Where(value => value.Length > 0)) + "\u2063";
         if (continuationLines.Count == 0) return (main, null);
         var continuationHeader = $"ادامه فهرست سفارش‌ها\n{HtmlClipped(list.EnglishName, 60)}\n\n";
         var shown = new List<string>();
@@ -715,7 +715,7 @@ public sealed partial class TelegramWebhookController
         }
         var omitted = continuationLines.Count - shown.Count;
         var continuation = continuationHeader + string.Join("\n", shown) +
-            (omitted > 0 ? $"\n… +{omitted} مورد" : string.Empty);
+            (omitted > 0 ? $"\n… +{omitted} مورد" : string.Empty) + "\u2063";
         return (main, continuation);
     }
 
