@@ -21,6 +21,10 @@ public interface ISalesListRequestRepository
     Task SetOmitIdentityOnLabelAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task SetLabelIdentityTextAsync(Guid requestId, string labelIdentityText, CancellationToken cancellationToken = default);
     Task<int> CountActiveCustomerRequestsAsync(string identity, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<SalesListRequest>> GetActiveCustomerRequestsAsync(
+        string identity,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<SalesListRequest>>(Array.Empty<SalesListRequest>());
     Task<IReadOnlyCollection<Guid>> RemoveAllActiveCustomerRequestsAsync(string identity, CancellationToken cancellationToken = default);
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

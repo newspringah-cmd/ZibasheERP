@@ -307,16 +307,29 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
 
     public async Task<int> CountActiveCustomerRequestsAsync(
         string identity, CancellationToken cancellationToken = default)
+        => (await GetActiveCustomerRequestsAsync(identity, cancellationToken)).Count;
+
+    public async Task<IReadOnlyCollection<SalesListRequest>> GetActiveCustomerRequestsAsync(
+        string identity, CancellationToken cancellationToken = default)
     {
         var (telegramUserId, username) = ParseIdentity(identity);
-        var exactCount = await ActiveCustomerRequests(telegramUserId, username)
-            .CountAsync(cancellationToken);
-        if (exactCount > 0)
-            return exactCount;
+        var exactMatches = await ActiveCustomerRequests(telegramUserId, username)
+            .AsNoTracking()
+            .Include(value => value.SalesList)
+            .OrderBy(value => value.SalesList.PublicCode)
+            .ThenBy(value => value.CreatedAt)
+            .ToArrayAsync(cancellationToken);
+        if (exactMatches.Length > 0)
+            return exactMatches;
         var candidates = await ActiveRequestCandidates()
             .AsNoTracking()
+            .Include(value => value.SalesList)
             .ToArrayAsync(cancellationToken);
-        return candidates.Count(value => MatchesIdentity(value, telegramUserId, username));
+        return candidates
+            .Where(value => MatchesIdentity(value, telegramUserId, username))
+            .OrderBy(value => value.SalesList.PublicCode)
+            .ThenBy(value => value.CreatedAt)
+            .ToArray();
     }
 
     public async Task<IReadOnlyCollection<Guid>> RemoveAllActiveCustomerRequestsAsync(
