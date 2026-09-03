@@ -375,8 +375,14 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     private static (string? TelegramUserId, string? Username) ParseIdentity(string identity)
     {
         var trimmed = identity.Trim();
-        if (trimmed.StartsWith('@') && trimmed.Length > 1)
-            return (null, trimmed.TrimStart('@').ToLowerInvariant());
+        var telegramLinkIndex = trimmed.LastIndexOf("t.me/", StringComparison.OrdinalIgnoreCase);
+        if (telegramLinkIndex >= 0)
+            trimmed = trimmed[(telegramLinkIndex + 5)..];
+        var username = new string(trimmed.TrimStart('@')
+            .Where(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_')
+            .ToArray());
+        if (username.Length > 0 && username.Any(char.IsLetter))
+            return (null, username.ToLowerInvariant());
         var telegramUserId = new string(trimmed.Where(char.IsDigit).ToArray());
         if (telegramUserId.Length < 5)
             throw new InvalidOperationException("شناسه مشتری نامعتبر است.");

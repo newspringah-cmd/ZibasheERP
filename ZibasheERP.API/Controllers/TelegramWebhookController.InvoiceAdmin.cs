@@ -2511,9 +2511,11 @@ public sealed partial class TelegramWebhookController
                 TelegramAdminRequestKind.SetRequestLabelIdentityText)
             {
                 var identity = input.Trim();
-                var username = identity.TrimStart('@');
-                var telegramId = new string(identity.Where(char.IsDigit).ToArray());
-                if (username.Length == 0)
+                var username = NormalizeAdminRequestUsername(identity);
+                var telegramId = username is null
+                    ? new string(identity.Where(char.IsDigit).ToArray())
+                    : string.Empty;
+                if (username is null && telegramId.Length < 5)
                 {
                     await ReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", ct);
                     return true;
@@ -2524,13 +2526,13 @@ public sealed partial class TelegramWebhookController
                     : await _salesListRequestRepository.GetConfirmedAsync(draft.SalesListId, ct);
                 var matches = requests
                     .Where(request =>
-                        ((!string.IsNullOrWhiteSpace(request.TelegramUsername) &&
-                          string.Equals(request.TelegramUsername.TrimStart('@'), username,
+                        ((username is not null && !string.IsNullOrWhiteSpace(request.TelegramUsername) &&
+                          string.Equals(NormalizeAdminRequestUsername(request.TelegramUsername), username,
                               StringComparison.OrdinalIgnoreCase)) ||
                          (!string.IsNullOrWhiteSpace(telegramId) &&
                           string.Equals(request.TelegramUserId, telegramId, StringComparison.Ordinal)) ||
-                         (!string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername) &&
-                          string.Equals(request.GiftRecipientTelegramUsername.TrimStart('@'), username,
+                         (username is not null && !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername) &&
+                          string.Equals(NormalizeAdminRequestUsername(request.GiftRecipientTelegramUsername), username,
                               StringComparison.OrdinalIgnoreCase)) ||
                          (!string.IsNullOrWhiteSpace(telegramId) &&
                           string.Equals(request.GiftRecipientTelegramUserId, telegramId,
@@ -2565,11 +2567,11 @@ public sealed partial class TelegramWebhookController
             if (draft.Kind == TelegramAdminRequestKind.RemoveCustomerRequests)
             {
                 var identity = input.Trim();
-                var removalIdentity = identity.StartsWith('@')
-                    ? identity
+                var removalUsername = NormalizeAdminRequestUsername(identity);
+                var removalIdentity = removalUsername is not null
+                    ? $"@{removalUsername}"
                     : new string(identity.Where(char.IsDigit).ToArray());
-                if ((identity.StartsWith('@') && identity.Length < 2) ||
-                    (!identity.StartsWith('@') && removalIdentity.Length < 5))
+                if (removalUsername is null && removalIdentity.Length < 5)
                 {
                     await ReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", ct);
                     return true;
@@ -3042,6 +3044,22 @@ public sealed partial class TelegramWebhookController
         _ownerPricingDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, "تغییر قیمت اعمال شد ✅", ct);
         await ReplyAsync(callback.Message.Chat.Id, "تغییر قیمت با موفقیت اعمال شد ✅", ct);
+    }
+
+    private static string? NormalizeAdminRequestUsername(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var candidate = value.Trim();
+        var telegramLinkIndex = candidate.LastIndexOf("t.me/", StringComparison.OrdinalIgnoreCase);
+        if (telegramLinkIndex >= 0)
+            candidate = candidate[(telegramLinkIndex + 5)..];
+        candidate = candidate.TrimStart('@');
+        var normalized = new string(candidate
+            .Where(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_')
+            .ToArray());
+        return normalized.Length > 0 && normalized.Any(char.IsLetter)
+            ? normalized.ToLowerInvariant()
+            : null;
     }
 
     private static decimal AdjustedPrice(decimal price, decimal percent) =>
