@@ -815,7 +815,7 @@ public sealed partial class TelegramWebhookController
         var notes = new[] { topNotes, middleNotes, baseNotes }
             .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
         if (notes.Length == 0) return string.Empty;
-        if (notes.Length == 1) return $"🌸 نت: {notes[0]}\n";
+        if (notes.Length == 1) return $"🌸 نت‌ها: {notes[0]}\n";
         return $"🍊 نت‌های ابتدایی: {topNotes}\n" +
                $"🌸 نت‌های میانی: {middleNotes}\n" +
                $"🌳 نت‌های پایانی: {baseNotes}\n";

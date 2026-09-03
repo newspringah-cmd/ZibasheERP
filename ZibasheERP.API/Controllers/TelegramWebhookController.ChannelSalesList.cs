@@ -730,7 +730,7 @@ public sealed partial class TelegramWebhookController
         }.Where(item => !string.IsNullOrWhiteSpace(item.Value)).ToArray();
         if (values.Length == 0) return string.Empty;
         if (values.Length == 1)
-            return $"🌸 نت: {HtmlClipped(values[0].Value, compact ? 35 : 60)}\n\n";
+            return $"🌸 نت‌ها: {HtmlClipped(values[0].Value, compact ? 35 : 60)}\n\n";
         var lines = values.Select(item => compact
             ? $"{item.Emoji} {HtmlClipped(item.Value, 22)}"
             : $"{item.Emoji} {item.Label}: {HtmlClipped(item.Value, 40)}");
