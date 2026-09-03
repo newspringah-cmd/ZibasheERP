@@ -628,9 +628,7 @@ public sealed partial class TelegramWebhookController
             ["price"] = "قیمت هر میل جدید را فقط به تومان وارد کنید. مثال: 250000",
             ["total"] = "حجم کل جدید را فقط به میل وارد کنید. مثال: 100",
             ["minimum"] = "حداقل میل درخواستی جدید را وارد کنید. مثال: 5",
-            ["top"] = "نت‌های ابتدایی جدید را وارد کنید.",
-            ["middle"] = "نت‌های میانی جدید را وارد کنید.",
-            ["base"] = "نت‌های پایانی جدید را وارد کنید.",
+            ["notes"] = CombinedNotesPrompt,
             ["accords"] = "آکوردهای اصلی جدید را وارد کنید."
         };
 
@@ -648,8 +646,7 @@ public sealed partial class TelegramWebhookController
             new[] { new TelegramInlineButton("نام انگلیسی", $"import:field:english:{importId:N}"), new TelegramInlineButton("نام فارسی", $"import:field:persian:{importId:N}") },
             new[] { new TelegramInlineButton("برند", $"import:field:brand:{importId:N}"), new TelegramInlineButton("قیمت هر میل", $"import:field:price:{importId:N}") },
             new[] { new TelegramInlineButton("حجم کل", $"import:field:total:{importId:N}"), new TelegramInlineButton("حداقل میل", $"import:field:minimum:{importId:N}") },
-            new[] { new TelegramInlineButton("نت ابتدایی", $"import:field:top:{importId:N}"), new TelegramInlineButton("نت میانی", $"import:field:middle:{importId:N}") },
-            new[] { new TelegramInlineButton("نت پایانی", $"import:field:base:{importId:N}"), new TelegramInlineButton("آکوردها", $"import:field:accords:{importId:N}") },
+            new[] { new TelegramInlineButton("نت‌ها", $"import:field:notes:{importId:N}"), new TelegramInlineButton("آکوردها", $"import:field:accords:{importId:N}") },
             new[] { new TelegramInlineButton("✅ پایان و تأیید", $"import:editdone:{importId:N}") }
         };
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), "فیلد موردنظر را انتخاب کنید. پس از هر ثبت می‌توانید فیلد دیگری را ویرایش کنید.", buttons, ct);
@@ -693,9 +690,11 @@ public sealed partial class TelegramWebhookController
                 case "english": root["englishName"] = RequireImportEditText(input); break;
                 case "persian": root["persianName"] = RequireImportEditText(input); break;
                 case "brand": root["displayBrand"] = RequireImportEditText(input); break;
-                case "top": root["topNotes"] = input; break;
-                case "middle": root["middleNotes"] = input; break;
-                case "base": root["baseNotes"] = input; break;
+                case "notes" when TryParseCombinedNotes(input, out var top, out var middle, out var bottom):
+                    root["topNotes"] = top;
+                    root["middleNotes"] = middle;
+                    root["baseNotes"] = bottom;
+                    break;
                 case "accords": root["accords"] = input; break;
                 case "price" when TryParseNonNegativeDecimal(input, out var price) && price > 0: root["pricePerMl"] = price; break;
                 case "total" when int.TryParse(NormalizeNumber(input), out var total) && total > 0: root["totalVolumeMl"] = total; break;
@@ -2121,7 +2120,10 @@ public sealed partial class TelegramWebhookController
             draft.Stage = parts[2] == "photo" ? TelegramAdminRequestStage.AwaitingEditPhoto : TelegramAdminRequestStage.AwaitingEditValue;
             _adminRequestDrafts.Set(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ReplyAsync(chatId, parts[2] == "photo" ? "عکس جدید عطر را ارسال کنید:" : "مقدار جدید را وارد کنید:", ct);
+            await ReplyAsync(chatId,
+                parts[2] == "photo" ? "عکس جدید عطر را ارسال کنید:"
+                : parts[2] == "perfumenotes" ? CombinedNotesPrompt
+                : "مقدار جدید را وارد کنید:", ct);
             return;
         }
 
@@ -2386,6 +2388,13 @@ public sealed partial class TelegramWebhookController
         }
         if (draft.Stage == TelegramAdminRequestStage.AwaitingEditValue)
         {
+            if (draft.EditField == "perfumenotes" &&
+                !TryParseCombinedNotes(input, out _, out _, out _))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "فرمت نت‌ها معتبر نیست. یک خط برای تک‌نت یا دقیقاً سه خط برای نت ابتدایی، میانی و پایانی بفرستید.", ct);
+                return true;
+            }
             draft.EditValue = input;
             draft.Stage = TelegramAdminRequestStage.AwaitingConfirmation;
             _adminRequestDrafts.Set(draft);
@@ -2666,8 +2675,7 @@ public sealed partial class TelegramWebhookController
             [new("نام انگلیسی", "adminrequest:editfield:english"), new("نام فارسی", "adminrequest:editfield:persian")],
             [new("لینک عطردان", "adminrequest:editfield:url"), new("برند", "adminrequest:editfield:brand")],
             [new("جنسیت", "adminrequest:editfield:gender"), new("سال تولید", "adminrequest:editfield:year")],
-            [new("نت ابتدایی", "adminrequest:editfield:top"), new("نت میانی", "adminrequest:editfield:middle")],
-            [new("نت پایانی", "adminrequest:editfield:base"), new("آکوردها", "adminrequest:editfield:accords")],
+            [new("نت‌ها", "adminrequest:editfield:perfumenotes"), new("آکوردها", "adminrequest:editfield:accords")],
             [new("قیمت هر میل", "adminrequest:editfield:price"), new("حداقل سفارش", "adminrequest:editfield:minimum")],
             [new("توضیحات", "adminrequest:editfield:notes"), new("🖼 تغییر عکس", "adminrequest:editfield:photo")],
             [new("❌ لغو", "adminrequest:cancel")]
@@ -2908,9 +2916,12 @@ public sealed partial class TelegramWebhookController
                 case "gender": list.Gender = draft.EditValue.Trim() switch { "زنانه" or "women" => PerfumeGender.Women, "مردانه" or "men" => PerfumeGender.Men, "یونیسکس" or "unisex" => PerfumeGender.Unisex, _ => throw new InvalidOperationException("جنسیت باید زنانه، مردانه یا یونیسکس باشد.") }; break;
                 case "year" when int.TryParse(NormalizeNumber(draft.EditValue), out var year) && year is >= 1800 and <= 2200: list.ReleaseYear = year; break;
                 case "year": throw new InvalidOperationException("سال تولید معتبر نیست.");
-                case "top": list.TopNotes = draft.EditValue.Trim(); break;
-                case "middle": list.MiddleNotes = draft.EditValue.Trim(); break;
-                case "base": list.BaseNotes = draft.EditValue.Trim(); break;
+                case "perfumenotes" when TryParseCombinedNotes(draft.EditValue, out var top, out var middle, out var bottom):
+                    list.TopNotes = top;
+                    list.MiddleNotes = middle;
+                    list.BaseNotes = bottom;
+                    break;
+                case "perfumenotes": throw new InvalidOperationException("یک خط برای تک‌نت یا دقیقاً سه خط برای نت ابتدایی، میانی و پایانی بفرستید.");
                 case "accords": list.Accords = draft.EditValue.Trim(); break;
                 case "price" when TryParsePositiveDecimal(draft.EditValue, out var price): list.PricePerMl = price; break;
                 case "price": throw new InvalidOperationException("قیمت معتبر نیست.");

@@ -8,6 +8,9 @@ namespace ZibasheERP.API.Controllers;
 
 public sealed partial class TelegramWebhookController
 {
+    private const string CombinedNotesPrompt =
+        "نت‌ها را وارد کنید. برای عطر تک‌نت فقط یک خط بفرستید؛ برای عطر سه‌مرحله‌ای سه خط به‌ترتیب نت ابتدایی، میانی و پایانی بفرستید.";
+
     private static readonly TelegramAdminSalesListStage[] ExistingReviewStages =
     [
         TelegramAdminSalesListStage.AwaitingEnglishName,
@@ -17,8 +20,6 @@ public sealed partial class TelegramWebhookController
         TelegramAdminSalesListStage.AwaitingReleaseYear,
         TelegramAdminSalesListStage.AwaitingPersianName,
         TelegramAdminSalesListStage.AwaitingTopNotes,
-        TelegramAdminSalesListStage.AwaitingMiddleNotes,
-        TelegramAdminSalesListStage.AwaitingBaseNotes,
         TelegramAdminSalesListStage.AwaitingAccords,
         TelegramAdminSalesListStage.AwaitingPrice,
         TelegramAdminSalesListStage.AwaitingVolume,
@@ -28,8 +29,7 @@ public sealed partial class TelegramWebhookController
     private static readonly string[] ExistingReviewLabels =
     [
         "نام انگلیسی", "لینک صفحه عطر", "برند", "جنسیت", "سال تولید",
-        "نام فارسی", "نت‌های ابتدایی", "نت‌های میانی", "نت‌های پایانی",
-        "آکوردهای اصلی", "قیمت هر میل", "حجم کل", "حداقل حجم درخواست"
+        "نام فارسی", "نت‌ها", "آکوردهای اصلی", "قیمت هر میل", "حجم کل", "حداقل حجم درخواست"
     ];
 
     private static readonly string[] ExistingEditPrompts =
@@ -40,9 +40,7 @@ public sealed partial class TelegramWebhookController
         "جنسیت را وارد کنید: زنانه، مردانه یا یونیسکس",
         "سال تولید جدید را میلادی وارد کنید.",
         "نام فارسی جدید عطر را وارد کنید.",
-        "نت‌های ابتدایی جدید را به فارسی وارد کنید.",
-        "نت‌های میانی جدید را به فارسی وارد کنید.",
-        "نت‌های پایانی جدید را به فارسی وارد کنید.",
+        CombinedNotesPrompt,
         "آکوردهای اصلی جدید را به فارسی وارد کنید.",
         "قیمت جدید هر میل را به تومان وارد کنید.",
         "حجم کل لیست جدید را به میل وارد کنید.",
@@ -263,20 +261,28 @@ public sealed partial class TelegramWebhookController
                 if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingTopNotes;
                 _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "نت‌های ابتدایی را به فارسی وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, CombinedNotesPrompt, cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingTopNotes:
-                draft.TopNotes = Limit(input, 500);
+                if (!TryParseCombinedNotes(input, out var topNotes, out var middleNotes, out var baseNotes))
+                {
+                    await ReplyAsync(message.Chat.Id,
+                        "فرمت نت‌ها معتبر نیست. یک خط برای تک‌نت یا دقیقاً سه خط برای نت ابتدایی، میانی و پایانی بفرستید.", cancellationToken);
+                    return true;
+                }
+                draft.TopNotes = Limit(topNotes, 500);
+                draft.MiddleNotes = Limit(middleNotes, 500);
+                draft.BaseNotes = Limit(baseNotes, 500);
                 if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
-                draft.Stage = TelegramAdminSalesListStage.AwaitingMiddleNotes;
+                draft.Stage = TelegramAdminSalesListStage.AwaitingAccords;
                 _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "نت‌های میانی را به فارسی وارد کنید.", cancellationToken);
+                await ReplyAsync(message.Chat.Id, "آکوردهای اصلی را به فارسی وارد کنید.", cancellationToken);
                 return true;
 
+            // Keep active drafts created before a deployment usable.
             case TelegramAdminSalesListStage.AwaitingMiddleNotes:
                 draft.MiddleNotes = Limit(input, 500);
-                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBaseNotes;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "نت‌های پایانی را به فارسی وارد کنید.", cancellationToken);
@@ -284,7 +290,6 @@ public sealed partial class TelegramWebhookController
 
             case TelegramAdminSalesListStage.AwaitingBaseNotes:
                 draft.BaseNotes = Limit(input, 500);
-                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingAccords;
                 _adminSalesListDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id, "آکوردهای اصلی را به فارسی وارد کنید.", cancellationToken);
@@ -566,13 +571,11 @@ public sealed partial class TelegramWebhookController
         3 => GenderLabel(draft.Gender),
         4 => draft.ReleaseYear.ToString(CultureInfo.InvariantCulture),
         5 => draft.PersianName,
-        6 => draft.TopNotes,
-        7 => draft.MiddleNotes,
-        8 => draft.BaseNotes,
-        9 => draft.Accords,
-        10 => $"{draft.PricePerMl:N0} تومان",
-        11 => $"{draft.TotalVolume:N0} میل",
-        12 => $"{draft.MinimumRequestVolumeMl:N0} میل",
+        6 => FormatNotesForReview(draft.TopNotes, draft.MiddleNotes, draft.BaseNotes),
+        7 => draft.Accords,
+        8 => $"{draft.PricePerMl:N0} تومان",
+        9 => $"{draft.TotalVolume:N0} میل",
+        10 => $"{draft.MinimumRequestVolumeMl:N0} میل",
         _ => "—"
     };
 
@@ -739,9 +742,7 @@ public sealed partial class TelegramWebhookController
         $"🔗 {draft.ProductPageUrl}\n" +
         $"🏷 #{NormalizeBrandTag(draft.DisplayBrand)} — {GenderLabel(draft.Gender)} — L.{draft.ReleaseYear}\n" +
         $"🇮🇷 {draft.PersianName}\n" +
-        $"🍊 نت‌های ابتدایی: {draft.TopNotes}\n" +
-        $"🌸 نت‌های میانی: {draft.MiddleNotes}\n" +
-        $"🌳 نت‌های پایانی: {draft.BaseNotes}\n" +
+        FormatNotesForAnnouncement(draft.TopNotes, draft.MiddleNotes, draft.BaseNotes) +
         $"🎼 آکوردها: {draft.Accords}\n" +
         $"💧 حجم کل: {draft.TotalVolume:N0} میل\n" +
         $"📏 حداقل درخواست: {draft.MinimumRequestVolumeMl:N0} میل\n" +
@@ -773,6 +774,52 @@ public sealed partial class TelegramWebhookController
 
     private static string Limit(string value, int maximum) =>
         value.Trim().Length <= maximum ? value.Trim() : value.Trim()[..maximum];
+
+    private static bool TryParseCombinedNotes(
+        string value, out string topNotes, out string middleNotes, out string baseNotes)
+    {
+        var parts = value.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('|', '\n')
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        topNotes = middleNotes = baseNotes = string.Empty;
+        if (parts.Length == 1)
+        {
+            topNotes = StripNoteLabel(parts[0]);
+            return topNotes.Length > 0;
+        }
+        if (parts.Length != 3) return false;
+        topNotes = StripNoteLabel(parts[0]);
+        middleNotes = StripNoteLabel(parts[1]);
+        baseNotes = StripNoteLabel(parts[2]);
+        return topNotes.Length > 0 && middleNotes.Length > 0 && baseNotes.Length > 0;
+    }
+
+    private static string StripNoteLabel(string value)
+    {
+        var separator = value.IndexOf(':');
+        if (separator < 0) separator = value.IndexOf('：');
+        return separator >= 0 ? value[(separator + 1)..].Trim() : value.Trim();
+    }
+
+    private static string FormatNotesForReview(string topNotes, string middleNotes, string baseNotes)
+    {
+        var notes = new[] { topNotes, middleNotes, baseNotes }
+            .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        return notes.Length <= 1
+            ? notes.FirstOrDefault() ?? "—"
+            : $"ابتدایی: {topNotes}\nمیانی: {middleNotes}\nپایانی: {baseNotes}";
+    }
+
+    private static string FormatNotesForAnnouncement(string topNotes, string middleNotes, string baseNotes)
+    {
+        var notes = new[] { topNotes, middleNotes, baseNotes }
+            .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        if (notes.Length == 0) return string.Empty;
+        if (notes.Length == 1) return $"🌸 نت: {notes[0]}\n";
+        return $"🍊 نت‌های ابتدایی: {topNotes}\n" +
+               $"🌸 نت‌های میانی: {middleNotes}\n" +
+               $"🌳 نت‌های پایانی: {baseNotes}\n";
+    }
 
     private static bool TryParseGender(string value, out int gender)
     {

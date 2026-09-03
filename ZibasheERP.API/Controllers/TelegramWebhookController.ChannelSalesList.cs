@@ -649,11 +649,10 @@ public sealed partial class TelegramWebhookController
             ? englishName
             : $"<a href=\"{HtmlClipped(list.ProductPageUrl, 180)}\">{englishName}</a>";
         var brandTag = "#" + HtmlClipped(ToHashtag(list.DisplayBrand), 45);
+        var notesSection = FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, false);
         var header = $"{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
-            $"🍊 نت‌های ابتدایی: {HtmlClipped(list.TopNotes, 40)}\n\n" +
-            $"🌸 نت‌های میانی: {HtmlClipped(list.MiddleNotes, 40)}\n\n" +
-            $"🌳 نت‌های پایانی: {HtmlClipped(list.BaseNotes, 40)}\n\n" +
+            notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
             $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
             $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل\n\n" +
@@ -665,8 +664,8 @@ public sealed partial class TelegramWebhookController
         if (header.Length > 760)
             header = $"{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
-                $"🍊 {HtmlClipped(list.TopNotes, 22)} | 🌸 {HtmlClipped(list.MiddleNotes, 22)}\n\n" +
-                $"🌳 {HtmlClipped(list.BaseNotes, 22)} | 🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
+                FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
+                $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
                 $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
                 $"حداقل: {list.MinimumRequestVolumeMl} میل\n\n" +
                 $"باقی‌مانده: {list.RemainingVolume} میل";
@@ -718,6 +717,24 @@ public sealed partial class TelegramWebhookController
         var continuation = continuationHeader + string.Join("\n", shown) +
             (omitted > 0 ? $"\n… +{omitted} مورد" : string.Empty);
         return (main, continuation);
+    }
+
+    private static string FormatChannelNotes(
+        string? topNotes, string? middleNotes, string? baseNotes, bool compact)
+    {
+        var values = new[]
+        {
+            (Emoji: "🍊", Label: "نت‌های ابتدایی", Value: topNotes),
+            (Emoji: "🌸", Label: "نت‌های میانی", Value: middleNotes),
+            (Emoji: "🌳", Label: "نت‌های پایانی", Value: baseNotes)
+        }.Where(item => !string.IsNullOrWhiteSpace(item.Value)).ToArray();
+        if (values.Length == 0) return string.Empty;
+        if (values.Length == 1)
+            return $"🌸 نت: {HtmlClipped(values[0].Value, compact ? 35 : 60)}\n\n";
+        var lines = values.Select(item => compact
+            ? $"{item.Emoji} {HtmlClipped(item.Value, 22)}"
+            : $"{item.Emoji} {item.Label}: {HtmlClipped(item.Value, 40)}");
+        return string.Join(compact ? " | " : "\n\n", lines) + "\n\n";
     }
 
     private static string BuildCompactUserLine(string label, string[] users, int maximumLength)
