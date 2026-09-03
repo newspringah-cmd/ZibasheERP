@@ -2539,6 +2539,16 @@ public sealed partial class TelegramWebhookController
                               StringComparison.Ordinal))))
                     .OrderBy(request => request.CreatedAt)
                     .ToArray();
+                var showingAllActiveItems = false;
+                if (matches.Length == 0 &&
+                    draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest &&
+                    requests.Count > 0)
+                {
+                    matches = requests
+                        .OrderBy(request => request.CreatedAt)
+                        .ToArray();
+                    showingAllActiveItems = true;
+                }
                 if (matches.Length == 0)
                 {
                     await ReplyAsync(message.Chat.Id,
@@ -2557,9 +2567,11 @@ public sealed partial class TelegramWebhookController
                     }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
                     {
                         new TelegramInlineButton("❌ لغو", "adminrequest:cancel")
-                    }).ToArray();
+                }).ToArray();
                 await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
-                    $"آیتم موردنظر را برای {(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "حذف" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "حذف آیدی از لیبل" : "ثبت نام دلخواه روی لیبل")} انتخاب کنید:\n" +
+                    (showingAllActiveItems
+                        ? "آیدی دقیقاً تطبیق داده نشد؛ آیتم موردنظر را از تمام آیتم‌های فعال لیست انتخاب کنید:\n"
+                        : $"آیتم موردنظر را برای {(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "حذف" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "حذف آیدی از لیبل" : "ثبت نام دلخواه روی لیبل")} انتخاب کنید:\n") +
                     $"لیست {draft.PublicCode} — {draft.SalesListName}",
                     rows, ct);
                 return true;

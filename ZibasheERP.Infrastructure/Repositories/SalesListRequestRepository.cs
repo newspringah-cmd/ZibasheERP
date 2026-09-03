@@ -309,8 +309,14 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         string identity, CancellationToken cancellationToken = default)
     {
         var (telegramUserId, username) = ParseIdentity(identity);
-        return await ActiveCustomerRequests(telegramUserId, username)
+        var exactCount = await ActiveCustomerRequests(telegramUserId, username)
             .CountAsync(cancellationToken);
+        if (exactCount > 0)
+            return exactCount;
+        var candidates = await ActiveRequestCandidates()
+            .AsNoTracking()
+            .ToArrayAsync(cancellationToken);
+        return candidates.Count(value => MatchesIdentity(value, telegramUserId, username));
     }
 
     public async Task<IReadOnlyCollection<Guid>> RemoveAllActiveCustomerRequestsAsync(
@@ -321,6 +327,14 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         var requests = await ActiveCustomerRequests(telegramUserId, username)
             .Include(value => value.SalesList)
             .ToArrayAsync(cancellationToken);
+        if (requests.Length == 0)
+        {
+            requests = (await ActiveRequestCandidates()
+                    .Include(value => value.SalesList)
+                    .ToArrayAsync(cancellationToken))
+                .Where(value => MatchesIdentity(value, telegramUserId, username))
+                .ToArray();
+        }
         if (requests.Length == 0)
             return [];
 
@@ -361,16 +375,40 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         return listIds;
     }
 
-    private IQueryable<SalesListRequest> ActiveCustomerRequests(string? telegramUserId, string? username) =>
+    private IQueryable<SalesListRequest> ActiveRequestCandidates() =>
         _dbContext.SalesListRequests.Where(value => !value.IsDeleted &&
             (value.Status == SalesListRequestStatus.PendingConfirmation ||
              value.Status == SalesListRequestStatus.Confirmed) &&
-            value.SalesList.Status == SalesListStatus.Open &&
+            (value.SalesList.Status == SalesListStatus.Open ||
+             value.SalesList.Status == SalesListStatus.Full));
+
+    private IQueryable<SalesListRequest> ActiveCustomerRequests(string? telegramUserId, string? username) =>
+        ActiveRequestCandidates().Where(value =>
             ((telegramUserId != null &&
               (value.TelegramUserId == telegramUserId || value.GiftRecipientTelegramUserId == telegramUserId)) ||
              (username != null &&
               (value.TelegramUsername != null && value.TelegramUsername.ToLower() == username ||
                value.GiftRecipientTelegramUsername != null && value.GiftRecipientTelegramUsername.ToLower() == username))));
+
+    private static bool MatchesIdentity(
+        SalesListRequest request,
+        string? telegramUserId,
+        string? username) =>
+        (telegramUserId is not null &&
+         (string.Equals(request.TelegramUserId, telegramUserId, StringComparison.Ordinal) ||
+          string.Equals(request.GiftRecipientTelegramUserId, telegramUserId, StringComparison.Ordinal))) ||
+        (username is not null &&
+         (string.Equals(NormalizeStoredUsername(request.TelegramUsername), username, StringComparison.Ordinal) ||
+          string.Equals(NormalizeStoredUsername(request.GiftRecipientTelegramUsername), username, StringComparison.Ordinal)));
+
+    private static string? NormalizeStoredUsername(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = new string(value.Trim().TrimStart('@')
+            .Where(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_')
+            .ToArray());
+        return normalized.Length == 0 ? null : normalized.ToLowerInvariant();
+    }
 
     private static (string? TelegramUserId, string? Username) ParseIdentity(string identity)
     {
@@ -378,11 +416,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         var telegramLinkIndex = trimmed.LastIndexOf("t.me/", StringComparison.OrdinalIgnoreCase);
         if (telegramLinkIndex >= 0)
             trimmed = trimmed[(telegramLinkIndex + 5)..];
-        var username = new string(trimmed.TrimStart('@')
-            .Where(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_')
-            .ToArray());
-        if (username.Length > 0 && username.Any(char.IsLetter))
-            return (null, username.ToLowerInvariant());
+        var username = NormalizeStoredUsername(trimmed);
+        if (username is not null && username.Any(char.IsLetter))
+            return (null, username);
         var telegramUserId = new string(trimmed.Where(char.IsDigit).ToArray());
         if (telegramUserId.Length < 5)
             throw new InvalidOperationException("شناسه مشتری نامعتبر است.");
