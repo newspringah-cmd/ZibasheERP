@@ -61,6 +61,26 @@ public class SalesListRepository : ISalesListRepository
             .ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<SalesList>> SearchForAdminAsync(
+        string query,
+        int? publicCode,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.SalesLists
+            .AsNoTracking()
+            .Include(salesList => salesList.Batch)
+            .Include(salesList => salesList.Perfume)
+            .Include(salesList => salesList.BottleOwnerCustomer)
+            .Where(salesList => !salesList.IsDeleted &&
+                ((publicCode.HasValue && salesList.PublicCode == publicCode.Value) ||
+                 salesList.EnglishName.Contains(query) ||
+                 salesList.PersianName.Contains(query)))
+            .OrderByDescending(salesList => salesList.OpenDate)
+            .Take(Math.Clamp(limit, 1, 50))
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task<SalesList?> GetLatestByPerfumeIdAsync(
         Guid perfumeId,
         CancellationToken cancellationToken = default) =>

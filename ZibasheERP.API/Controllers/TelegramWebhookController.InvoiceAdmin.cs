@@ -2369,15 +2369,14 @@ public sealed partial class TelegramWebhookController
         {
             var query = input.Trim();
             var normalizedCode = new string(query.Where(char.IsDigit).ToArray());
-            var lists = (await _salesListRepository.GetForAdminAsync(200, ct))
+            var publicCode = int.TryParse(normalizedCode, out var parsedPublicCode)
+                ? parsedPublicCode
+                : (int?)null;
+            var lists = (await _salesListRepository.SearchForAdminAsync(query, publicCode, 10, ct))
                 .Where(x => draft.Kind is TelegramAdminRequestKind.OmitRequestIdentityOnLabel or
                     TelegramAdminRequestKind.SetRequestLabelIdentityText
                     ? x.Status != SalesListStatus.Cancelled
                     : x.Status is SalesListStatus.Open or SalesListStatus.Full)
-                .Where(x =>
-                    (!string.IsNullOrEmpty(normalizedCode) && x.PublicCode.ToString().Contains(normalizedCode, StringComparison.Ordinal)) ||
-                    x.EnglishName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                    x.PersianName.Contains(query, StringComparison.OrdinalIgnoreCase))
                 .Take(10)
                 .ToArray();
             if (lists.Length == 0)
