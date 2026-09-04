@@ -109,11 +109,18 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                     CreatedAt = import.SourceDate.UtcDateTime,
                     SalesListId = import.SalesListId,
                     TelegramUsername = username,
-                    TelegramUserId = $"imported:{username.ToLowerInvariant()}",
+                    TelegramUserId = request.IsExternalIdentity
+                        ? $"imported-external:{username.ToLowerInvariant()}"
+                        : $"imported:{username.ToLowerInvariant()}",
                     VolumeMl = request.VolumeMl,
                     IsBottleOwner = false,
                     IsGift = giftRecipient is not null,
                     GiftRecipientTelegramUsername = giftRecipient,
+                    GiftRecipientTelegramUserId = giftRecipient is null
+                        ? null
+                        : request.GiftRecipientIsExternalIdentity
+                            ? $"imported-external:{giftRecipient.ToLowerInvariant()}"
+                            : $"imported:{giftRecipient.ToLowerInvariant()}",
                     Kind = SalesListRequestKind.NextBottle,
                     Status = SalesListRequestStatus.Confirmed,
                     CreatedByAdmin = true,
@@ -136,5 +143,7 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
         int VolumeMl,
         SalesListRequestKind Kind,
         bool IsBottleOwner,
-        string? GiftRecipientTelegramUsername);
+        string? GiftRecipientTelegramUsername,
+        bool IsExternalIdentity = false,
+        bool GiftRecipientIsExternalIdentity = false);
 }

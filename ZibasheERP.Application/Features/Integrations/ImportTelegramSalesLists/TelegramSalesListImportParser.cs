@@ -9,7 +9,10 @@ public sealed record TelegramSalesListImportRequest(
     int VolumeMl,
     SalesListRequestKind Kind,
     bool IsBottleOwner = false,
-    string? GiftRecipientTelegramUsername = null);
+    string? GiftRecipientTelegramUsername = null,
+    bool IsExternalIdentity = false,
+    bool GiftRecipientIsExternalIdentity = false,
+    bool IsFancyBottle = false);
 
 public sealed record TelegramSalesListImportParseResult(
     int? PublicCode,
@@ -74,8 +77,14 @@ public static partial class TelegramSalesListImportParser
     [GeneratedRegex(@"(?i)(?<value>[۰-۹0-9]+)\s*(?:ml|میل|ميل)")]
     private static partial Regex VolumeRegex();
 
-    [GeneratedRegex(@"(?i)^\s*(?<volume>[۰-۹0-9]+)\s*(?:ml|میل|ميل)\s*:\s*(?<tail>.*)$")]
+    [GeneratedRegex(@"(?i)^\s*(?<volume>[۰-۹0-9]+)\s*(?:ml|میل|ميل)\s*:?[ \t]*(?<tail>.*)$")]
     private static partial Regex VolumeHeadingRegex();
+
+    [GeneratedRegex(@"(?i)\b(?:f|fancy|mokabi)\b")]
+    private static partial Regex FancyBottleRegex();
+
+    [GeneratedRegex(@"(?i)^\s*(?<owner>[A-Za-z0-9_.][A-Za-z0-9_. ]*?)(?:\s+for\s+(?<recipient>@?[A-Za-z0-9_.][A-Za-z0-9_. ]*?))?\s*$")]
+    private static partial Regex ExternalIdentityRegex();
 
     public static TelegramSalesListImportParseResult Parse(string? source)
     {
@@ -116,7 +125,6 @@ public static partial class TelegramSalesListImportParser
         if (price is null) issues.Add("missing_price_per_ml");
 
         var requests = ParseRequests(lines, issues);
-        if (requests.Count == 0) issues.Add("no_requests_detected");
         if (totalVolume.HasValue && remaining.HasValue)
         {
             var currentVolume = requests
@@ -170,7 +178,7 @@ public static partial class TelegramSalesListImportParser
                 continue;
             }
 
-            if (!requestSectionStarted || !UsernameRegex().IsMatch(line))
+            if (!requestSectionStarted || string.IsNullOrWhiteSpace(line))
                 continue;
 
             if (line.TrimStart().StartsWith("for @", StringComparison.OrdinalIgnoreCase))
@@ -205,7 +213,11 @@ public static partial class TelegramSalesListImportParser
         var users = UsernameRegex().Matches(line)
             .Select(match => match.Groups["value"].Value)
             .ToArray();
-        if (users.Length == 0) return;
+        var isFancyBottle = FancyBottleRegex().IsMatch(line);
+        var externalLine = FancyBottleRegex().Replace(line, string.Empty).Trim();
+        var external = ExternalIdentityRegex().Match(externalLine);
+        if (users.Length == 0 && (!external.Success || IsNextBottlePlaceholder(externalLine)))
+            return;
 
         var volume = MatchInt(VolumeRegex(), line) ?? inheritedVolume;
         if (volume is null && kind == SalesListRequestKind.NextBottle)
@@ -216,23 +228,56 @@ public static partial class TelegramSalesListImportParser
             return;
         }
 
-        var isGift = line.Contains(" for @", StringComparison.OrdinalIgnoreCase);
-        if (isGift)
+        var giftSeparator = line.IndexOf(" for ", StringComparison.OrdinalIgnoreCase);
+        if (giftSeparator >= 0)
         {
-            if (users.Length < 2)
+            var ownerPart = FancyBottleRegex().Replace(line[..giftSeparator], string.Empty).Trim();
+            var recipientPart = line[(giftSeparator + " for ".Length)..].Trim();
+            var ownerUsername = UsernameRegex().Match(ownerPart);
+            var recipientUsername = UsernameRegex().Match(recipientPart);
+            var owner = ownerUsername.Success
+                ? ownerUsername.Groups["value"].Value
+                : ownerPart;
+            var recipient = recipientUsername.Success
+                ? recipientUsername.Groups["value"].Value
+                : recipientPart.TrimStart('@');
+            if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(recipient))
             {
                 issues.Add("invalid_gift_request");
                 return;
             }
-            target.Add(new TelegramSalesListImportRequest(users[0], volume.Value, kind,
-                isBottleOwner, users[1]));
+            target.Add(new TelegramSalesListImportRequest(
+                owner, volume.Value, kind, isBottleOwner, recipient,
+                IsExternalIdentity: !ownerUsername.Success,
+                GiftRecipientIsExternalIdentity: !recipientUsername.Success,
+                IsFancyBottle: isFancyBottle));
             return;
         }
 
-        foreach (var user in users)
-            target.Add(new TelegramSalesListImportRequest(user, volume.Value, kind,
-                isBottleOwner && target.Count == 0));
+        if (users.Length > 0)
+        {
+            foreach (var user in users)
+                target.Add(new TelegramSalesListImportRequest(user, volume.Value, kind,
+                    isBottleOwner && target.Count == 0, IsFancyBottle: isFancyBottle));
+            return;
+        }
+
+        var externalOwner = external.Groups["owner"].Value.Trim();
+        var externalRecipient = external.Groups["recipient"].Success
+            ? external.Groups["recipient"].Value.Trim().TrimStart('@')
+            : null;
+        target.Add(new TelegramSalesListImportRequest(
+            externalOwner, volume.Value, kind, isBottleOwner, externalRecipient,
+            IsExternalIdentity: true,
+            GiftRecipientIsExternalIdentity: externalRecipient is not null &&
+                !external.Groups["recipient"].Value.TrimStart().StartsWith('@'),
+            IsFancyBottle: isFancyBottle));
     }
+
+    private static bool IsNextBottlePlaceholder(string value) =>
+        value.Trim() is "." or "-" ||
+        value.Contains("اولین نفر", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("صف باشید", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsEnglishNameLine(string line) =>
         !string.IsNullOrWhiteSpace(line) &&

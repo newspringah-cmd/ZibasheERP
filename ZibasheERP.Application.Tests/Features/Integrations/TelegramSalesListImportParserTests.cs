@@ -118,4 +118,85 @@ public sealed class TelegramSalesListImportParserTests
         Assert.Equal(50, next[1].VolumeMl);
         Assert.False(result.Issues.Contains("request_without_volume"));
     }
+
+    [Fact]
+    public void Parse_LegacyExternalAndInstagramCustomers_PreservesNamesAndFancyBottle()
+    {
+        const string text = """
+            کد: 7789
+            Sample Perfume
+            #Sample_Brand
+            L.2020
+            عطر نمونه
+            75ml
+            قیمت هر میل: 100000
+            حداقل میل درخواستی: 1 میل
+            باقیمانده: 67 میل
+            5ml
+            Razieh.108 insta F mokabi
+            3ml:
+            ali
+            Next Bottle:
+            .
+            """;
+
+        var result = TelegramSalesListImportParser.Parse(text);
+
+        Assert.Equal(2, result.Requests.Count);
+        Assert.Equal("Razieh.108 insta", result.Requests[0].TelegramUsername);
+        Assert.True(result.Requests[0].IsExternalIdentity);
+        Assert.True(result.Requests[0].IsFancyBottle);
+        Assert.Equal("ali", result.Requests[1].TelegramUsername);
+        Assert.False(result.Issues.Contains("request_without_volume"));
+    }
+
+    [Fact]
+    public void Parse_LegacyExternalGift_PreservesExternalOwnerAndTelegramRecipient()
+    {
+        const string text = """
+            کد: 12680
+            Sample Perfume
+            #Sample_Brand
+            L.2020
+            عطر نمونه
+            100ml
+            قیمت هر میل: 100000
+            حداقل میل درخواستی: 1 میل
+            باقیمانده: 97 میل
+            3 ml:
+            Haj mamad for @Arabidiet
+            """;
+
+        var result = TelegramSalesListImportParser.Parse(text);
+        var gift = result.Requests.Single();
+
+        Assert.Equal("Haj mamad", gift.TelegramUsername);
+        Assert.True(gift.IsExternalIdentity);
+        Assert.Equal("Arabidiet", gift.GiftRecipientTelegramUsername);
+        Assert.False(gift.GiftRecipientIsExternalIdentity);
+    }
+
+    [Fact]
+    public void Parse_CompleteEmptyList_IsSafeForReview()
+    {
+        const string text = """
+            کد: 7948
+            Baraonda
+            #Nasomatto
+            #unisex
+            L.2016
+            ناسوماتو برائوندا
+            30ml
+            قیمت هر میل: 1106000
+            حداقل میل درخواستی: 1 میل
+            باقیمانده: 30 میل
+            Next Bottle:
+            اولین نفر صف باشید
+            """;
+
+        var result = TelegramSalesListImportParser.Parse(text);
+
+        Assert.Equal(0, result.Requests.Count);
+        Assert.True(result.IsSafeForAutomaticReview);
+    }
 }

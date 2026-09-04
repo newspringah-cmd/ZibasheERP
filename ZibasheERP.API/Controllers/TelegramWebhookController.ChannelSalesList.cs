@@ -330,7 +330,9 @@ public sealed partial class TelegramWebhookController
 
     private static string GiftRecipientLabel(SalesListRequest request) =>
         !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
-            ? "@" + request.GiftRecipientTelegramUsername
+            ? request.GiftRecipientTelegramUserId?.StartsWith("imported-external:", StringComparison.Ordinal) == true
+                ? request.GiftRecipientTelegramUsername
+                : "@" + request.GiftRecipientTelegramUsername
             : request.GiftRecipientTelegramUserId ?? "نامشخص";
 
     private async Task ConfirmChannelReservationAsync(
@@ -746,7 +748,9 @@ public sealed partial class TelegramWebhookController
     private static string DisplayUser(SalesListRequest request) =>
         (string.IsNullOrWhiteSpace(request.TelegramUsername)
             ? $"کاربر {request.TelegramUserId}"
-            : $"@{request.TelegramUsername.TrimStart('@')}") +
+            : request.TelegramUserId.StartsWith("imported-external:", StringComparison.Ordinal)
+                ? request.TelegramUsername
+                : $"@{request.TelegramUsername.TrimStart('@')}") +
         (request.IsGift ? $" for {GiftRecipientLabel(request)}" : string.Empty) +
         (request.IsBottleOwner ? " 👑" : string.Empty) +
         (request.Bottle?.Type == BottleType.Fancy ? " F" : string.Empty) +
