@@ -116,6 +116,6 @@ public sealed class TelegramSalesListImportParserTests
         Assert.Equal(2, next.Length);
         Assert.Equal(30, next[0].VolumeMl);
         Assert.Equal(50, next[1].VolumeMl);
-        Assert.DoesNotContain("request_without_volume", result.Issues);
+        Assert.False(result.Issues.Contains("request_without_volume"));
     }
 }
