@@ -88,4 +88,34 @@ public sealed class TelegramSalesListImportParserTests
         Assert.True(result.Issues.Contains("ambiguous_standalone_gift_recipient"));
         Assert.False(result.IsSafeForAutomaticReview);
     }
+
+    [Fact]
+    public void Parse_NextBottleWithoutVolume_DefaultsToThirtyAndPreservesExplicitVolume()
+    {
+        const string text = """
+            کد: 1234
+            Sample Perfume
+            #Sample_Brand
+            L.2020
+            عطر نمونه
+            100ml
+            قیمت هر میل: 100000
+            حداقل میل درخواستی: 1 میل
+            باقیمانده: 100 میل
+            Next Bottle:
+            @default_user
+            50 ml:
+            @explicit_user
+            """;
+
+        var result = TelegramSalesListImportParser.Parse(text);
+
+        var next = result.Requests
+            .Where(value => value.Kind == SalesListRequestKind.NextBottle)
+            .ToArray();
+        Assert.Equal(2, next.Length);
+        Assert.Equal(30, next[0].VolumeMl);
+        Assert.Equal(50, next[1].VolumeMl);
+        Assert.DoesNotContain("request_without_volume", result.Issues);
+    }
 }

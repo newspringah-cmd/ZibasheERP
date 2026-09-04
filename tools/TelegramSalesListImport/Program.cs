@@ -2,10 +2,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ZibasheERP.Application.Features.Integrations.ImportTelegramSalesLists;
 
-if (args.Length is < 1 or > 4)
+if (args.Length is < 1 or > 5)
 {
     Console.Error.WriteLine(
-        "Usage: dotnet run --project tools/TelegramSalesListImport -- <result.json> [output-directory] [batch-count] [skip-count]");
+        "Usage: dotnet run --project tools/TelegramSalesListImport -- <result.json> [output-directory] [batch-count] [skip-count] [source-message-filter-manifest.json]");
     return 2;
 }
 
@@ -17,14 +17,36 @@ var outputDirectory = Path.GetFullPath(args.ElementAtOrDefault(1) ??
 var batchCount = args.Length >= 3 && int.TryParse(args[2], out var requestedCount)
     ? Math.Clamp(requestedCount, 1, 10_000)
     : 20;
-var skipCount = args.Length == 4 && int.TryParse(args[3], out var requestedSkip)
+var skipCount = args.Length >= 4 && int.TryParse(args[3], out var requestedSkip)
     ? Math.Max(requestedSkip, 0)
     : 0;
+var filterManifestPath = args.ElementAtOrDefault(4);
 
 if (!File.Exists(inputPath))
 {
     Console.Error.WriteLine($"Telegram result.json was not found: {inputPath}");
     return 2;
+}
+
+HashSet<long>? targetMessageIds = null;
+if (!string.IsNullOrWhiteSpace(filterManifestPath))
+{
+    filterManifestPath = Path.GetFullPath(filterManifestPath);
+    if (!File.Exists(filterManifestPath))
+    {
+        Console.Error.WriteLine($"Source message filter manifest was not found: {filterManifestPath}");
+        return 2;
+    }
+
+    await using var filterInput = File.OpenRead(filterManifestPath);
+    var filterItems = await JsonSerializer.DeserializeAsync<IReadOnlyList<SourceMessageFilterItem>>(
+        filterInput, JsonDefaults.Options) ?? [];
+    targetMessageIds = filterItems.Select(value => value.SourceMessageId).ToHashSet();
+    if (targetMessageIds.Count == 0)
+    {
+        Console.Error.WriteLine("Source message filter manifest did not contain any message IDs.");
+        return 2;
+    }
 }
 
 Directory.CreateDirectory(outputDirectory);
@@ -35,9 +57,12 @@ var export = await JsonSerializer.DeserializeAsync<TelegramExport>(input, JsonDe
 var candidates = new List<ImportManifestItem>();
 var issues = new Dictionary<string, int>(StringComparer.Ordinal);
 var photoMessages = 0;
+var matchedTargetMessageIds = new HashSet<long>();
 
 foreach (var message in export.Messages.OrderBy(value => value.Id))
 {
+    if (targetMessageIds is not null && !targetMessageIds.Contains(message.Id)) continue;
+    matchedTargetMessageIds.Add(message.Id);
     if (string.IsNullOrWhiteSpace(message.Photo)) continue;
     photoMessages++;
 
@@ -79,6 +104,11 @@ await WriteJsonAsync(Path.Combine(outputDirectory, "import-summary.json"), new
     PilotItems = safe.Length,
     RemainingSafeCandidates = Math.Max(allSafe.Length - skipCount - safe.Length, 0),
     ManualReviewItems = review.Length,
+    FilteredSourceMessageIds = targetMessageIds?.Count,
+    MatchedFilteredMessages = targetMessageIds is null ? (int?)null : matchedTargetMessageIds.Count,
+    MissingFilteredMessages = targetMessageIds is null
+        ? null
+        : targetMessageIds.Except(matchedTargetMessageIds).Order().ToArray(),
     Issues = issues.OrderByDescending(value => value.Value)
 });
 
@@ -90,6 +120,12 @@ Console.WriteLine($"Skipped safe candidates: {Math.Min(skipCount, allSafe.Length
 Console.WriteLine($"Pilot manifest: {safe.Length} item(s)");
 Console.WriteLine($"Remaining safe candidates: {Math.Max(allSafe.Length - skipCount - safe.Length, 0)}");
 Console.WriteLine($"Manual review: {review.Length} item(s)");
+if (targetMessageIds is not null)
+{
+    Console.WriteLine($"Filtered source messages: {targetMessageIds.Count}");
+    Console.WriteLine($"Matched filtered messages: {matchedTargetMessageIds.Count}");
+    Console.WriteLine($"Missing filtered messages: {targetMessageIds.Except(matchedTargetMessageIds).Count()}");
+}
 Console.WriteLine($"Output: {outputDirectory}");
 return safe.Length > 0 ? 0 : 1;
 
@@ -135,6 +171,8 @@ internal sealed record ImportManifestItem(
     string RawText,
     TelegramSalesListImportParseResult Parsed,
     bool IsSafeForPilot);
+
+internal sealed record SourceMessageFilterItem(long SourceMessageId);
 
 internal static class JsonDefaults
 {

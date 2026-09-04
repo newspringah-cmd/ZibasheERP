@@ -657,7 +657,10 @@ public sealed partial class TelegramWebhookController
             $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
             $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل\n\n" +
             $"باقی‌مانده: {list.RemainingVolume} میل";
-        var nextUsers = next.Select(item => Html(DisplayUser(item))).ToArray();
+        var nextUsers = next.Select(item =>
+            item.VolumeMl == 30
+                ? Html(DisplayUser(item))
+                : $"{Html(DisplayUser(item))} — {item.VolumeMl} ml").ToArray();
         var nextSection = nextUsers.Length == 0
             ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
             : BuildCompactUserLine("Next Bottle", nextUsers, 220);

@@ -45,6 +45,8 @@ public sealed record TelegramSalesListImportParseResult(
 
 public static partial class TelegramSalesListImportParser
 {
+    private const int DefaultNextBottleVolumeMl = 30;
+
     [GeneratedRegex(@"(?im)^\s*کد\s*:\s*(?<value>[۰-۹0-9]+)\s*$")]
     private static partial Regex PublicCodeRegex();
 
@@ -206,6 +208,8 @@ public static partial class TelegramSalesListImportParser
         if (users.Length == 0) return;
 
         var volume = MatchInt(VolumeRegex(), line) ?? inheritedVolume;
+        if (volume is null && kind == SalesListRequestKind.NextBottle)
+            volume = DefaultNextBottleVolumeMl;
         if (volume is null or <= 0)
         {
             issues.Add("request_without_volume");
