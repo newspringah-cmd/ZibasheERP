@@ -663,7 +663,7 @@ public sealed partial class TelegramWebhookController
                 : $"{Html(DisplayUser(item))} — {item.VolumeMl} ml").ToArray();
         var nextSection = nextUsers.Length == 0
             ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
-            : BuildStackedUserLines("Next Bottle", nextUsers, 220);
+            : BuildStackedUserLines("Next Bottle", nextUsers);
         if (header.Length > 760)
             header = $"\u200F<b>{list.PublicCode}</b>\n{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
@@ -740,19 +740,8 @@ public sealed partial class TelegramWebhookController
         return string.Join(compact ? " | " : "\n\n", lines) + "\n\n";
     }
 
-    private static string BuildStackedUserLines(string label, string[] users, int maximumLength)
-    {
-        var shown = new List<string>();
-        foreach (var user in users)
-        {
-            var candidate = $"{label}:\n\n{string.Join("\n", shown.Append(user))}";
-            if (candidate.Length > maximumLength - 14) break;
-            shown.Add(user);
-        }
-        var omitted = users.Length - shown.Count;
-        return $"{label}:\n\n{string.Join("\n", shown)}" +
-            (omitted > 0 ? $"\n… +{omitted} نفر" : string.Empty);
-    }
+    private static string BuildStackedUserLines(string label, string[] users) =>
+        $"{label}:\n\n{string.Join("\n", users)}";
 
     private static string DisplayUser(SalesListRequest request) =>
         (string.IsNullOrWhiteSpace(request.TelegramUsername)

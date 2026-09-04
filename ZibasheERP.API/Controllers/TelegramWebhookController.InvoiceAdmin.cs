@@ -641,7 +641,11 @@ public sealed partial class TelegramWebhookController
         if (!json.RootElement.TryGetProperty("requests", out var requests) ||
             requests.ValueKind != JsonValueKind.Array)
             return false;
-        return !requests.EnumerateArray().Any(request =>
+        var currentBottleRequests = requests.EnumerateArray().Where(request =>
+            request.TryGetProperty("kind", out var kind) &&
+            kind.TryGetInt32(out var kindValue) &&
+            kindValue == (int)SalesListRequestKind.CurrentBottle).ToArray();
+        return currentBottleRequests.Length > 0 && !currentBottleRequests.Any(request =>
             request.TryGetProperty("isBottleOwner", out var owner) && owner.ValueKind == JsonValueKind.True);
     }
 
@@ -753,6 +757,8 @@ public sealed partial class TelegramWebhookController
         if (root["requests"] is not JsonArray requests || requests.Count == 0) return;
         var selected = requests
             .OfType<JsonObject>()
+            .Where(request => request["kind"]?.GetValue<int>() ==
+                              (int)SalesListRequestKind.CurrentBottle)
             .OrderByDescending(request => request["volumeMl"]?.GetValue<int>() ?? 0)
             .FirstOrDefault();
         if (selected is null) return;
