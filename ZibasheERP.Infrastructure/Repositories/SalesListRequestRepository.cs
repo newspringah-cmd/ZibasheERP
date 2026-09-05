@@ -245,6 +245,46 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         await transaction.CommitAsync(cancellationToken);
     }
 
+    public async Task UpdateConfirmedCurrentBottleRequestAsync(
+        Guid requestId, int volumeMl, Guid? bottleId, decimal bottlePrice,
+        CancellationToken cancellationToken = default)
+    {
+        if (volumeMl <= 0)
+            throw new InvalidOperationException("مقدار باید مثبت باشد.");
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var request = await _dbContext.SalesListRequests.Include(value => value.SalesList)
+            .FirstOrDefaultAsync(value => value.Id == requestId && !value.IsDeleted, cancellationToken)
+            ?? throw new InvalidOperationException("آیتم پیدا نشد.");
+        if (request.Status != SalesListRequestStatus.Confirmed ||
+            request.Kind != SalesListRequestKind.CurrentBottle)
+            throw new InvalidOperationException("فقط آیتم فعال باتل فعلی قابل تغییر است.");
+
+        var changedReserved = request.SalesList.ReservedVolume - request.VolumeMl + volumeMl;
+        if (changedReserved > request.SalesList.TotalVolume)
+        {
+            var maximumAllowed = Math.Max(0,
+                request.SalesList.TotalVolume - (request.SalesList.ReservedVolume - request.VolumeMl));
+            throw new InvalidOperationException(
+                $"ظرفیت کافی نیست. حداکثر مقدار قابل ثبت برای این آیتم: {maximumAllowed} میل است.");
+        }
+
+        request.SalesList.ReservedVolume = changedReserved;
+        request.SalesList.Status = request.SalesList.RemainingVolume == 0
+            ? SalesListStatus.Full : SalesListStatus.Open;
+        request.SalesList.UpdatedAt = DateTime.UtcNow;
+        request.VolumeMl = volumeMl;
+        if (!request.IsBottleOwner)
+        {
+            if (!bottleId.HasValue)
+                throw new InvalidOperationException("نوع شیشه را انتخاب کنید.");
+            request.BottleId = bottleId;
+            request.BottlePrice = bottlePrice;
+        }
+        request.UpdatedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task UpdateBottleOwnerIdentityAsync(
         Guid requestId, string identity, CancellationToken cancellationToken = default)
     {
