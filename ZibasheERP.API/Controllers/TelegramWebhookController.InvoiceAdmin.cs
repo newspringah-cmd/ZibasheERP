@@ -798,23 +798,35 @@ public sealed partial class TelegramWebhookController
         {
             using var json = JsonDocument.Parse(item.ParsedPayload);
             var value = json.RootElement;
-            var english = value.GetProperty("englishName").GetString() ?? throw new InvalidOperationException("نام انگلیسی ناقص است.");
-            var brand = value.GetProperty("displayBrand").GetString() ?? "Unknown";
-            var persian = value.GetProperty("persianName").GetString() ?? english;
+            var english = value.GetProperty("englishName").GetString()?.Trim();
+            var brand = value.GetProperty("displayBrand").GetString()?.Trim();
+            var persian = value.GetProperty("persianName").GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(english))
+                throw new InvalidOperationException("نام انگلیسی ناقص است؛ از گزینه «ویرایش» آن را وارد کنید.");
+            if (string.IsNullOrWhiteSpace(brand))
+                throw new InvalidOperationException("برند ثبت نشده است؛ از گزینه «ویرایش» برند را وارد کنید.");
+            if (string.IsNullOrWhiteSpace(persian))
+                throw new InvalidOperationException("نام فارسی ثبت نشده است؛ از گزینه «ویرایش» آن را وارد کنید.");
             var topNotes = value.TryGetProperty("topNotes", out var top) ? top.GetString() ?? string.Empty : string.Empty;
             var middleNotes = value.TryGetProperty("middleNotes", out var middle) ? middle.GetString() ?? string.Empty : string.Empty;
             var baseNotes = value.TryGetProperty("baseNotes", out var bottom) ? bottom.GetString() ?? string.Empty : string.Empty;
             var accords = value.TryGetProperty("accords", out var accordValue) ? accordValue.GetString() ?? string.Empty : string.Empty;
             var productUrl = value.TryGetProperty("productPageUrl", out var urlValue) ? urlValue.GetString() : null;
-            var price = value.GetProperty("pricePerMl").GetDecimal();
-            var total = value.GetProperty("totalVolumeMl").GetInt32();
-            var minimum = value.TryGetProperty("minimumRequestVolumeMl", out var min) && min.ValueKind != JsonValueKind.Null ? min.GetInt32() : 1;
+            if (!value.TryGetProperty("pricePerMl", out var priceValue) ||
+                !priceValue.TryGetDecimal(out var price) || price <= 0)
+                throw new InvalidOperationException("قیمت هر میل ثبت نشده است؛ از گزینه «ویرایش» قیمت را وارد کنید.");
+            if (!value.TryGetProperty("totalVolumeMl", out var totalValue) ||
+                !totalValue.TryGetInt32(out var total) || total <= 0)
+                throw new InvalidOperationException("حجم کل ثبت نشده است؛ از گزینه «ویرایش» حجم کل را وارد کنید.");
+            if (!value.TryGetProperty("minimumRequestVolumeMl", out var minimumValue) ||
+                !minimumValue.TryGetInt32(out var minimum) || minimum <= 0)
+                throw new InvalidOperationException("حداقل درخواست ثبت نشده است؛ از گزینه «ویرایش» حداقل میل را وارد کنید.");
             // A perfume may already exist in the catalog (including one created
             // during a previous migration test). Imported archive entries must
             // create a new sales list for that perfume instead of failing while
             // trying to create the catalog entry again.
-            var normalizedEnglish = english.Trim();
-            var normalizedBrand = brand.Trim();
+            var normalizedEnglish = english;
+            var normalizedBrand = brand;
             var existingPerfume = await _db.Perfumes.FirstOrDefaultAsync(value =>
                 !value.IsDeleted &&
                 value.Brand == normalizedBrand &&
