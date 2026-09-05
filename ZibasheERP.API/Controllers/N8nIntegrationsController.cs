@@ -61,7 +61,10 @@ public sealed class N8nIntegrationsController : ControllerBase
                 cancellationToken);
         if (sourceEvent is null)
             return NotFound(new { Message = "رویداد فاکتور پیدا نشد." });
-        if (!N8nDeliveryTargetValidator.MatchesTelegramGroup(sourceEvent.Payload, chatId))
+        var isCustomerDelivery = N8nDeliveryTargetValidator.MatchesTelegramGroup(sourceEvent.Payload, chatId);
+        var isManualReviewDelivery = !N8nDeliveryTargetValidator.HasApprovedTelegramGroup(sourceEvent.Payload) &&
+            string.Equals(chatId, _telegramOptions.InvoiceFailureChatId.Trim(), StringComparison.Ordinal);
+        if (!isCustomerDelivery && !isManualReviewDelivery)
             return Conflict(new { Message = "مقصد فاکتور با گروه تأییدشده یکسان نیست." });
 
         using var payload = JsonDocument.Parse(sourceEvent.Payload);
@@ -99,6 +102,16 @@ public sealed class N8nIntegrationsController : ControllerBase
                     new($"📋 کپی شماره کارت {bank ?? string.Empty}".Trim(), CopyText: card)
                 });
             }
+        }
+        if (isManualReviewDelivery &&
+            data.TryGetProperty("InvoiceNumber", out var invoiceNumberElement) &&
+            !string.IsNullOrWhiteSpace(invoiceNumberElement.GetString()))
+        {
+            rows.Add(new TelegramInlineButton[]
+            {
+                new("📋 کپی فرمان اتصال گروه",
+                    CopyText: $"/connect {invoiceNumberElement.GetString()!.Trim()}")
+            });
         }
 
         await using var stream = document.OpenReadStream();

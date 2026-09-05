@@ -39,7 +39,7 @@ const event = {
   }
 };
 
-const run = new Function('$input', code);
+const run = new Function('$input', '$env', code);
 const [result] = run({ first: () => ({ json: event }) });
 if (!result.json.invoiceHtml.includes('&lt;script&gt;') ||
     result.json.invoiceHtml.includes('<script>مشتری')) {
@@ -90,6 +90,17 @@ if (result.json.firstCardCopyText !== '6280231544451379' ||
     !result.json.firstCardCopyLabel.includes('مسکن') ||
     !result.json.secondCardCopyLabel.includes('ملی')) {
   throw new Error('Invoice renderer did not prepare payment card copy buttons.');
+}
+
+const manualReviewEvent = structuredClone(event);
+manualReviewEvent.data.Delivery = null;
+const [manualReviewResult] = run(
+  { first: () => ({ json: manualReviewEvent }) },
+  { N8N_INVOICE_FAILURE_CHAT_ID: '-1004380686148' });
+if (!manualReviewResult.json.isManualReview ||
+    manualReviewResult.json.invoiceDeliveryChatId !== '-1004380686148' ||
+    !manualReviewResult.json.telegramCaption.includes('بررسی دستی')) {
+  throw new Error('Invoice renderer did not prepare the manual-review delivery package.');
 }
 
 const paginationEvent = structuredClone(event);

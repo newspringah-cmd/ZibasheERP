@@ -1,5 +1,6 @@
 using MediatR;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.Application.Features.Integrations.RecordOrderArtifact;
@@ -73,11 +74,16 @@ public sealed class RecordOrderArtifactCommandHandler
             var invoice = await _invoiceRepository.GetForUpdateByOrderIdAsync(request.OrderId, cancellationToken);
             if (invoice is not null)
             {
-                invoice.IsSentToCustomer = true;
-                invoice.SentToCustomerAt = now;
-                invoice.DeliveryStatus = InvoiceDeliveryStatus.Delivered;
+                var deliveredToCustomer = N8nDeliveryTargetValidator.HasApprovedTelegramGroup(sourceEvent.Payload);
+                invoice.IsSentToCustomer = deliveredToCustomer;
+                invoice.SentToCustomerAt = deliveredToCustomer ? now : null;
+                invoice.DeliveryStatus = deliveredToCustomer
+                    ? InvoiceDeliveryStatus.Delivered
+                    : InvoiceDeliveryStatus.NeedsManualAction;
                 invoice.DeliveryStatusChangedAt = now;
-                invoice.DeliveryStatusNote = null;
+                invoice.DeliveryStatusNote = deliveredToCustomer
+                    ? null
+                    : "نسخه PDF در گروه بررسی دستی قرار گرفت؛ ارسال به مشتری نیازمند اقدام ادمین است.";
                 await _invoiceRepository.SaveChangesAsync(cancellationToken);
             }
         }

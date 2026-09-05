@@ -77,6 +77,8 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 var recipient = notification.EventType is "TelegramCustomerGroupRequired" or
                     "InvoiceDeliveryRequiresManualAction" or
                     "InvoiceGiftDeliveryRequiresManualAction" or
+                    "InvoiceManualReviewGreeting" or
+                    "InvoiceManualReviewPerfumePhoto" or
                     "TelegramGroupDeliveryFailed"
                     ? (string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
                         ? _options.AdminChatId.Trim()
@@ -204,7 +206,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
         AppDbContext db,
         CancellationToken cancellationToken)
     {
-        if (notification.EventType == "InvoiceGreeting")
+        if (notification.EventType is "InvoiceGreeting" or "InvoiceManualReviewGreeting")
         {
             var savedSetting = await db.InvoiceTelegramSettings.AsNoTracking()
                 .Where(value => !value.IsDeleted)
@@ -221,7 +223,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
                     cancellationToken);
         }
 
-        if (notification.EventType == "InvoicePerfumePhoto")
+        if (notification.EventType is "InvoicePerfumePhoto" or "InvoiceManualReviewPerfumePhoto")
         {
             using var document = JsonDocument.Parse(notification.Payload);
             var root = document.RootElement;

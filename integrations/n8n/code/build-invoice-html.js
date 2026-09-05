@@ -24,7 +24,15 @@ function formatCard(value) {
 }
 
 if (event.eventType !== 'InvoiceIssued' || !event.data) throw new Error('Expected an InvoiceIssued event.');
-if (!event.data.Delivery?.ChatId) throw new Error('Invoice event has no approved Telegram group delivery target.');
+const customerChatId = String(event.data.Delivery?.ChatId ?? '').trim();
+const manualReviewChatId = typeof $env === 'undefined'
+  ? ''
+  : String($env.N8N_INVOICE_FAILURE_CHAT_ID ?? '').trim();
+const isManualReview = !customerChatId;
+const invoiceDeliveryChatId = customerChatId || manualReviewChatId;
+if (!/^-\d+$/.test(invoiceDeliveryChatId)) {
+  throw new Error('Invoice has no customer group and N8N_INVOICE_FAILURE_CHAT_ID is not configured.');
+}
 const invoice = event.data;
 const customer = invoice.Customer ?? {};
 const items = Array.isArray(invoice.Items) ? invoice.Items : [];
@@ -54,6 +62,14 @@ const captionLines = [
   `شماره فاکتور: ${invoice.InvoiceNumber}`,
   ''
 ];
+if (isManualReview) {
+  captionLines.unshift(
+    '⚠️ بررسی دستی — گروه گیرنده به سامانه متصل نیست',
+    `مشتری: ${customerName}`,
+    `فرمان اتصال پس از ساخت/ورود ربات به گروه مشتری: /connect ${invoice.InvoiceNumber}`,
+    ''
+  );
+}
 items.forEach((item) => {
   const name = item.PerfumePersianName ?? item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
   captionLines.push(`🧴 ${name}`);
@@ -98,4 +114,4 @@ const invoiceHtml = `<!doctype html><html lang="fa" dir="rtl"><head><meta charse
 <title>فاکتور ${escapeHtml(invoice.InvoiceNumber)}</title><style>
 @page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;width:210mm;background:#faefea}body{font-family:"Noto Sans Arabic","Vazirmatn",Tahoma,sans-serif;color:#55151b}.page{position:relative;width:210mm;height:297mm;overflow:hidden;break-after:page;page-break-after:always}.page:last-child{break-after:auto;page-break-after:auto}.background{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;z-index:0}.field{position:absolute;z-index:2;text-align:right;font-weight:700;font-size:11px;line-height:1.25;color:#59131a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.date{top:19.8%;right:24.8%;width:22%}.customer{top:23.5%;right:24.8%;width:22%}.invoice-number{top:27.1%;right:24.8%;width:22%;direction:ltr;text-align:right}.mobile{top:30.7%;right:24.8%;width:22%;direction:ltr;text-align:right}.table-head{position:absolute;z-index:3;top:36%;right:8%;width:84%;height:3.8%;display:grid;grid-template-columns:10% 22% 14% 11% 15% 14% 14%;direction:rtl;align-items:center;text-align:center;background:rgba(239,203,208,.98);border-radius:12px 12px 0 0;color:#531719;font-weight:800;font-size:9.5px}.table-head span{height:100%;display:flex;align-items:center;justify-content:center;padding:0 2px;border-left:1px solid rgba(125,66,70,.2)}.table-head span:last-child{border-left:0}.rows{position:absolute;z-index:2;top:39.7%;right:8%;width:84%;height:29.3%;display:grid;grid-template-rows:repeat(8,1fr);align-content:start;overflow:hidden;background:rgba(250,239,234,.9);border:1px solid rgba(125,66,70,.13);border-top:0;border-radius:0 0 12px 12px}.invoice-row{display:grid;grid-template-columns:10% 22% 14% 11% 15% 14% 14%;direction:rtl;align-items:stretch;text-align:center;min-height:0;font-size:10px;line-height:1.2;color:#4e2324;border-bottom:1px solid rgba(125,66,70,.13)}.invoice-row>span{display:flex;align-items:center;justify-content:center;min-width:0;padding:2px;border-left:1px solid rgba(125,66,70,.13);overflow:hidden}.invoice-row>span:last-child{border-left:0}.invoice-row .item-name{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px 4px}.invoice-row .item-name strong,.invoice-row .item-name small{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.invoice-row .item-name strong{font-size:10px}.invoice-row .item-name small{font-size:9px;line-height:1.15;color:#75494b}.total{position:absolute;z-index:3;right:8%;width:14%;height:2.8%;display:flex;align-items:center;justify-content:center;font-weight:800;color:#68141b;font-size:10px}.subtotal{top:71.1%}.final{top:79.9%;font-size:11px}.shipping-mask{position:absolute;z-index:2;top:74.3%;right:7.5%;width:36%;height:4.2%;background:#faece8}.page-counter{position:absolute;z-index:2;bottom:1.3%;left:4%;font-size:8px;color:#8c5b5d}@media print{html,body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}</style></head><body>${pagesHtml}</body></html>`;
 
-return [{json:{...event,invoiceHtml,invoiceFileName:`${invoiceFileBase}.pdf`,telegramCaption,paidCallbackData:`invoicepay:paid:${invoiceId}`,waitingCallbackData:`invoicepay:waiting:${invoiceId}`,firstCardCopyText:String(firstPaymentAccount.CardNumber??''),firstCardCopyLabel:`📋 کپی کارت ${firstPaymentAccount.BankName??'اول'}`,secondCardCopyText:String(secondPaymentAccount.CardNumber??''),secondCardCopyLabel:`📋 کپی کارت ${secondPaymentAccount.BankName??'دوم'}`,artifactType:'InvoicePdf'}}];
+return [{json:{...event,invoiceHtml,invoiceFileName:`${invoiceFileBase}.pdf`,invoiceDeliveryChatId,isManualReview,telegramCaption,paidCallbackData:`invoicepay:paid:${invoiceId}`,waitingCallbackData:`invoicepay:waiting:${invoiceId}`,firstCardCopyText:String(firstPaymentAccount.CardNumber??''),firstCardCopyLabel:`📋 کپی کارت ${firstPaymentAccount.BankName??'اول'}`,secondCardCopyText:String(secondPaymentAccount.CardNumber??''),secondCardCopyLabel:`📋 کپی کارت ${secondPaymentAccount.BankName??'دوم'}`,artifactType:'InvoicePdf'}}];

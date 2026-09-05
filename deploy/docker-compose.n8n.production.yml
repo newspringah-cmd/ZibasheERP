@@ -52,6 +52,7 @@ services:
       N8N_RUNNERS_MODE: external
       N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN is required}
       N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+      N8N_INVOICE_FAILURE_CHAT_ID: ${N8N_INVOICE_FAILURE_CHAT_ID:-}
     ports:
       - "127.0.0.1:5678:5678"
     volumes:
@@ -75,6 +76,7 @@ services:
     environment:
       N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN is required}
       N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
+      N8N_INVOICE_FAILURE_CHAT_ID: ${N8N_INVOICE_FAILURE_CHAT_ID:-}
       TZ: UTC
     depends_on:
       - n8n
