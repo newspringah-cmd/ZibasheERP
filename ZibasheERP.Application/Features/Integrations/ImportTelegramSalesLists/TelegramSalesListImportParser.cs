@@ -12,7 +12,9 @@ public sealed record TelegramSalesListImportRequest(
     string? GiftRecipientTelegramUsername = null,
     bool IsExternalIdentity = false,
     bool GiftRecipientIsExternalIdentity = false,
-    bool IsFancyBottle = false);
+    bool IsFancyBottle = false,
+    string? FancyBottleVariant = null,
+    bool OmitIdentityOnLabel = false);
 
 public sealed record TelegramSalesListImportParseResult(
     int? PublicCode,
@@ -82,6 +84,12 @@ public static partial class TelegramSalesListImportParser
 
     [GeneratedRegex(@"(?i)\b(?:f|fancy|mokabi)\b")]
     private static partial Regex FancyBottleRegex();
+
+    [GeneratedRegex(@"(?i)\bf(?:ancy)?(?:\s+(?<variant>red|silver|gold|ketabi\s+sorati))?\b")]
+    private static partial Regex FancyBottleVariantRegex();
+
+    [GeneratedRegex(@"(?i)\bb\s*id\b")]
+    private static partial Regex BottleIdentityRegex();
 
     [GeneratedRegex(@"(?i)^\s*(?<owner>[A-Za-z0-9_.][A-Za-z0-9_. ]*?)(?:\s+for\s+(?<recipient>@?[A-Za-z0-9_.][A-Za-z0-9_. ]*?))?\s*$")]
     private static partial Regex ExternalIdentityRegex();
@@ -214,7 +222,15 @@ public static partial class TelegramSalesListImportParser
             .Select(match => match.Groups["value"].Value)
             .ToArray();
         var isFancyBottle = FancyBottleRegex().IsMatch(line);
-        var externalLine = FancyBottleRegex().Replace(line, string.Empty).Trim();
+        var fancyMatch = FancyBottleVariantRegex().Match(line);
+        var fancyBottleVariant = fancyMatch.Success && fancyMatch.Groups["variant"].Success
+            ? Regex.Replace(fancyMatch.Groups["variant"].Value.Trim(), @"\s+", " ").ToLowerInvariant()
+            : null;
+        var omitIdentityOnLabel = BottleIdentityRegex().IsMatch(line);
+        var externalLine = BottleIdentityRegex().Replace(
+            FancyBottleRegex().Replace(
+                FancyBottleVariantRegex().Replace(line, string.Empty), string.Empty),
+            string.Empty).Trim(' ', '*');
         var external = ExternalIdentityRegex().Match(externalLine);
         if (users.Length == 0 && (!external.Success || IsNextBottlePlaceholder(externalLine)))
             return;
@@ -231,7 +247,10 @@ public static partial class TelegramSalesListImportParser
         var giftSeparator = line.IndexOf(" for ", StringComparison.OrdinalIgnoreCase);
         if (giftSeparator >= 0)
         {
-            var ownerPart = FancyBottleRegex().Replace(line[..giftSeparator], string.Empty).Trim();
+            var ownerPart = BottleIdentityRegex().Replace(
+                FancyBottleRegex().Replace(
+                    FancyBottleVariantRegex().Replace(line[..giftSeparator], string.Empty), string.Empty),
+                string.Empty).Trim(' ', '*');
             var recipientPart = line[(giftSeparator + " for ".Length)..].Trim();
             var ownerUsername = UsernameRegex().Match(ownerPart);
             var recipientUsername = UsernameRegex().Match(recipientPart);
@@ -250,7 +269,9 @@ public static partial class TelegramSalesListImportParser
                 owner, volume.Value, kind, isBottleOwner, recipient,
                 IsExternalIdentity: !ownerUsername.Success,
                 GiftRecipientIsExternalIdentity: !recipientUsername.Success,
-                IsFancyBottle: isFancyBottle));
+                IsFancyBottle: isFancyBottle,
+                FancyBottleVariant: fancyBottleVariant,
+                OmitIdentityOnLabel: omitIdentityOnLabel));
             return;
         }
 
@@ -258,7 +279,9 @@ public static partial class TelegramSalesListImportParser
         {
             foreach (var user in users)
                 target.Add(new TelegramSalesListImportRequest(user, volume.Value, kind,
-                    isBottleOwner && target.Count == 0, IsFancyBottle: isFancyBottle));
+                    isBottleOwner && target.Count == 0, IsFancyBottle: isFancyBottle,
+                    FancyBottleVariant: fancyBottleVariant,
+                    OmitIdentityOnLabel: omitIdentityOnLabel));
             return;
         }
 
@@ -271,7 +294,9 @@ public static partial class TelegramSalesListImportParser
             IsExternalIdentity: true,
             GiftRecipientIsExternalIdentity: externalRecipient is not null &&
                 !external.Groups["recipient"].Value.TrimStart().StartsWith('@'),
-            IsFancyBottle: isFancyBottle));
+            IsFancyBottle: isFancyBottle,
+            FancyBottleVariant: fancyBottleVariant,
+            OmitIdentityOnLabel: omitIdentityOnLabel));
     }
 
     private static bool IsNextBottlePlaceholder(string value) =>

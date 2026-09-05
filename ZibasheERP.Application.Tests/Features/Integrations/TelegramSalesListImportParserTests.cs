@@ -151,6 +151,41 @@ public sealed class TelegramSalesListImportParserTests
     }
 
     [Fact]
+    public void Parse_LegacyBottleMarkers_PreservesFancyVariantAndBottleIdentityFlag()
+    {
+        const string text = """
+            کد: 8443
+            Sample Perfume
+            #Sample_Brand
+            L.2024
+            عطر نمونه
+            100ml
+            قیمت هر میل: 100000
+            حداقل میل درخواستی: 1 میل
+            باقیمانده: 83 میل
+            10 ml:
+            @MobinaAhmadi75 F
+            5 ml:
+            @aanaaik F red
+            @manamoshfegh F silver
+            2 ml:
+            @Prettishop_order b id
+            @Prettishop_order** b id
+            """;
+
+        var result = TelegramSalesListImportParser.Parse(text);
+
+        Assert.Equal(5, result.Requests.Count);
+        Assert.True(result.Requests[0].IsFancyBottle);
+        Assert.Null(result.Requests[0].FancyBottleVariant);
+        Assert.Equal("red", result.Requests[1].FancyBottleVariant);
+        Assert.Equal("silver", result.Requests[2].FancyBottleVariant);
+        Assert.True(result.Requests[3].OmitIdentityOnLabel);
+        Assert.True(result.Requests[4].OmitIdentityOnLabel);
+        Assert.Equal("Prettishop_order", result.Requests[4].TelegramUsername);
+    }
+
+    [Fact]
     public void Parse_LegacyExternalGift_PreservesExternalOwnerAndTelegramRecipient()
     {
         const string text = """

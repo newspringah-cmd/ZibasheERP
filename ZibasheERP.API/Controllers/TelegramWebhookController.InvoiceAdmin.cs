@@ -869,10 +869,14 @@ public sealed partial class TelegramWebhookController
                         new ZibasheERP.Application.Features.Bottles.GetAvailableBottles.GetAvailableBottlesQuery(
                             request.VolumeMl), ct);
                     var fancy = bottles.FirstOrDefault(candidate =>
-                        string.Equals(candidate.Type, nameof(BottleType.Fancy), StringComparison.OrdinalIgnoreCase));
+                        string.Equals(candidate.Type, nameof(BottleType.Fancy), StringComparison.OrdinalIgnoreCase) &&
+                        (string.IsNullOrWhiteSpace(request.FancyBottleVariant) ||
+                         candidate.Name.Contains(request.FancyBottleVariant,
+                             StringComparison.OrdinalIgnoreCase)));
                     if (fancy is null)
                         throw new InvalidOperationException(
-                            $"شیشه فانتزی فعال برای حجم {request.VolumeMl} میل پیدا نشد.");
+                            $"شیشه فانتزی{(string.IsNullOrWhiteSpace(request.FancyBottleVariant) ? "" : $" {request.FancyBottleVariant}")} " +
+                            $"برای حجم {request.VolumeMl} میل پیدا نشد.");
                     bottle = await _bottleRepository.GetByIdAsync(fancy.Id, ct);
                 }
                 _db.SalesListRequests.Add(new SalesListRequest
@@ -884,6 +888,7 @@ public sealed partial class TelegramWebhookController
                         ? $"imported-external:{normalizedUsername.ToLowerInvariant()}"
                         : $"imported:{normalizedUsername.ToLowerInvariant()}",
                     VolumeMl = request.VolumeMl, IsBottleOwner = request.IsBottleOwner,
+                    OmitIdentityOnLabel = request.OmitIdentityOnLabel,
                     IsGift = normalizedGiftRecipient is not null,
                     GiftRecipientTelegramUsername = normalizedGiftRecipient,
                     GiftRecipientTelegramUserId = normalizedGiftRecipient is null
@@ -975,7 +980,9 @@ public sealed partial class TelegramWebhookController
         bool IsBottleOwner, string? GiftRecipientTelegramUsername,
         bool IsExternalIdentity = false,
         bool GiftRecipientIsExternalIdentity = false,
-        bool IsFancyBottle = false);
+        bool IsFancyBottle = false,
+        string? FancyBottleVariant = null,
+        bool OmitIdentityOnLabel = false);
 
     private async Task HandleInvoicePaymentStatusCallbackAsync(
         TelegramCallbackQuery callback,

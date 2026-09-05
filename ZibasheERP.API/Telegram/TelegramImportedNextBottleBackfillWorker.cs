@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using ZibasheERP.Application.Features.Integrations.ImportTelegramSalesLists;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -33,16 +34,15 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
         try
         {
             var result = await BackfillAsync(stoppingToken);
-            if (result.Added == 0 && result.Reordered == 0) return;
+            if (result.Added == 0 && result.Reordered == 0 && result.BottleMarkers == 0) return;
 
             _logger.LogInformation(
-                "Restored {Added} and reordered {Reordered} imported Next Bottle requests.",
-                result.Added, result.Reordered);
+                "Restored {Added}, reordered {Reordered} Next Bottle requests, and restored {BottleMarkers} imported bottle markers.",
+                result.Added, result.Reordered, result.BottleMarkers);
             if (long.TryParse(_options.AdminChatId, out var adminChatId))
             {
-                var message = result.Added > 0
-                    ? $"✅ {result.Added} مورد صف Next Bottle جاافتاده بازیابی و {result.Reordered} مورد با ترتیب اصلی اصلاح شد."
-                    : $"✅ ترتیب {result.Reordered} مورد صف Next Bottle مطابق متن اصلی انتقال اصلاح شد.";
+                var message = $"✅ آرشیو اصلاح شد: {result.Added} صف بازیابی، " +
+                    $"{result.Reordered} ترتیب صف و {result.BottleMarkers} علامت شیشه اصلاح شد.";
                 await _sender.SendAsync(_options.AdminChatId, message, stoppingToken);
                 _rebuildWorker.TryQueue(adminChatId);
             }
@@ -56,7 +56,7 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
         }
     }
 
-    private async Task<(int Added, int Reordered)> BackfillAsync(CancellationToken cancellationToken)
+    private async Task<(int Added, int Reordered, int BottleMarkers)> BackfillAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -70,10 +70,11 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                 value.SourceMessageId,
                 value.SourceDate,
                 value.ParsedPayload,
+                value.RawText,
                 SalesListId = value.SalesListId!.Value
             })
             .ToArrayAsync(cancellationToken);
-        if (imports.Length == 0) return (0, 0);
+        if (imports.Length == 0) return (0, 0, 0);
 
         var listIds = imports.Select(value => value.SalesListId).Distinct().ToArray();
         var prices = await db.SalesLists.AsNoTracking()
@@ -83,9 +84,13 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
             .Where(value => listIds.Contains(value.SalesListId))
             .Where(value => value.ExternalReference != null)
             .ToDictionaryAsync(value => value.ExternalReference!, cancellationToken);
+        var fancyBottles = await db.Bottles.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive && value.Type == BottleType.Fancy)
+            .ToArrayAsync(cancellationToken);
 
         var added = 0;
         var reordered = 0;
+        var bottleMarkers = 0;
         foreach (var import in imports)
         {
             if (!prices.TryGetValue(import.SalesListId, out var price)) continue;
@@ -96,8 +101,42 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
             var requests = JsonSerializer.Deserialize<List<ImportedRequest>>(
                 requestArray.GetRawText(),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+            var reparsedRequests = TelegramSalesListImportParser.Parse(import.RawText).Requests;
             foreach (var (request, requestIndex) in requests.Select((request, index) => (request, index)))
             {
+                if (requestIndex < reparsedRequests.Count &&
+                    existingRequests.TryGetValue(
+                        $"telegram-import:{import.SourceChannelId}:{import.SourceMessageId}:{requestIndex}",
+                        out var markedRequest))
+                {
+                    var reparsed = reparsedRequests[requestIndex];
+                    var changed = false;
+                    if (markedRequest.OmitIdentityOnLabel != reparsed.OmitIdentityOnLabel)
+                    {
+                        markedRequest.OmitIdentityOnLabel = reparsed.OmitIdentityOnLabel;
+                        changed = true;
+                    }
+                    if (reparsed.IsFancyBottle && reparsed.Kind == SalesListRequestKind.CurrentBottle &&
+                        !reparsed.IsBottleOwner)
+                    {
+                        var bottle = fancyBottles.FirstOrDefault(value =>
+                            value.VolumeMl == reparsed.VolumeMl &&
+                            (string.IsNullOrWhiteSpace(reparsed.FancyBottleVariant) ||
+                             value.Name.Contains(reparsed.FancyBottleVariant,
+                                 StringComparison.OrdinalIgnoreCase)));
+                        if (bottle is not null && markedRequest.BottleId != bottle.Id)
+                        {
+                            markedRequest.BottleId = bottle.Id;
+                            markedRequest.BottlePrice = bottle.SalePrice;
+                            changed = true;
+                        }
+                    }
+                    if (changed)
+                    {
+                        markedRequest.UpdatedAt = DateTime.UtcNow;
+                        bottleMarkers++;
+                    }
+                }
                 if (request.Kind != SalesListRequestKind.NextBottle ||
                     request.VolumeMl <= 0 || string.IsNullOrWhiteSpace(request.TelegramUsername))
                     continue;
@@ -150,9 +189,9 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
             }
         }
 
-        if (added > 0 || reordered > 0)
+        if (added > 0 || reordered > 0 || bottleMarkers > 0)
             await db.SaveChangesAsync(cancellationToken);
-        return (added, reordered);
+        return (added, reordered, bottleMarkers);
     }
 
     private sealed record ImportedRequest(

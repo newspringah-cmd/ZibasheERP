@@ -755,9 +755,19 @@ public sealed partial class TelegramWebhookController
                 : $"@{request.TelegramUsername.TrimStart('@')}") +
         (request.IsGift ? $" for {GiftRecipientLabel(request)}" : string.Empty) +
         (request.IsBottleOwner ? " 👑" : string.Empty) +
-        (request.Bottle?.Type == BottleType.Fancy ? " F" : string.Empty) +
+        FancyBottleMarker(request.Bottle) +
         (request.OmitIdentityOnLabel ? " B Id" :
             !string.IsNullOrWhiteSpace(request.LabelIdentityText) ? $" {request.LabelIdentityText}=L" : string.Empty);
+
+    private static string FancyBottleMarker(Bottle? bottle)
+    {
+        if (bottle?.Type != BottleType.Fancy) return string.Empty;
+        var name = bottle.Name;
+        if (name.Contains("silver", StringComparison.OrdinalIgnoreCase)) return " F silver";
+        if (name.Contains("red", StringComparison.OrdinalIgnoreCase)) return " F red";
+        if (name.Contains("gold", StringComparison.OrdinalIgnoreCase)) return " F gold";
+        return " F";
+    }
     private static string DisplayTelegramUser(TelegramUser user)
     {
         var fullName = string.Join(' ', new[] { user.FirstName, user.LastName }
