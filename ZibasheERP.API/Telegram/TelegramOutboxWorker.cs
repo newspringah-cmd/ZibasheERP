@@ -332,6 +332,24 @@ public sealed class TelegramOutboxWorker : BackgroundService
     {
         if (eventType == "InvoiceIssued")
             return BuildCardCopyButtons(payload);
+        if (eventType == "InvoiceGiftDeliveryRequiresManualAction")
+        {
+            using var giftDocument = JsonDocument.Parse(payload);
+            var giftRoot = giftDocument.RootElement;
+            var invoiceNumber = giftRoot.TryGetProperty("InvoiceNumber", out var invoiceValue)
+                ? invoiceValue.GetString()?.Trim() : null;
+            var recipient = giftRoot.TryGetProperty("RecipientUsername", out var recipientValue)
+                ? recipientValue.GetString()?.Trim().TrimStart('@') : null;
+            if (string.IsNullOrWhiteSpace(recipient) &&
+                giftRoot.TryGetProperty("RecipientTelegramId", out var recipientIdValue))
+                recipient = recipientIdValue.GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(invoiceNumber) || string.IsNullOrWhiteSpace(recipient)) return [];
+            return
+            [
+                new[] { new TelegramInlineButton("📋 کپی فرمان اتصال هدیه‌گیرنده",
+                    CopyText: $"/connectgift {invoiceNumber} {recipient}") }
+            ];
+        }
         if (eventType is not ("InvoiceDeliveryRequiresManualAction" or "TelegramCustomerGroupRequired"))
             return [];
         using var document = JsonDocument.Parse(payload);

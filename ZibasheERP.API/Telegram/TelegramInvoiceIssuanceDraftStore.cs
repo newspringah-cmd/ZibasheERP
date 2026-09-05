@@ -15,8 +15,31 @@ public sealed class TelegramInvoiceIssuanceDraftStore
     public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);
 }
 
+public sealed record TelegramInvoiceBottlePriceResolutionDraft(
+    Guid SalesListRequestId,
+    int SalesListPublicCode,
+    string CustomerIdentity,
+    string BottleName,
+    IReadOnlyCollection<Guid> SelectedSalesListIds);
+
+public sealed class TelegramInvoiceBottlePriceResolutionDraftStore
+{
+    private readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramInvoiceBottlePriceResolutionDraft> _drafts = new();
+
+    public void Set(long chatId, long userId, TelegramInvoiceBottlePriceResolutionDraft draft) =>
+        _drafts[(chatId, userId)] = draft;
+
+    public bool TryGet(long chatId, long userId, out TelegramInvoiceBottlePriceResolutionDraft draft) =>
+        _drafts.TryGetValue((chatId, userId), out draft!);
+
+    public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);
+}
+
 public enum TelegramManualInvoiceStage
 {
+    AwaitingGiftDecision,
+    AwaitingGiftGiver,
+    AwaitingGiftRecipient,
     AwaitingCustomer,
     AwaitingLine,
     AwaitingLineQuantity,
@@ -32,9 +55,11 @@ public sealed class TelegramManualInvoiceDraft
 {
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
-    public TelegramManualInvoiceStage Stage { get; set; } = TelegramManualInvoiceStage.AwaitingCustomer;
+    public TelegramManualInvoiceStage Stage { get; set; } = TelegramManualInvoiceStage.AwaitingGiftDecision;
     public string CustomerIdentity { get; set; } = string.Empty;
-    public string ProductPhotoFileId { get; set; } = string.Empty;
+    public bool IsGift { get; set; }
+    public string GiftRecipientIdentity { get; set; } = string.Empty;
+    public List<string> ProductPhotoFileIds { get; } = [];
     public string PendingLineDescription { get; set; } = string.Empty;
     public int PendingLineQuantity { get; set; }
     public decimal PendingLineUnitAmount { get; set; }

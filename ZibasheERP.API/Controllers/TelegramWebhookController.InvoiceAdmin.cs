@@ -428,8 +428,14 @@ public sealed partial class TelegramWebhookController
                 ChatId = callback.Message.Chat.Id, UserId = callback.From.Id
             });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ReplyAsync(callback.Message.Chat.Id,
-                "🧾 صدور فاکتور دستی\n\nشناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
+            await _sender.SendInlineKeyboardAsync(callback.Message.Chat.Id.ToString(),
+                "🧾 صدور فاکتور دستی\n\nآیا این فاکتور هدیه است؟",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("🎁 بله، هدیه است", "invoicebatch:manualgift:yes") },
+                    new[] { new TelegramInlineButton("خیر", "invoicebatch:manualgift:no") },
+                    new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
+                }, ct);
             return true;
         }
         if (callback.Data == "invoiceadmin:pricing")
@@ -1463,6 +1469,32 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "فاکتور دستی لغو شد.", ct);
             return;
         }
+        const string manualGiftPrefix = "invoicebatch:manualgift:";
+        if (callback.Data.StartsWith(manualGiftPrefix, StringComparison.Ordinal))
+        {
+            if (!_manualInvoiceDrafts.TryGet(chatId, userId, out var manualDraft) ||
+                manualDraft.Stage != TelegramManualInvoiceStage.AwaitingGiftDecision)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return;
+            }
+            var choice = callback.Data[manualGiftPrefix.Length..];
+            if (choice is not ("yes" or "no"))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "گزینه نامعتبر است.", ct, true);
+                return;
+            }
+            manualDraft.IsGift = choice == "yes";
+            manualDraft.Stage = manualDraft.IsGift
+                ? TelegramManualInvoiceStage.AwaitingGiftGiver
+                : TelegramManualInvoiceStage.AwaitingCustomer;
+            _manualInvoiceDrafts.Set(manualDraft);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(chatId, manualDraft.IsGift
+                ? "شناسه هدیه‌دهنده را به صورت @username یا Telegram ID وارد کنید:"
+                : "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
+            return;
+        }
         if (callback.Data == "invoicebatch:manualadd")
         {
             if (!_manualInvoiceDrafts.TryGet(chatId, userId, out var manualDraft) ||
@@ -1490,7 +1522,7 @@ public sealed partial class TelegramWebhookController
             _manualInvoiceDrafts.Set(manualDraft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await ReplyAsync(chatId,
-                "عکس محصول را ارسال کنید. این عکس پیش از فاکتور برای مشتری فرستاده می‌شود:", ct);
+                $"عکس آیتم ۱ از {manualDraft.Lines.Count} را ارسال کنید:\n{manualDraft.Lines[0].Description}", ct);
             return;
         }
         if (callback.Data == "invoicebatch:manualconfirm")
@@ -1505,7 +1537,8 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "فاکتور در حال صدور است…", ct);
                 var result = await _invoiceIssuanceService.IssueManualAsync(
                     manualDraft.CustomerIdentity, manualDraft.Lines,
-                    manualDraft.ProductPhotoFileId, userId.ToString(), ct);
+                    manualDraft.ProductPhotoFileIds, userId.ToString(),
+                    manualDraft.IsGift ? manualDraft.GiftRecipientIdentity : null, ct);
                 _manualInvoiceDrafts.Remove(chatId, userId);
                 await ReplyAsync(chatId,
                     $"✅ فاکتور دستی {result.InvoiceNumbers.Single()} صادر شد.\n" +
@@ -1560,6 +1593,18 @@ public sealed partial class TelegramWebhookController
                     $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
                     productionDispatchStatus + "\n" + paymentTrackingStatus + "\n\n" +
                     "ارسال خودکار فاکتور انجام می‌شود؛ موارد بدون گروه یا با خطای دائمی در گروه خطاهای فاکتور ثبت خواهند شد.", ct);
+            }
+            catch (BottlePriceResolutionRequiredException exception)
+            {
+                _invoiceBottlePriceResolutionDrafts.Set(chatId, userId,
+                    new TelegramInvoiceBottlePriceResolutionDraft(
+                        exception.SalesListRequestId, exception.SalesListPublicCode,
+                        exception.CustomerIdentity, exception.BottleName, selected.ToArray()));
+                await _sender.AnswerCallbackAsync(callback.Id, "مبلغ شیشه لازم است.", ct, true);
+                await ReplyAsync(chatId,
+                    $"⚠️ مبلغ شیشه مشخص نیست.\nلیست: {exception.SalesListPublicCode}\n" +
+                    $"مشتری: {exception.CustomerIdentity}\nشیشه: {exception.BottleName}\n\n" +
+                    "مبلغ شیشه را به تومان وارد کنید تا صدور فاکتورها ادامه پیدا کند:", ct);
             }
             catch (InvalidOperationException exception)
             {
@@ -1798,12 +1843,24 @@ public sealed partial class TelegramWebhookController
                 await ReplyAsync(message.Chat.Id, "لطفاً عکس محصول را به‌صورت Photo ارسال کنید.", ct);
                 return true;
             }
-            draft.ProductPhotoFileId = photo.FileId;
+            draft.ProductPhotoFileIds.Add(photo.FileId);
+            if (draft.ProductPhotoFileIds.Count < draft.Lines.Count)
+            {
+                var nextIndex = draft.ProductPhotoFileIds.Count;
+                _manualInvoiceDrafts.Set(draft);
+                await ReplyAsync(message.Chat.Id,
+                    $"عکس آیتم {nextIndex + 1} از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[nextIndex].Description}", ct);
+                return true;
+            }
             draft.Stage = TelegramManualInvoiceStage.AwaitingConfirmation;
             _manualInvoiceDrafts.Set(draft);
             var total = draft.Lines.Sum(line => line.Quantity * line.UnitAmount + line.BottleAmount);
             await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
-                $"پیش‌نمایش فاکتور دستی\nمشتری: {draft.CustomerIdentity}\nتعداد ردیف: {draft.Lines.Count}\nمبلغ کل: {total:N0} تومان\nعکس محصول: دریافت شد ✅",
+                $"پیش‌نمایش فاکتور دستی\n" +
+                (draft.IsGift
+                    ? $"هدیه‌دهنده: {draft.CustomerIdentity}\nهدیه‌گیرنده: {draft.GiftRecipientIdentity}\n"
+                    : $"مشتری: {draft.CustomerIdentity}\n") +
+                $"تعداد ردیف: {draft.Lines.Count}\nمبلغ کل: {total:N0} تومان\nعکس همه آیتم‌ها: دریافت شد ✅",
                 new IReadOnlyCollection<TelegramInlineButton>[]
                 {
                     new[] { new TelegramInlineButton("✅ صدور نهایی", "invoicebatch:manualconfirm") },
@@ -1817,6 +1874,23 @@ public sealed partial class TelegramWebhookController
         {
             _manualInvoiceDrafts.Remove(message.Chat.Id, message.From.Id);
             await ReplyAsync(message.Chat.Id, "صدور فاکتور دستی لغو شد.", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramManualInvoiceStage.AwaitingGiftGiver)
+        {
+            draft.CustomerIdentity = text;
+            draft.Stage = TelegramManualInvoiceStage.AwaitingGiftRecipient;
+            _manualInvoiceDrafts.Set(draft);
+            await ReplyAsync(message.Chat.Id, "شناسه هدیه‌گیرنده را به صورت @username یا Telegram ID وارد کنید:", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramManualInvoiceStage.AwaitingGiftRecipient)
+        {
+            draft.GiftRecipientIdentity = text;
+            draft.Stage = TelegramManualInvoiceStage.AwaitingLine;
+            _manualInvoiceDrafts.Set(draft);
+            await ReplyAsync(message.Chat.Id,
+                "نام یا شرح آیتم اول را وارد کنید:\n\nفرمت سریع: عطر تست / 5 / 250000 / 30000", ct);
             return true;
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingCustomer)
@@ -1842,7 +1916,7 @@ public sealed partial class TelegramWebhookController
                 draft.Stage = TelegramManualInvoiceStage.AwaitingPhoto;
                 _manualInvoiceDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id,
-                    "عکس محصول را ارسال کنید. این عکس پیش از فاکتور برای مشتری فرستاده می‌شود:", ct);
+                    $"عکس آیتم ۱ از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[0].Description}", ct);
                 return true;
             }
             if (text.Contains('/'))
@@ -1925,7 +1999,7 @@ public sealed partial class TelegramWebhookController
                 draft.Stage = TelegramManualInvoiceStage.AwaitingPhoto;
                 _manualInvoiceDrafts.Set(draft);
                 await ReplyAsync(message.Chat.Id,
-                    "عکس محصول را ارسال کنید. این عکس پیش از فاکتور برای مشتری فرستاده می‌شود:", ct);
+                    $"عکس آیتم ۱ از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[0].Description}", ct);
                 return true;
             }
             draft.PendingLineDescription = text;
@@ -1933,6 +2007,71 @@ public sealed partial class TelegramWebhookController
             _manualInvoiceDrafts.Set(draft);
             await ReplyAsync(message.Chat.Id, "مقدار یا حجم آیتم را به میل وارد کنید؛ مثال: 5", ct);
             return true;
+        }
+        return true;
+    }
+
+    private async Task<bool> TryHandleInvoiceBottlePriceResolutionMessageAsync(
+        TelegramMessage message, CancellationToken ct)
+    {
+        if (!_invoiceBottlePriceResolutionDrafts.TryGet(message.Chat.Id, message.From!.Id, out var draft))
+            return false;
+        if (!await IsAuthorizedInvoiceActionAdminAsync(message.From.Id, ct))
+        {
+            _invoiceBottlePriceResolutionDrafts.Remove(message.Chat.Id, message.From.Id);
+            return true;
+        }
+        if (!TryParseNonNegativeDecimal(message.Text ?? string.Empty, out var price) || price <= 0)
+        {
+            await ReplyAsync(message.Chat.Id, "مبلغ شیشه باید عددی بزرگ‌تر از صفر و به تومان باشد.", ct);
+            return true;
+        }
+
+        var request = await _db.SalesListRequests.FirstOrDefaultAsync(value =>
+            value.Id == draft.SalesListRequestId && !value.IsDeleted, ct);
+        if (request is null)
+        {
+            _invoiceBottlePriceResolutionDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "درخواست موردنظر دیگر پیدا نشد؛ لیست‌ها را دوباره انتخاب کنید.", ct);
+            return true;
+        }
+
+        request.BottlePrice = price;
+        request.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        _invoiceBottlePriceResolutionDrafts.Remove(message.Chat.Id, message.From.Id);
+        await ReplyAsync(message.Chat.Id,
+            $"✅ مبلغ شیشه برای {draft.CustomerIdentity} ثبت شد: {price:N0} تومان. صدور فاکتورها ادامه پیدا کرد…", ct);
+
+        try
+        {
+            var result = await _invoiceIssuanceService.IssueCompletedListsAsync(
+                draft.SelectedSalesListIds.ToArray(), message.From.Id.ToString(), ct);
+            _invoiceIssuanceDrafts.Remove(message.Chat.Id, message.From.Id);
+            var productionFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
+            var paymentTrackingStatus = await SendPaymentTrackingReportAsync(result.BatchId, ct);
+            var productionStatus = productionFailures.Count == 0
+                ? $"نسخهٔ عملیاتی {result.ProductionCopies.Count} لیست ارسال شد ✅"
+                : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionFailures);
+            await ReplyAsync(message.Chat.Id,
+                $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
+                $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
+                productionStatus + "\n" + paymentTrackingStatus, ct);
+        }
+        catch (BottlePriceResolutionRequiredException exception)
+        {
+            _invoiceBottlePriceResolutionDrafts.Set(message.Chat.Id, message.From.Id,
+                new TelegramInvoiceBottlePriceResolutionDraft(
+                    exception.SalesListRequestId, exception.SalesListPublicCode,
+                    exception.CustomerIdentity, exception.BottleName, draft.SelectedSalesListIds));
+            await ReplyAsync(message.Chat.Id,
+                $"⚠️ مورد بعدی: مبلغ شیشه برای {exception.CustomerIdentity} در لیست {exception.SalesListPublicCode} مشخص نیست.\n" +
+                $"شیشه: {exception.BottleName}\nمبلغ را به تومان وارد کنید:", ct);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await ReplyAsync(message.Chat.Id, $"⚠️ صدور فاکتور انجام نشد:\n{exception.Message}", ct);
+            await SendInvoiceBatchSelectionAsync(message.Chat.Id, message.From.Id, ct);
         }
         return true;
     }

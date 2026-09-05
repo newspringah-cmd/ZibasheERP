@@ -4,4 +4,5 @@ namespace ZibasheERP.Application.Features.Invoices.IssueInvoice;
 
 public sealed record IssueInvoiceCommand(
     Guid OrderId,
-    string? ManualProductPhotoFileId = null) : IRequest<InvoiceResponse>;
+    IReadOnlyCollection<string>? ManualProductPhotoFileIds = null,
+    bool IsGift = false) : IRequest<InvoiceResponse>;

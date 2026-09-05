@@ -13,6 +13,24 @@ public sealed record ManualInvoiceLineInput(
     decimal UnitAmount,
     decimal BottleAmount = 0);
 
+public sealed class BottlePriceResolutionRequiredException : InvalidOperationException
+{
+    public BottlePriceResolutionRequiredException(
+        Guid salesListRequestId, int salesListPublicCode, string customerIdentity, string bottleName)
+        : base($"مبلغ شیشه برای {customerIdentity} در لیست {salesListPublicCode} مشخص نیست.")
+    {
+        SalesListRequestId = salesListRequestId;
+        SalesListPublicCode = salesListPublicCode;
+        CustomerIdentity = customerIdentity;
+        BottleName = bottleName;
+    }
+
+    public Guid SalesListRequestId { get; }
+    public int SalesListPublicCode { get; }
+    public string CustomerIdentity { get; }
+    public string BottleName { get; }
+}
+
 public sealed record InvoiceIssuanceResult(
     Guid BatchId,
     int InvoiceCount,
@@ -66,8 +84,9 @@ public interface IInvoiceIssuanceService
     Task<InvoiceIssuanceResult> IssueManualAsync(
         string customerIdentity,
         IReadOnlyCollection<ManualInvoiceLineInput> lines,
-        string productPhotoFileId,
+        IReadOnlyCollection<string> productPhotoFileIds,
         string issuedByTelegramUserId,
+        string? giftRecipientIdentity = null,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<InvoicePaymentTrackingReport>> GetPaymentTrackingReportsAsync(

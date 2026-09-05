@@ -57,7 +57,8 @@ public static class TelegramNotificationMessageFormatter
                    $"گیرنده: {recipient}\n" +
                    $"هدیه‌دهنده: {giver}\n" +
                    $"شماره فاکتور مالی: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}\n\n" +
-                   "گروه فعال هدیه‌گیرنده شناسایی نشد؛ پس از اتصال گروه، پیام هدیه را دستی بررسی و ارسال کنید.";
+                   "گروه فعال هدیه‌گیرنده شناسایی نشد؛ ربات را به گروه اضافه کنید و داخل همان گروه این فرمان را ارسال کنید:\n" +
+                   $"/connectgift {ReadString(root, "InvoiceNumber") ?? "نامشخص"} {recipient.TrimStart('@')}";
         }
         var orderNumber = ReadString(root, "OrderNumber") ?? "نامشخص";
 

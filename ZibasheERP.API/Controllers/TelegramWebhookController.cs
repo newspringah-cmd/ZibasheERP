@@ -54,6 +54,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramOwnerPricingDraftStore _ownerPricingDrafts;
     private readonly TelegramAdminRequestDraftStore _adminRequestDrafts;
     private readonly TelegramInvoiceIssuanceDraftStore _invoiceIssuanceDrafts;
+    private readonly TelegramInvoiceBottlePriceResolutionDraftStore _invoiceBottlePriceResolutionDrafts;
     private readonly IInvoiceIssuanceService _invoiceIssuanceService;
     private readonly IInvoicePaymentStatusService _invoicePaymentStatusService;
     private readonly TelegramManualInvoiceDraftStore _manualInvoiceDrafts;
@@ -81,6 +82,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramOwnerPricingDraftStore ownerPricingDrafts,
         TelegramAdminRequestDraftStore adminRequestDrafts,
         TelegramInvoiceIssuanceDraftStore invoiceIssuanceDrafts,
+        TelegramInvoiceBottlePriceResolutionDraftStore invoiceBottlePriceResolutionDrafts,
         IInvoiceIssuanceService invoiceIssuanceService,
         IInvoicePaymentStatusService invoicePaymentStatusService,
         TelegramManualInvoiceDraftStore manualInvoiceDrafts,
@@ -108,6 +110,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _ownerPricingDrafts = ownerPricingDrafts;
         _adminRequestDrafts = adminRequestDrafts;
         _invoiceIssuanceDrafts = invoiceIssuanceDrafts;
+        _invoiceBottlePriceResolutionDrafts = invoiceBottlePriceResolutionDrafts;
         _invoiceIssuanceService = invoiceIssuanceService;
         _invoicePaymentStatusService = invoicePaymentStatusService;
         _manualInvoiceDrafts = manualInvoiceDrafts;
@@ -815,6 +818,31 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandleDecantGroupConnectionAsync(message, cancellationToken))
             return;
 
+        if (TryParseConnectGiftCommand(message.Text, out var giftInvoiceNumber, out var giftRecipient))
+        {
+            var isGiftGroupAdministrator = await _sender.IsChatAdministratorAsync(
+                message.Chat.Id.ToString(), message.From!.Id.ToString(), cancellationToken);
+            if (!isGiftGroupAdministrator)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "فقط سازنده یا مدیر این گروه می‌تواند آن را به مشتری متصل کند.", cancellationToken);
+                return;
+            }
+            var giftResult = await _groupMembershipTracker.LinkGiftRecipientByInvoiceAsync(
+                message.Chat, giftInvoiceNumber, giftRecipient, cancellationToken);
+            var giftResponse = giftResult.Status switch
+            {
+                TelegramGroupLinkStatus.Linked or TelegramGroupLinkStatus.AlreadyLinked =>
+                    $"گروه با موفقیت به هدیه‌گیرنده {giftResult.CustomerName} متصل شد ✅\n" +
+                    $"{giftResult.QueuedInvoiceCount} پیام هدیه در صف ارسال قرار گرفت.",
+                TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup =>
+                    "این هدیه‌گیرنده قبلاً گروه دیگری دارد. برای جایگزینی گروه با مدیر سیستم تماس بگیرید.",
+                _ => "فاکتور هدیه یا شناسه هدیه‌گیرنده پیدا نشد. فرمان را دقیقاً از دکمه کپی ارسال کنید."
+            };
+            await ReplyAsync(message.Chat.Id, giftResponse, cancellationToken);
+            return;
+        }
+
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))
             return;
 
@@ -873,6 +901,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandleInvoiceInventoryMessageAsync(message, cancellationToken))
             return true;
 
+        if (await TryHandleInvoiceBottlePriceResolutionMessageAsync(message, cancellationToken))
+            return true;
+
         if (await TryHandleDecantPhotoMessageAsync(message, cancellationToken))
             return true;
 
@@ -917,6 +948,23 @@ public sealed partial class TelegramWebhookController : ControllerBase
 
         if (parts.Length == 2)
             invoiceNumber = parts[1].Trim();
+        return true;
+    }
+
+    private static bool TryParseConnectGiftCommand(
+        string? text, out string invoiceNumber, out string recipientIdentity)
+    {
+        invoiceNumber = string.Empty;
+        recipientIdentity = string.Empty;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var parts = text.Trim().Split((char[]?)null, 3, StringSplitOptions.RemoveEmptyEntries);
+        var command = parts[0].Split('@', 2)[0];
+        if (!string.Equals(command, "/connectgift", StringComparison.OrdinalIgnoreCase)) return false;
+        if (parts.Length == 3)
+        {
+            invoiceNumber = parts[1].Trim();
+            recipientIdentity = parts[2].Trim();
+        }
         return true;
     }
 

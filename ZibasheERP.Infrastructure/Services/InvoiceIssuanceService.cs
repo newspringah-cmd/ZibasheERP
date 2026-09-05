@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Features.Invoices.IssueInvoice;
 using ZibasheERP.Application.Interfaces;
+using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -148,7 +149,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             {
                 row++;
                 var perfumeAmount = request.PerfumePricePerMl * request.VolumeMl;
-                var bottleAmount = request.IsBottleOwner ? 0 : request.BottlePrice;
+                var bottleAmount = ResolveInvoiceBottleAmount(request, list.PublicCode);
                 order.Items.Add(new OrderItem
                 {
                     Id = Guid.NewGuid(), CreatedAt = now, OrderId = order.Id,
@@ -193,6 +194,31 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         await transaction.CommitAsync(cancellationToken);
         return new InvoiceIssuanceResult(batch.Id, orders.Count, invoiceNumbers, productionCopies);
     }
+
+    private static decimal ResolveInvoiceBottleAmount(SalesListRequest request, int publicCode)
+    {
+        if (request.IsBottleOwner)
+            return 0m;
+
+        if (request.BottlePrice > 0)
+            return request.BottlePrice;
+
+        if (request.Bottle?.SalePrice is > 0)
+        {
+            // Imported legacy requests may have a selected bottle but no saved price.
+            // Snapshot the current bottle price so future retries produce the same invoice amount.
+            request.BottlePrice = request.Bottle.SalePrice;
+            return request.BottlePrice;
+        }
+
+        throw new BottlePriceResolutionRequiredException(
+            request.Id, publicCode, RequestIdentity(request), request.Bottle?.Name ?? "شیشه نامشخص");
+    }
+
+    private static string RequestIdentity(SalesListRequest request) =>
+        !string.IsNullOrWhiteSpace(request.TelegramUsername)
+            ? $"@{request.TelegramUsername.Trim().TrimStart('@')}"
+            : request.TelegramUserId;
 
     private async Task QueueGiftRecipientNotificationsAsync(
         Order order,
@@ -279,14 +305,54 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     TotalAmount = 0
                 })
             }, cancellationToken);
+            await _db.NotificationOutbox.AddAsync(N8nIntegrationEventFactory.CreateForDelivery(
+                order, recipient!, chatId, new
+                {
+                    OrderId = order.Id,
+                    order.OrderNumber,
+                    InvoiceId = (Guid?)null,
+                    InvoiceNumber = invoiceNumber,
+                    IssuedAt = now,
+                    PerfumeTotal = 0,
+                    BottleTotal = 0,
+                    TotalAmount = 0,
+                    Customer = new
+                    {
+                        recipient.Id, recipient.FullName, recipient.Mobile,
+                        recipient.TelegramId, recipient.Username
+                    },
+                    PaymentDeadlineHours = 0,
+                    PaymentAccounts = Array.Empty<object>(),
+                    Items = new[]
+                    {
+                        new
+                        {
+                            RowNumber = item.RowNumber,
+                            PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                            PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                            PerfumeBrand = item.Perfume?.Brand,
+                            item.RequestedVolumeMl,
+                            item.PerfumePricePerMl,
+                            PerfumeAmount = 0m,
+                            item.IsBottleOwner,
+                            IsGift = true,
+                            GiftRecipientUsername = recipientUsername,
+                            GiftRecipientTelegramId = recipientTelegramId,
+                            BottleName = item.Bottle?.Name,
+                            BottlePrice = 0m,
+                            LineTotal = 0m
+                        }
+                    }
+                }, now.AddTicks(sequence++)), cancellationToken);
         }
     }
 
     public async Task<InvoiceIssuanceResult> IssueManualAsync(
         string customerIdentity,
         IReadOnlyCollection<ManualInvoiceLineInput> lines,
-        string productPhotoFileId,
+        IReadOnlyCollection<string> productPhotoFileIds,
         string issuedByTelegramUserId,
+        string? giftRecipientIdentity = null,
         CancellationToken cancellationToken = default)
     {
         var identity = customerIdentity.Trim().TrimStart('@');
@@ -296,18 +362,35 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                                              line.Quantity > 0 && line.UnitAmount >= 0 && line.BottleAmount >= 0).ToArray();
         if (validLines.Length == 0)
             throw new InvalidOperationException("حداقل یک ردیف معتبر برای فاکتور دستی لازم است.");
+        var validPhotoFileIds = productPhotoFileIds
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToArray();
+        if (validPhotoFileIds.Length != validLines.Length)
+            throw new InvalidOperationException("برای هر آیتم فاکتور دستی باید یک عکس محصول ثبت شود.");
 
-        var usernameWithAt = $"@{identity}";
-        var customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-            (value.TelegramId == identity || value.Username == identity || value.Username == usernameWithAt), cancellationToken)
-            ?? throw new InvalidOperationException("مشتری پیدا نشد؛ ابتدا مشتری را با Telegram ID یا @username شناسایی کنید.");
+        var customer = await ResolveManualInvoiceCustomerAsync(identity, cancellationToken);
+        Customer? giftRecipient = null;
+        if (!string.IsNullOrWhiteSpace(giftRecipientIdentity))
+        {
+            var recipientIdentity = giftRecipientIdentity.Trim().TrimStart('@');
+            var recipientUsernameWithAt = $"@{recipientIdentity}";
+            giftRecipient = await _db.Customers.Include(value => value.TelegramGroup)
+                .FirstOrDefaultAsync(value => !value.IsDeleted &&
+                    (value.TelegramId == recipientIdentity || value.Username == recipientIdentity ||
+                     value.Username == recipientUsernameWithAt), cancellationToken)
+                ?? throw new InvalidOperationException("هدیه‌گیرنده پیدا نشد؛ ابتدا او را با Telegram ID یا @username شناسایی کنید.");
+            if (giftRecipient.Id == customer.Id)
+                throw new InvalidOperationException("هدیه‌دهنده و هدیه‌گیرنده نمی‌توانند یک نفر باشند.");
+        }
         var now = DateTime.UtcNow;
         var order = new Order
         {
             Id = Guid.NewGuid(), CreatedAt = now, CustomerId = customer.Id,
             OrderNumber = await GenerateOrderNumberAsync(now, cancellationToken),
             Status = OrderStatus.Registered, RegisteredAt = now, Source = OrderSource.ManualInvoice,
-            Notes = $"فاکتور دستی توسط {issuedByTelegramUserId.Trim()}"
+            Notes = $"فاکتور دستی توسط {issuedByTelegramUserId.Trim()}" +
+                    (giftRecipient is null ? string.Empty : $" | هدیه برای {giftRecipient.Username ?? giftRecipient.TelegramId}")
         };
         var row = 0;
         foreach (var line in validLines)
@@ -332,9 +415,105 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         await _db.Orders.AddAsync(order, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         var invoice = await _sender.Send(
-            new IssueInvoiceCommand(order.Id, productPhotoFileId.Trim()),
+            new IssueInvoiceCommand(order.Id, validPhotoFileIds, giftRecipient is not null),
             cancellationToken);
+        if (giftRecipient is not null)
+            await QueueManualGiftRecipientNotificationsAsync(order, invoice, giftRecipient, validPhotoFileIds, cancellationToken);
         return new InvoiceIssuanceResult(Guid.Empty, 1, new[] { invoice.InvoiceNumber }, Array.Empty<SalesListProductionCopy>());
+    }
+
+    private async Task QueueManualGiftRecipientNotificationsAsync(
+        Order order, ZibasheERP.Application.Features.Invoices.InvoiceResponse invoice,
+        Customer recipient, IReadOnlyCollection<string> photoFileIds, CancellationToken cancellationToken)
+    {
+        var group = recipient.TelegramGroup;
+        if (group is null || group.IsDeleted || !group.IsActive || string.IsNullOrWhiteSpace(group.ChatId))
+        {
+            await _db.NotificationOutbox.AddAsync(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, CustomerId = recipient.Id, OrderId = order.Id,
+                Channel = "Telegram", EventType = "InvoiceGiftDeliveryRequiresManualAction", Recipient = "admin",
+                Payload = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    invoice.InvoiceNumber, RecipientUsername = recipient.Username,
+                    RecipientTelegramId = recipient.TelegramId, IsManualGift = true
+                })
+            }, cancellationToken);
+            await _db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var chatId = group.ChatId.Trim();
+        var sequence = 0;
+        foreach (var photoFileId in photoFileIds)
+        {
+            await _db.NotificationOutbox.AddAsync(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++), CustomerId = recipient.Id, OrderId = order.Id,
+                Channel = "Telegram", EventType = "InvoicePerfumePhoto", Recipient = chatId,
+                Payload = System.Text.Json.JsonSerializer.Serialize(new { FileId = photoFileId })
+            }, cancellationToken);
+        }
+        await _db.NotificationOutbox.AddAsync(new NotificationOutbox
+        {
+            Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++), CustomerId = recipient.Id, OrderId = order.Id,
+            Channel = "Telegram", EventType = "GiftInvoiceIssued", Recipient = chatId,
+            Payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                invoice.InvoiceNumber, invoice.IssuedAt,
+                PerfumePersianName = string.Join("، ", invoice.Items.Select(item => item.PerfumeName)),
+                RequestedVolumeMl = invoice.Items.Sum(item => item.VolumeMl), TotalAmount = 0
+            })
+        }, cancellationToken);
+        await _db.NotificationOutbox.AddAsync(N8nIntegrationEventFactory.CreateForDelivery(order, recipient, chatId, new
+        {
+            OrderId = order.Id, order.OrderNumber, InvoiceId = (Guid?)null,
+            invoice.InvoiceNumber, invoice.IssuedAt, PerfumeTotal = 0m, BottleTotal = 0m, TotalAmount = 0m,
+            Customer = new { recipient.Id, recipient.FullName, recipient.Mobile, recipient.TelegramId, recipient.Username },
+            PaymentDeadlineHours = 0, PaymentAccounts = Array.Empty<object>(),
+            Items = invoice.Items.Select((item, index) => new
+            {
+                RowNumber = index + 1, PerfumePersianName = item.PerfumeName,
+                PerfumeEnglishName = item.PerfumeName, PerfumeBrand = item.PerfumeBrand,
+                RequestedVolumeMl = item.VolumeMl, PerfumePricePerMl = item.PricePerMl,
+                PerfumeAmount = 0m, item.IsBottleOwner, IsGift = true,
+                GiftRecipientUsername = recipient.Username, GiftRecipientTelegramId = recipient.TelegramId,
+                item.BottleName, BottlePrice = 0m, LineTotal = 0m
+            })
+        }, now.AddTicks(sequence++)), cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<Customer> ResolveManualInvoiceCustomerAsync(
+        string identity,
+        CancellationToken cancellationToken)
+    {
+        var username = identity.Trim().TrimStart('@');
+        var usernameWithAt = $"@{username}";
+        var customer = _db.Customers.Local.FirstOrDefault(value => !value.IsDeleted &&
+            (value.TelegramId == username || value.Username == username || value.Username == usernameWithAt));
+        if (customer is not null)
+            return customer;
+
+        customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
+            (value.TelegramId == username || value.Username == username || value.Username == usernameWithAt),
+            cancellationToken);
+        if (customer is not null)
+            return customer;
+
+        var isTelegramId = username.All(char.IsDigit);
+        customer = new Customer
+        {
+            Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+            TelegramId = isTelegramId ? username : null,
+            Username = isTelegramId ? null : username,
+            FullName = isTelegramId ? $"مشتری تلگرام {username}" : $"@{username}",
+            Mobile = $"TG-MANUAL-{Guid.NewGuid():N}"[..20],
+            Notes = "مشتری به‌صورت خودکار از فاکتور دستی ایجاد شد؛ گروه تلگرام برای ارسال فاکتور هنوز متصل نیست."
+        };
+        await _db.Customers.AddAsync(customer, cancellationToken);
+        return customer;
     }
 
     public async Task<IReadOnlyCollection<InvoicePaymentTrackingReport>> GetPaymentTrackingReportsAsync(

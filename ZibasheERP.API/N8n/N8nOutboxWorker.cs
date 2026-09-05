@@ -1,7 +1,10 @@
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.API.N8n;
 
@@ -51,6 +54,7 @@ public sealed class N8nOutboxWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<INotificationOutboxRepository>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var pending = await repository.GetPendingAsync(
             "N8n",
             Math.Clamp(_options.BatchSize, 1, 100),
@@ -58,6 +62,16 @@ public sealed class N8nOutboxWorker : BackgroundService
 
         foreach (var notification in pending)
         {
+            if (!await AreTelegramPrerequisitesDeliveredAsync(notification, db, cancellationToken))
+            {
+                notification.Status = NotificationOutboxStatus.Pending;
+                notification.LockedUntil = null;
+                notification.NextAttemptAt = DateTime.UtcNow.AddSeconds(2);
+                notification.UpdatedAt = DateTime.UtcNow;
+                await repository.SaveChangesAsync(cancellationToken);
+                continue;
+            }
+
             var result = await _sender.SendAsync(notification, cancellationToken);
             var now = DateTime.UtcNow;
             notification.Attempts++;
@@ -85,4 +99,50 @@ public sealed class N8nOutboxWorker : BackgroundService
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
+
+    private static async Task<bool> AreTelegramPrerequisitesDeliveredAsync(
+        NotificationOutbox notification,
+        AppDbContext db,
+        CancellationToken cancellationToken)
+    {
+        if (notification.EventType != "InvoiceIssued" || !notification.OrderId.HasValue)
+            return true;
+
+        string? chatId;
+        try
+        {
+            using var payload = JsonDocument.Parse(notification.Payload);
+            chatId = payload.RootElement.TryGetProperty("Delivery", out var delivery) &&
+                     delivery.ValueKind == JsonValueKind.Object &&
+                     delivery.TryGetProperty("ChatId", out var chat)
+                ? chat.GetString()?.Trim()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(chatId))
+            return true;
+
+        var prerequisiteTypes = new[]
+        {
+            "InvoiceGreeting",
+            "InvoicePerfumePhoto",
+            "GiftInvoiceIssued"
+        };
+        var prerequisites = await db.NotificationOutbox.AsNoTracking()
+            .Where(value => !value.IsDeleted &&
+                            value.OrderId == notification.OrderId &&
+                            value.Channel == "Telegram" &&
+                            value.Recipient == chatId &&
+                            prerequisiteTypes.Contains(value.EventType))
+            .Select(value => value.Status)
+            .ToArrayAsync(cancellationToken);
+
+        // Legacy invoices may not have queued Telegram content. Do not block them.
+        return prerequisites.Length == 0 ||
+               prerequisites.All(status => status == NotificationOutboxStatus.Processed);
+    }
 }

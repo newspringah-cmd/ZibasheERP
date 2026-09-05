@@ -29,6 +29,30 @@ public static class N8nIntegrationEventFactory
         };
     }
 
+    public static NotificationOutbox CreateForDelivery(
+        Order order,
+        Customer recipient,
+        string chatId,
+        object payload,
+        DateTime createdAt)
+    {
+        var body = JsonSerializer.SerializeToNode(payload) as JsonObject
+            ?? throw new InvalidOperationException("N8n event payload must be a JSON object.");
+        body["Delivery"] = JsonSerializer.SerializeToNode(new
+        {
+            Channel = "TelegramGroup",
+            ChatId = chatId.Trim(),
+            Title = recipient.TelegramGroup?.Title ?? "گروه هدیه‌گیرنده",
+            Username = recipient.TelegramGroup?.Username
+        });
+        return new NotificationOutbox
+        {
+            Id = Guid.NewGuid(), CreatedAt = createdAt, CustomerId = recipient.Id,
+            OrderId = order.Id, Channel = "N8n", EventType = "InvoiceIssued",
+            Recipient = "n8n", Payload = body.ToJsonString()
+        };
+    }
+
     private static JsonNode? CreateDelivery(Customer? customer)
     {
         var group = customer?.TelegramGroup;

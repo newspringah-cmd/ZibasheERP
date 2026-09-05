@@ -85,7 +85,12 @@ if (paymentAccounts.length > 0) {
     captionLines.push(`${account.AccountHolder} - بانک ${account.BankName}`);
   });
 }
-captionLines.push('', 'با تشکر از خرید شما', 'مهلت پرداخت فاکتور: ۲۴ ساعت');
+captionLines.push('', 'با تشکر از خرید شما');
+if (Number(invoice.PaymentDeadlineHours ?? 0) > 0) {
+  captionLines.push(`مهلت پرداخت فاکتور: ${number(invoice.PaymentDeadlineHours)} ساعت`);
+} else {
+  captionLines.push('🎁 این فاکتور هدیه است و مبلغ قابل پرداخت ندارد.');
+}
 const telegramCaption = captionLines.join('\n').slice(0, 1024);
 const invoiceId = String(invoice.InvoiceId ?? '').replaceAll('-', '');
 const firstPaymentAccount = paymentAccounts[0] ?? {};

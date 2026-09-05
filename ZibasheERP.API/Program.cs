@@ -130,6 +130,7 @@ builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
 builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();
 builder.Services.AddSingleton<TelegramAdminRequestDraftStore>();
 builder.Services.AddSingleton<TelegramInvoiceIssuanceDraftStore>();
+builder.Services.AddSingleton<TelegramInvoiceBottlePriceResolutionDraftStore>();
 builder.Services.AddSingleton<TelegramManualInvoiceDraftStore>();
 builder.Services.AddSingleton<TelegramTemporaryMessageCleaner>();
 builder.Services.AddHostedService(serviceProvider =>

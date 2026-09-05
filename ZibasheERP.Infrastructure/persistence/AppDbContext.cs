@@ -134,8 +134,7 @@ public class AppDbContext : DbContext
             .IsUnique();
 
         modelBuilder.Entity<CustomerTelegramGroup>()
-            .HasIndex(group => group.ChatId)
-            .IsUnique();
+            .HasIndex(group => group.ChatId);
     }
 
     private static void ConfigurePerfume(ModelBuilder modelBuilder)

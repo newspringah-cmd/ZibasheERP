@@ -15,6 +15,11 @@ public interface ITelegramGroupMembershipTracker
         TelegramChat chat,
         string invoiceNumber,
         CancellationToken cancellationToken);
+    Task<TelegramGroupLinkResult> LinkGiftRecipientByInvoiceAsync(
+        TelegramChat chat,
+        string invoiceNumber,
+        string recipientIdentity,
+        CancellationToken cancellationToken);
 }
 
 public enum TelegramGroupLinkStatus
@@ -44,10 +49,10 @@ public sealed class TelegramGroupMembershipTracker(
             return;
 
         var chatId = update.Chat.Id.ToString();
-        var group = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
-            value => value.ChatId == chatId && !value.IsDeleted,
-            cancellationToken);
-        if (group is null)
+        var groups = await context.CustomerTelegramGroups
+            .Where(value => value.ChatId == chatId && !value.IsDeleted)
+            .ToArrayAsync(cancellationToken);
+        if (groups.Length == 0)
         {
             logger.LogWarning(
                 "Telegram bot membership changed for unmapped group {TelegramGroupChatId}.",
@@ -60,19 +65,20 @@ public sealed class TelegramGroupMembershipTracker(
             update.NewChatMember.Status,
             update.NewChatMember.IsMember,
             update.NewChatMember.CanSendMessages);
-        group.IsActive = canDeliver;
-        if (!string.IsNullOrWhiteSpace(update.Chat.Title))
-            group.Title = update.Chat.Title.Trim();
-        group.Username = NormalizeUsername(update.Chat.Username);
-        group.LastSeenAt = now;
-        group.UpdatedAt = now;
+        foreach (var group in groups)
+        {
+            group.IsActive = canDeliver;
+            if (!string.IsNullOrWhiteSpace(update.Chat.Title)) group.Title = update.Chat.Title.Trim();
+            group.Username = NormalizeUsername(update.Chat.Username);
+            group.LastSeenAt = now;
+            group.UpdatedAt = now;
+        }
         await context.SaveChangesAsync(cancellationToken);
         if (canDeliver)
         {
-            var queued = await QueueUndeliveredDecantPhotosAsync(
-                group.CustomerId,
-                chatId,
-                cancellationToken);
+            var queued = 0;
+            foreach (var customerId in groups.Select(value => value.CustomerId).Distinct())
+                queued += await QueueUndeliveredDecantPhotosAsync(customerId, chatId, cancellationToken);
             if (queued > 0)
                 logger.LogInformation(
                     "Queued {Count} deferred decant photos after Telegram bot joined group {TelegramGroupChatId}.",
@@ -85,14 +91,16 @@ public sealed class TelegramGroupMembershipTracker(
         string chatId,
         CancellationToken cancellationToken)
     {
-        var group = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
-            value => value.ChatId == chatId && !value.IsDeleted,
-            cancellationToken);
-        if (group is null || !group.IsActive)
+        var groups = await context.CustomerTelegramGroups
+            .Where(value => value.ChatId == chatId && !value.IsDeleted && value.IsActive)
+            .ToArrayAsync(cancellationToken);
+        if (groups.Length == 0)
             return;
-
-        group.IsActive = false;
-        group.UpdatedAt = DateTime.UtcNow;
+        foreach (var group in groups)
+        {
+            group.IsActive = false;
+            group.UpdatedAt = DateTime.UtcNow;
+        }
         await context.SaveChangesAsync(cancellationToken);
         logger.LogWarning(
             "Telegram group {TelegramGroupChatId} was disabled after a permanent delivery failure.",
@@ -116,42 +124,9 @@ public sealed class TelegramGroupMembershipTracker(
         if (customer is null || invoice!.Order!.IsDeleted || customer.IsDeleted)
             return new TelegramGroupLinkResult(TelegramGroupLinkStatus.InvoiceNotFound);
 
+        var link = await LinkCustomerToChatAsync(customer, chat, cancellationToken);
+        if (link.Status == TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup) return link;
         var chatId = chat.Id.ToString();
-        var existingByChat = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
-            value => value.ChatId == chatId && !value.IsDeleted,
-            cancellationToken);
-        if (existingByChat is not null && existingByChat.CustomerId != customer.Id)
-            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.GroupLinkedToAnotherCustomer);
-
-        var existingByCustomer = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
-            value => value.CustomerId == customer.Id && !value.IsDeleted,
-            cancellationToken);
-        if (existingByCustomer is not null && existingByCustomer.ChatId != chatId)
-            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup);
-
-        var now = DateTime.UtcNow;
-        var group = existingByChat ?? existingByCustomer;
-        var alreadyLinked = group is not null && group.IsActive && group.ChatId == chatId;
-        if (group is null)
-        {
-            group = new ZibasheERP.Domain.Entities.CustomerTelegramGroup
-            {
-                Id = Guid.NewGuid(),
-                CustomerId = customer.Id,
-                ChatId = chatId,
-                CreatedAt = now,
-                LinkedAt = now
-            };
-            context.CustomerTelegramGroups.Add(group);
-        }
-
-        group.Title = string.IsNullOrWhiteSpace(chat.Title) ? chatId : chat.Title.Trim();
-        group.Username = NormalizeUsername(chat.Username);
-        group.IsActive = true;
-        group.IsDeleted = false;
-        group.LastSeenAt = now;
-        group.UpdatedAt = now;
-        await context.SaveChangesAsync(cancellationToken);
 
         var queuedInvoiceCount = await QueueUndeliveredInvoicesAsync(
             customer.Id,
@@ -163,10 +138,149 @@ public sealed class TelegramGroupMembershipTracker(
             cancellationToken);
 
         return new TelegramGroupLinkResult(
-            alreadyLinked ? TelegramGroupLinkStatus.AlreadyLinked : TelegramGroupLinkStatus.Linked,
+            link.Status,
             customer.FullName,
             queuedInvoiceCount,
             queuedDecantPhotoCount);
+    }
+
+    public async Task<TelegramGroupLinkResult> LinkGiftRecipientByInvoiceAsync(
+        TelegramChat chat, string invoiceNumber, string recipientIdentity, CancellationToken cancellationToken)
+    {
+        var identity = recipientIdentity.Trim().TrimStart('@');
+        var invoice = await context.Invoices
+            .Include(value => value.Order).ThenInclude(value => value!.Items)
+                .ThenInclude(value => value.SourceSalesListRequest)
+            .Include(value => value.Order).ThenInclude(value => value!.Items)
+                .ThenInclude(value => value.Perfume)
+            .Include(value => value.Order).ThenInclude(value => value!.Items)
+                .ThenInclude(value => value.SalesList)
+            .FirstOrDefaultAsync(value => value.InvoiceNumber == invoiceNumber.Trim() && !value.IsDeleted,
+                cancellationToken);
+        var order = invoice?.Order;
+        var giftItems = order?.Items.Where(item => !item.IsDeleted && item.SourceSalesListRequest?.IsGift == true &&
+            (string.Equals(item.SourceSalesListRequest.GiftRecipientTelegramUsername?.Trim().TrimStart('@'), identity,
+                 StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(item.SourceSalesListRequest.GiftRecipientTelegramUserId?.Trim(), identity,
+                 StringComparison.OrdinalIgnoreCase))).ToArray() ?? [];
+        if (order is null || order.IsDeleted || giftItems.Length == 0)
+            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.InvoiceNotFound);
+
+        var request = giftItems[0].SourceSalesListRequest!;
+        var customer = await FindOrCreateGiftRecipientAsync(request, cancellationToken);
+        var link = await LinkCustomerToChatAsync(customer, chat, cancellationToken);
+        if (link.Status == TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup) return link;
+
+        var now = DateTime.UtcNow;
+        var sequence = 0;
+        foreach (var item in giftItems)
+        {
+            if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+                context.NotificationOutbox.Add(new NotificationOutbox
+                {
+                    Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++), CustomerId = customer.Id,
+                    OrderId = order.Id, Channel = "Telegram", EventType = "InvoicePerfumePhoto",
+                    Recipient = chat.Id.ToString(), Payload = JsonSerializer.Serialize(new
+                    {
+                        FileId = item.SalesList.TelegramPhotoFileId,
+                        PersianName = item.Perfume?.Name ?? item.ManualDescription,
+                        EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                    })
+                });
+            context.NotificationOutbox.Add(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++), CustomerId = customer.Id,
+                OrderId = order.Id, Channel = "Telegram", EventType = "GiftInvoiceIssued",
+                Recipient = chat.Id.ToString(), Payload = JsonSerializer.Serialize(new
+                {
+                    InvoiceNumber = invoice!.InvoiceNumber, IssuedAt = invoice.IssuedAt,
+                    GiverUsername = request.TelegramUsername, GiverTelegramId = request.TelegramUserId,
+                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                    RequestedVolumeMl = item.RequestedVolumeMl
+                })
+            });
+            context.NotificationOutbox.Add(N8nIntegrationEventFactory.CreateForDelivery(
+                order, customer, chat.Id.ToString(), new
+                {
+                    OrderId = order.Id,
+                    order.OrderNumber,
+                    InvoiceId = (Guid?)null,
+                    InvoiceNumber = invoice!.InvoiceNumber,
+                    IssuedAt = invoice.IssuedAt,
+                    PerfumeTotal = 0m,
+                    BottleTotal = 0m,
+                    TotalAmount = 0m,
+                    Customer = new { customer.Id, customer.FullName, customer.Mobile, customer.TelegramId, customer.Username },
+                    PaymentDeadlineHours = 0,
+                    PaymentAccounts = Array.Empty<object>(),
+                    Items = new[]
+                    {
+                        new
+                        {
+                            RowNumber = item.RowNumber,
+                            PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
+                            PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                            PerfumeBrand = item.Perfume?.Brand,
+                            item.RequestedVolumeMl,
+                            item.PerfumePricePerMl,
+                            PerfumeAmount = 0m,
+                            item.IsBottleOwner,
+                            IsGift = true,
+                            GiftRecipientUsername = request.GiftRecipientTelegramUsername,
+                            GiftRecipientTelegramId = request.GiftRecipientTelegramUserId,
+                            BottleName = item.Bottle?.Name,
+                            BottlePrice = 0m,
+                            LineTotal = 0m
+                        }
+                    }
+                }, now.AddTicks(sequence++)));
+        }
+        await context.SaveChangesAsync(cancellationToken);
+        return new TelegramGroupLinkResult(link.Status, customer.FullName, giftItems.Length);
+    }
+
+    private async Task<TelegramGroupLinkResult> LinkCustomerToChatAsync(
+        Customer customer, TelegramChat chat, CancellationToken cancellationToken)
+    {
+        var chatId = chat.Id.ToString();
+        var group = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
+            value => value.CustomerId == customer.Id && !value.IsDeleted, cancellationToken);
+        if (group is not null && group.ChatId != chatId)
+            return new TelegramGroupLinkResult(TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup);
+        var alreadyLinked = group is not null && group.IsActive;
+        var now = DateTime.UtcNow;
+        if (group is null)
+        {
+            group = new CustomerTelegramGroup { Id = Guid.NewGuid(), CustomerId = customer.Id,
+                ChatId = chatId, CreatedAt = now, LinkedAt = now };
+            context.CustomerTelegramGroups.Add(group);
+        }
+        group.Title = string.IsNullOrWhiteSpace(chat.Title) ? chatId : chat.Title.Trim();
+        group.Username = NormalizeUsername(chat.Username);
+        group.IsActive = true; group.IsDeleted = false; group.LastSeenAt = now; group.UpdatedAt = now;
+        await context.SaveChangesAsync(cancellationToken);
+        return new TelegramGroupLinkResult(alreadyLinked ? TelegramGroupLinkStatus.AlreadyLinked : TelegramGroupLinkStatus.Linked);
+    }
+
+    private async Task<Customer> FindOrCreateGiftRecipientAsync(SalesListRequest request, CancellationToken cancellationToken)
+    {
+        var username = request.GiftRecipientTelegramUsername?.Trim().TrimStart('@');
+        var telegramId = request.GiftRecipientTelegramUserId?.Trim();
+        var customer = await context.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
+            ((!string.IsNullOrWhiteSpace(telegramId) && value.TelegramId == telegramId) ||
+             (!string.IsNullOrWhiteSpace(username) &&
+              (value.Username == username || value.Username == $"@{username}"))), cancellationToken);
+        if (customer is not null) return customer;
+        var identity = username ?? telegramId ?? "gift-recipient";
+        var mobile = $"TG-GIFT-{identity}";
+        customer = new Customer { Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+            TelegramId = telegramId, Username = username, FullName = $"هدیه‌گیرنده {identity}",
+            Mobile = mobile[..Math.Min(20, mobile.Length)],
+            Notes = "مشتری به‌صورت خودکار از اتصال گروه هدیه ایجاد شد." };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync(cancellationToken);
+        return customer;
     }
 
     private async Task<int> QueueUndeliveredDecantPhotosAsync(

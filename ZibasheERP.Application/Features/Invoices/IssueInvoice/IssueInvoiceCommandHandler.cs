@@ -157,25 +157,18 @@ public sealed class IssueInvoiceCommandHandler
                     Payload = System.Text.Json.JsonSerializer.Serialize(photo)
                 }, cancellationToken);
             }
-            if (!string.IsNullOrWhiteSpace(request.ManualProductPhotoFileId))
+            if (!request.IsGift && request.ManualProductPhotoFileIds is { Count: > 0 })
             {
-                await _outboxRepository.AddAsync(new NotificationOutbox
+                foreach (var photoFileId in request.ManualProductPhotoFileIds.Where(value => !string.IsNullOrWhiteSpace(value)))
                 {
-                    Id = Guid.NewGuid(),
-                    CreatedAt = now.AddTicks(sequence++),
-                    CustomerId = order.CustomerId,
-                    OrderId = order.Id,
-                    Channel = "Telegram",
-                    EventType = "InvoicePerfumePhoto",
-                    Recipient = notification.Recipient,
-                    Payload = System.Text.Json.JsonSerializer.Serialize(new
+                    await _outboxRepository.AddAsync(new NotificationOutbox
                     {
-                        FileId = request.ManualProductPhotoFileId.Trim(),
-                        PersianName = order.Items.OrderBy(item => item.RowNumber)
-                            .First().ManualDescription,
-                        EnglishName = (string?)null
-                    })
-                }, cancellationToken);
+                        Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                        CustomerId = order.CustomerId, OrderId = order.Id, Channel = "Telegram",
+                        EventType = "InvoicePerfumePhoto", Recipient = notification.Recipient,
+                        Payload = System.Text.Json.JsonSerializer.Serialize(new { FileId = photoFileId.Trim() })
+                    }, cancellationToken);
+                }
             }
         }
         else
@@ -218,24 +211,18 @@ public sealed class IssueInvoiceCommandHandler
                     Payload = System.Text.Json.JsonSerializer.Serialize(photo)
                 }, cancellationToken);
             }
-            if (!string.IsNullOrWhiteSpace(request.ManualProductPhotoFileId))
+            if (!request.IsGift && request.ManualProductPhotoFileIds is { Count: > 0 })
             {
-                await _outboxRepository.AddAsync(new NotificationOutbox
+                foreach (var photoFileId in request.ManualProductPhotoFileIds.Where(value => !string.IsNullOrWhiteSpace(value)))
                 {
-                    Id = Guid.NewGuid(),
-                    CreatedAt = now.AddTicks(sequence++),
-                    CustomerId = order.CustomerId,
-                    OrderId = order.Id,
-                    Channel = "Telegram",
-                    EventType = "InvoiceManualReviewPerfumePhoto",
-                    Recipient = "manual-review",
-                    Payload = System.Text.Json.JsonSerializer.Serialize(new
+                    await _outboxRepository.AddAsync(new NotificationOutbox
                     {
-                        FileId = request.ManualProductPhotoFileId.Trim(),
-                        PersianName = order.Items.OrderBy(item => item.RowNumber).First().ManualDescription,
-                        EnglishName = (string?)null
-                    })
-                }, cancellationToken);
+                        Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
+                        CustomerId = order.CustomerId, OrderId = order.Id, Channel = "Telegram",
+                        EventType = "InvoiceManualReviewPerfumePhoto", Recipient = "manual-review",
+                        Payload = System.Text.Json.JsonSerializer.Serialize(new { FileId = photoFileId.Trim() })
+                    }, cancellationToken);
+                }
             }
         }
         if (!hasDeliveryGroup)
