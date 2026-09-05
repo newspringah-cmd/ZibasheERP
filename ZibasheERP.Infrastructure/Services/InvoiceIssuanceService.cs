@@ -408,10 +408,22 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     {
         var telegramId = request.TelegramUserId.Trim();
         var username = request.TelegramUsername?.Trim().TrimStart('@');
-        var usernameWithAt = string.IsNullOrWhiteSpace(username) ? null : $"@{username}";
-        var customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-            (value.TelegramId == telegramId || (!string.IsNullOrWhiteSpace(username) &&
-                                                 (value.Username == username || value.Username == usernameWithAt))), cancellationToken);
+        var normalizedUsername = NormalizeCustomerUsername(username);
+
+        // A batch can contain legacy requests for the same username with different
+        // TelegramUserId values. Include newly tracked customers in the lookup so a
+        // second group in the same SaveChanges does not create a duplicate username.
+        var customer = _db.Customers.Local.FirstOrDefault(value => !value.IsDeleted &&
+            (value.TelegramId == telegramId ||
+             (!string.IsNullOrWhiteSpace(normalizedUsername) &&
+              NormalizeCustomerUsername(value.Username) == normalizedUsername)));
+        if (customer is not null) return customer;
+
+        var usernameWithAt = string.IsNullOrWhiteSpace(normalizedUsername) ? null : $"@{normalizedUsername}";
+        customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
+            (value.TelegramId == telegramId || (!string.IsNullOrWhiteSpace(normalizedUsername) &&
+                                                 (value.Username!.ToLower() == normalizedUsername ||
+                                                  value.Username.ToLower() == usernameWithAt))), cancellationToken);
         if (customer is not null) return customer;
 
         customer = new Customer
@@ -451,7 +463,18 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         throw new InvalidOperationException("تولید شماره سفارش یکتا ناموفق بود.");
     }
 
-    private static string CustomerKey(SalesListRequest request) => request.TelegramUserId.Trim();
+    private static string CustomerKey(SalesListRequest request)
+    {
+        var username = NormalizeCustomerUsername(request.TelegramUsername);
+        return !string.IsNullOrWhiteSpace(username)
+            ? $"username:{username}"
+            : $"telegram:{request.TelegramUserId.Trim()}";
+    }
+
+    private static string? NormalizeCustomerUsername(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.Trim().TrimStart('@').ToLowerInvariant();
 
     private static SalesListProductionCopy CreateProductionCopy(SalesList list)
     {
