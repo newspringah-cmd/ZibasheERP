@@ -22,7 +22,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             .Include(value => value.Bottle)
             .Where(value => value.SalesListId == salesListId && !value.IsDeleted &&
                 value.Status == SalesListRequestStatus.Confirmed)
-            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt)
+            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
             .ToArrayAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<SalesListRequest>> GetForLabelAdministrationAsync(

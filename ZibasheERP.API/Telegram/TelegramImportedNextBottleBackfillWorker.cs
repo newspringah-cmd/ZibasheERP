@@ -32,14 +32,18 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
     {
         try
         {
-            var added = await BackfillAsync(stoppingToken);
-            if (added == 0) return;
+            var result = await BackfillAsync(stoppingToken);
+            if (result.Added == 0 && result.Reordered == 0) return;
 
-            _logger.LogInformation("Restored {Count} imported Next Bottle requests.", added);
+            _logger.LogInformation(
+                "Restored {Added} and reordered {Reordered} imported Next Bottle requests.",
+                result.Added, result.Reordered);
             if (long.TryParse(_options.AdminChatId, out var adminChatId))
             {
-                await _sender.SendAsync(_options.AdminChatId,
-                    $"✅ {added} مورد صف Next Bottle جاافتاده از انتقال‌های قبلی بازیابی شد.", stoppingToken);
+                var message = result.Added > 0
+                    ? $"✅ {result.Added} مورد صف Next Bottle جاافتاده بازیابی و {result.Reordered} مورد با ترتیب اصلی اصلاح شد."
+                    : $"✅ ترتیب {result.Reordered} مورد صف Next Bottle مطابق متن اصلی انتقال اصلاح شد.";
+                await _sender.SendAsync(_options.AdminChatId, message, stoppingToken);
                 _rebuildWorker.TryQueue(adminChatId);
             }
         }
@@ -52,7 +56,7 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
         }
     }
 
-    private async Task<int> BackfillAsync(CancellationToken cancellationToken)
+    private async Task<(int Added, int Reordered)> BackfillAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -69,18 +73,19 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                 SalesListId = value.SalesListId!.Value
             })
             .ToArrayAsync(cancellationToken);
-        if (imports.Length == 0) return 0;
+        if (imports.Length == 0) return (0, 0);
 
         var listIds = imports.Select(value => value.SalesListId).Distinct().ToArray();
         var prices = await db.SalesLists.AsNoTracking()
             .Where(value => listIds.Contains(value.Id))
             .ToDictionaryAsync(value => value.Id, value => value.PricePerMl, cancellationToken);
-        var existingReferences = await db.SalesListRequests.AsNoTracking()
+        var existingRequests = await db.SalesListRequests
             .Where(value => listIds.Contains(value.SalesListId))
-            .Select(value => value.ExternalReference)
-            .ToHashSetAsync(cancellationToken);
+            .Where(value => value.ExternalReference != null)
+            .ToDictionaryAsync(value => value.ExternalReference!, cancellationToken);
 
         var added = 0;
+        var reordered = 0;
         foreach (var import in imports)
         {
             if (!prices.TryGetValue(import.SalesListId, out var price)) continue;
@@ -98,7 +103,19 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                     continue;
                 var externalReference =
                     $"telegram-import:{import.SourceChannelId}:{import.SourceMessageId}:{requestIndex}";
-                if (!existingReferences.Add(externalReference)) continue;
+                var importedAt = import.SourceDate.UtcDateTime.AddTicks(requestIndex);
+                if (existingRequests.TryGetValue(externalReference, out var existing))
+                {
+                    if (existing.Kind == SalesListRequestKind.NextBottle &&
+                        (existing.CreatedAt != importedAt || existing.ConfirmedAt != importedAt))
+                    {
+                        existing.CreatedAt = importedAt;
+                        existing.ConfirmedAt = importedAt;
+                        existing.UpdatedAt = DateTime.UtcNow;
+                        reordered++;
+                    }
+                    continue;
+                }
                 var username = request.TelegramUsername.Trim().TrimStart('@');
                 var giftRecipient = string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
                     ? null
@@ -106,7 +123,7 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                 db.SalesListRequests.Add(new SalesListRequest
                 {
                     Id = Guid.NewGuid(),
-                    CreatedAt = import.SourceDate.UtcDateTime,
+                    CreatedAt = importedAt,
                     SalesListId = import.SalesListId,
                     TelegramUsername = username,
                     TelegramUserId = request.IsExternalIdentity
@@ -124,7 +141,7 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                     Kind = SalesListRequestKind.NextBottle,
                     Status = SalesListRequestStatus.Confirmed,
                     CreatedByAdmin = true,
-                    ConfirmedAt = import.SourceDate.UtcDateTime,
+                    ConfirmedAt = importedAt,
                     ExpiresAt = DateTime.MaxValue,
                     PerfumePricePerMl = price,
                     ExternalReference = externalReference
@@ -133,9 +150,9 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
             }
         }
 
-        if (added > 0)
+        if (added > 0 || reordered > 0)
             await db.SaveChangesAsync(cancellationToken);
-        return added;
+        return (added, reordered);
     }
 
     private sealed record ImportedRequest(

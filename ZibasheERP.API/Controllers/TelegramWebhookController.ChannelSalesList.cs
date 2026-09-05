@@ -539,7 +539,7 @@ public sealed partial class TelegramWebhookController
         }
 
         var queue = requests.Where(x => x.Kind == SalesListRequestKind.NextBottle)
-            .OrderBy(x => x.ConfirmedAt).ThenBy(x => x.CreatedAt).ToArray();
+            .OrderBy(x => x.ConfirmedAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id).ToArray();
         if (queue.Length == 0 || string.IsNullOrWhiteSpace(completed.TelegramPhotoFileId))
             return;
 
@@ -639,7 +639,9 @@ public sealed partial class TelegramWebhookController
             .OrderByDescending(value => value.Key)
             .Select(value => (Volume: value.Key, Users: value.Select(item => Html(DisplayUser(item))).ToArray()))
             .ToArray();
-        var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle).ToArray();
+        var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle)
+            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
+            .ToArray();
         var gender = list.Gender switch
         {
             PerfumeGender.Women => "#women 👩",

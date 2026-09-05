@@ -877,7 +877,8 @@ public sealed partial class TelegramWebhookController
                 }
                 _db.SalesListRequests.Add(new SalesListRequest
                 {
-                    Id = Guid.NewGuid(), CreatedAt = item.SourceDate.UtcDateTime,
+                    // Keep the original message order when several imported requests share one source timestamp.
+                    Id = Guid.NewGuid(), CreatedAt = item.SourceDate.UtcDateTime.AddTicks(requestIndex),
                     SalesListId = created.Id, TelegramUsername = normalizedUsername,
                     TelegramUserId = request.IsExternalIdentity
                         ? $"imported-external:{normalizedUsername.ToLowerInvariant()}"
@@ -893,7 +894,7 @@ public sealed partial class TelegramWebhookController
                     BottleId = bottle?.Id,
                     BottlePrice = bottle?.SalePrice ?? 0,
                     Kind = request.Kind, Status = SalesListRequestStatus.Confirmed,
-                    CreatedByAdmin = true, ConfirmedAt = item.SourceDate.UtcDateTime,
+                    CreatedByAdmin = true, ConfirmedAt = item.SourceDate.UtcDateTime.AddTicks(requestIndex),
                     ExpiresAt = DateTime.UtcNow.AddYears(10), PerfumePricePerMl = price,
                     ExternalReference = $"telegram-import:{item.SourceChannelId}:{item.SourceMessageId}:{requestIndex}"
                 });
