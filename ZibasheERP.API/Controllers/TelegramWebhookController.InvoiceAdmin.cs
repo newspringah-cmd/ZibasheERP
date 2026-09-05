@@ -1049,14 +1049,15 @@ public sealed partial class TelegramWebhookController
             }
             if (result.InvoiceIssuanceBatchId.HasValue)
             {
-                var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(
+                var reports = await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(
                     result.InvoiceIssuanceBatchId.Value, ct);
-                if (report is not null && !string.IsNullOrWhiteSpace(report.TelegramChatId) &&
-                    report.TelegramMessageId.HasValue)
+                foreach (var report in reports.Where(report =>
+                             !string.IsNullOrWhiteSpace(report.TelegramChatId) &&
+                             report.TelegramMessageId.HasValue))
                 {
                     var refresh = await _sender.EditTextWithKeyboardAsync(
-                        report.TelegramChatId,
-                        report.TelegramMessageId.Value,
+                        report.TelegramChatId!,
+                        report.TelegramMessageId!.Value,
                         report.Message,
                         BuildPaymentTrackingButtons(report),
                         ct);
@@ -1241,14 +1242,18 @@ public sealed partial class TelegramWebhookController
     private async Task RefreshPaymentTrackingReportAsync(
         Guid batchId, long fallbackChatId, CancellationToken ct)
     {
-        var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(batchId, ct);
-        if (report is null || string.IsNullOrWhiteSpace(report.TelegramChatId) ||
-            !report.TelegramMessageId.HasValue) return;
-        var refresh = await _sender.EditTextWithKeyboardAsync(
-            report.TelegramChatId, report.TelegramMessageId.Value,
-            report.Message, BuildPaymentTrackingButtons(report), ct);
-        if (!refresh.IsSuccessful)
-            await ReplyAsync(fallbackChatId, $"⚠️ گزارش واریز بروزرسانی نشد: {refresh.Error}", ct);
+        var reports = await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(batchId, ct);
+        foreach (var report in reports.Where(report =>
+                     !string.IsNullOrWhiteSpace(report.TelegramChatId) &&
+                     report.TelegramMessageId.HasValue))
+        {
+            var refresh = await _sender.EditTextWithKeyboardAsync(
+                report.TelegramChatId!, report.TelegramMessageId!.Value,
+                report.Message, BuildPaymentTrackingButtons(report), ct);
+            if (!refresh.IsSuccessful)
+                await ReplyAsync(fallbackChatId,
+                    $"⚠️ گزارش واریز لیست مربوطه بروزرسانی نشد: {refresh.Error}", ct);
+        }
     }
 
     private async Task SendInvoiceAdminMenuAsync(long chatId, string? notice, CancellationToken ct)
@@ -1613,17 +1618,26 @@ public sealed partial class TelegramWebhookController
     {
         if (string.IsNullOrWhiteSpace(_options.NewPaymentsChatId))
             return "⚠️ گروه واریز جدید تنظیم نشده است.";
-        var report = await _invoiceIssuanceService.GetPaymentTrackingReportAsync(batchId, ct);
-        if (report is null)
+        var reports = await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(batchId, ct);
+        if (reports.Count == 0)
             return "⚠️ گزارش واریز ساخته نشد.";
-        var sent = await _sender.SendInlineKeyboardAsync(
-            _options.NewPaymentsChatId.Trim(), report.Message,
-            BuildPaymentTrackingButtons(report), ct);
-        if (!sent.IsSuccessful || !sent.MessageId.HasValue)
-            return $"⚠️ ارسال گزارش واریز ناموفق بود: {sent.Error}";
-        await _invoiceIssuanceService.SetPaymentTrackingMessageAsync(
-            batchId, _options.NewPaymentsChatId.Trim(), sent.MessageId.Value, ct);
-        return "گزارش وضعیت به گروه واریز جدید ارسال شد ✅";
+        var failures = new List<string>();
+        foreach (var report in reports)
+        {
+            var sent = await _sender.SendInlineKeyboardAsync(
+                _options.NewPaymentsChatId.Trim(), report.Message,
+                BuildPaymentTrackingButtons(report), ct);
+            if (!sent.IsSuccessful || !sent.MessageId.HasValue)
+            {
+                failures.Add(sent.Error ?? "خطای نامشخص");
+                continue;
+            }
+            await _invoiceIssuanceService.SetPaymentTrackingMessageAsync(
+                batchId, report.SalesListId, _options.NewPaymentsChatId.Trim(), sent.MessageId.Value, ct);
+        }
+        return failures.Count == 0
+            ? $"گزارش وضعیت {reports.Count} عطر جداگانه به گروه واریز جدید ارسال شد ✅"
+            : $"⚠️ ارسال {failures.Count} گزارش واریز ناموفق بود: {string.Join("؛ ", failures)}";
     }
 
     private async Task SendProductionCopiesToChatAsync(

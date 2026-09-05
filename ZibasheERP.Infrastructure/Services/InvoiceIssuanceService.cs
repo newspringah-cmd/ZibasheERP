@@ -337,7 +337,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         return new InvoiceIssuanceResult(Guid.Empty, 1, new[] { invoice.InvoiceNumber }, Array.Empty<SalesListProductionCopy>());
     }
 
-    public async Task<InvoicePaymentTrackingReport?> GetPaymentTrackingReportAsync(
+    public async Task<IReadOnlyCollection<InvoicePaymentTrackingReport>> GetPaymentTrackingReportsAsync(
         Guid batchId,
         CancellationToken cancellationToken = default)
     {
@@ -346,7 +346,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 .ThenInclude(value => value.SalesList)
             .FirstOrDefaultAsync(value => value.Id == batchId && !value.IsDeleted, cancellationToken);
         if (batch is null)
-            return null;
+            return Array.Empty<InvoicePaymentTrackingReport>();
 
         var orders = await _db.Orders.AsNoTracking()
             .Include(value => value.Customer)
@@ -359,48 +359,63 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var invoices = await _db.Invoices.AsNoTracking()
             .Where(value => orderIds.Contains(value.OrderId) && !value.IsDeleted)
             .ToDictionaryAsync(value => value.OrderId, cancellationToken);
-        var listCodes = batch.SalesLists.Select(value => value.SalesList.PublicCode)
-            .OrderBy(value => value).ToArray();
-        var rows = orders.Select((order, index) =>
-        {
-            invoices.TryGetValue(order.Id, out var invoice);
-            var identity = !string.IsNullOrWhiteSpace(order.Customer?.Username)
-                ? $"@{order.Customer.Username.TrimStart('@')}"
-                : order.Customer?.TelegramId ?? order.Customer?.FullName ?? "مشتری نامشخص";
-            var paid = invoice?.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid &&
-                       order.Status == OrderStatus.Paid;
-            return $"{(paid ? "✅" : "🔴")} {index + 1}. {identity} — " +
-                   $"{invoice?.InvoiceNumber ?? "بدون فاکتور"} — {order.FinalAmount:N0} تومان";
-        });
-        var message = $"💳 واریز جدید\nلیست‌ها: {string.Join("، ", listCodes)}\n" +
-                      $"تعداد فاکتور: {orders.Length}\n\n{string.Join("\n", rows)}\n\n" +
-                      $"✅ پرداخت‌شده   🔴 در انتظار پرداخت\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
-        var actions = orders.Where(order =>
-                invoices.TryGetValue(order.Id, out var invoice) &&
-                invoice.Status != ZibasheERP.Domain.Enums.InvoiceStatus.Paid &&
-                order.Status != OrderStatus.Paid)
-            .SelectMany(order => order.Items.Select(item => new InvoicePaymentTrackingAction(
-                item.Id,
-                $"📤 {(order.Customer?.Username ?? order.Customer?.TelegramId ?? "مشتری").TrimStart('@')} | " +
-                $"{item.SalesList?.EnglishName ?? item.ManualDescription ?? "آیتم"} | {item.RequestedVolumeMl}ml")))
+        return batch.SalesLists
+            .OrderBy(link => link.SalesList.PublicCode)
+            .Select(link =>
+            {
+                var listOrders = orders
+                    .Where(order => order.Items.Any(item => item.SalesListId == link.SalesListId))
+                    .ToArray();
+                var rows = listOrders.Select((order, index) =>
+                {
+                    invoices.TryGetValue(order.Id, out var invoice);
+                    var identity = !string.IsNullOrWhiteSpace(order.Customer?.Username)
+                        ? $"@{order.Customer.Username.TrimStart('@')}"
+                        : order.Customer?.TelegramId ?? order.Customer?.FullName ?? "مشتری نامشخص";
+                    var paid = invoice?.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid &&
+                               order.Status == OrderStatus.Paid;
+                    var listAmount = order.Items
+                        .Where(item => item.SalesListId == link.SalesListId)
+                        .Sum(item => item.LineTotal);
+                    return $"{(paid ? "✅" : "🔴")} {index + 1}. {identity} — " +
+                           $"{invoice?.InvoiceNumber ?? "بدون فاکتور"} — {listAmount:N0} تومان";
+                });
+                var message = $"💳 واریز جدید\n" +
+                              $"عطر: {link.SalesList.EnglishName}\n" +
+                              $"کد لیست: {link.SalesList.PublicCode}\n" +
+                              $"تعداد فاکتور: {listOrders.Length}\n\n{string.Join("\n", rows)}\n\n" +
+                              $"✅ پرداخت‌شده   🔴 در انتظار پرداخت\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
+                var actions = listOrders.Where(order =>
+                        invoices.TryGetValue(order.Id, out var invoice) &&
+                        invoice.Status != ZibasheERP.Domain.Enums.InvoiceStatus.Paid &&
+                        order.Status != OrderStatus.Paid)
+                    .SelectMany(order => order.Items
+                        .Where(item => item.SalesListId == link.SalesListId)
+                        .Select(item => new InvoicePaymentTrackingAction(
+                            item.Id,
+                            $"📤 {(order.Customer?.Username ?? order.Customer?.TelegramId ?? "مشتری").TrimStart('@')} | " +
+                            $"{item.SalesList?.EnglishName ?? item.ManualDescription ?? "آیتم"} | {item.RequestedVolumeMl}ml")))
+                    .ToArray();
+                return new InvoicePaymentTrackingReport(
+                    batch.Id, link.SalesListId, message,
+                    link.TelegramPaymentTrackingChatId,
+                    link.TelegramPaymentTrackingMessageId, actions);
+            })
             .ToArray();
-        return new InvoicePaymentTrackingReport(
-            batch.Id, message, batch.TelegramPaymentTrackingChatId,
-            batch.TelegramPaymentTrackingMessageId, actions);
     }
 
     public async Task SetPaymentTrackingMessageAsync(
         Guid batchId,
+        Guid salesListId,
         string chatId,
         long messageId,
         CancellationToken cancellationToken = default)
     {
-        var batch = await _db.InvoiceIssuanceBatches.FirstOrDefaultAsync(
-            value => value.Id == batchId && !value.IsDeleted,
+        var link = await _db.InvoiceIssuanceBatchSalesLists.FirstOrDefaultAsync(
+            value => value.InvoiceIssuanceBatchId == batchId && value.SalesListId == salesListId,
             cancellationToken) ?? throw new InvalidOperationException("نوبت صدور فاکتور پیدا نشد.");
-        batch.TelegramPaymentTrackingChatId = chatId.Trim();
-        batch.TelegramPaymentTrackingMessageId = messageId;
-        batch.UpdatedAt = DateTime.UtcNow;
+        link.TelegramPaymentTrackingChatId = chatId.Trim();
+        link.TelegramPaymentTrackingMessageId = messageId;
         await _db.SaveChangesAsync(cancellationToken);
     }
 

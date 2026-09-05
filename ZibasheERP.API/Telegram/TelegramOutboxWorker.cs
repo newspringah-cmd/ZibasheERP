@@ -232,18 +232,10 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 : null;
             if (string.IsNullOrWhiteSpace(fileId))
                 return new TelegramSendResult(true);
-            var persianName = root.TryGetProperty("PersianName", out var persianValue)
-                ? persianValue.GetString()
-                : null;
-            var englishName = root.TryGetProperty("EnglishName", out var englishValue)
-                ? englishValue.GetString()
-                : null;
-            var title = string.Join(" — ", new[] { englishName, persianName }
-                .Where(value => !string.IsNullOrWhiteSpace(value)));
             return await _sender.SendPhotoAsync(
                 recipient,
                 fileId,
-                string.IsNullOrWhiteSpace(title) ? "عطر فاکتور" : title,
+                string.Empty,
                 cancellationToken);
         }
 

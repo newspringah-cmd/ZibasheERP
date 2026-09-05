@@ -28,6 +28,7 @@ public sealed record SalesListProductionCopy(
 
 public sealed record InvoicePaymentTrackingReport(
     Guid BatchId,
+    Guid SalesListId,
     string Message,
     string? TelegramChatId,
     long? TelegramMessageId,
@@ -69,12 +70,13 @@ public interface IInvoiceIssuanceService
         string issuedByTelegramUserId,
         CancellationToken cancellationToken = default);
 
-    Task<InvoicePaymentTrackingReport?> GetPaymentTrackingReportAsync(
+    Task<IReadOnlyCollection<InvoicePaymentTrackingReport>> GetPaymentTrackingReportsAsync(
         Guid batchId,
         CancellationToken cancellationToken = default);
 
     Task SetPaymentTrackingMessageAsync(
         Guid batchId,
+        Guid salesListId,
         string chatId,
         long messageId,
         CancellationToken cancellationToken = default);
