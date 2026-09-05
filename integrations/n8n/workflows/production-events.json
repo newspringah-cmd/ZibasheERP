@@ -139,8 +139,15 @@
       "parameters": {
         "method": "POST",
         "url": "https://erp.zibashe.ir/api/integrations/n8n/telegram-invoices",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $env.N8N_ZIBASHE_API_KEY }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "multipart-form-data",
         "bodyParameters": {
@@ -214,8 +221,15 @@
       "parameters": {
         "method": "POST",
         "url": "https://erp.zibashe.ir/api/integrations/n8n/order-artifacts",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $env.N8N_ZIBASHE_API_KEY }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
