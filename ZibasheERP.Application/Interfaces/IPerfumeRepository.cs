@@ -12,6 +12,9 @@ public interface IPerfumeRepository
         bool includeInactive,
         int limit,
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<Perfume>> GetAllActiveForPriceUpdateAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<Perfume>>(Array.Empty<Perfume>());
     Task<bool> ExistsAsync(
         string brand,
         string englishName,

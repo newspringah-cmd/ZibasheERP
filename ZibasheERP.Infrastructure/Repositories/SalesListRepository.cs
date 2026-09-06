@@ -61,6 +61,20 @@ public class SalesListRepository : ISalesListRepository
             .ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<SalesList>> GetAllOpenForPriceUpdateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.SalesLists
+            .Where(salesList => !salesList.IsDeleted && salesList.Status == SalesListStatus.Open)
+            .OrderBy(salesList => salesList.OpenDate)
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public Task<int> CountAllOpenAsync(CancellationToken cancellationToken = default) =>
+        _dbContext.SalesLists.CountAsync(
+            salesList => !salesList.IsDeleted && salesList.Status == SalesListStatus.Open,
+            cancellationToken);
+
     public async Task<IReadOnlyCollection<SalesList>> SearchForAdminAsync(
         string query,
         int? publicCode,

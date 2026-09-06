@@ -14,6 +14,13 @@ public interface ISalesListRepository
         int limit,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<SalesList>> GetAllOpenForPriceUpdateAsync(
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<SalesList>>(Array.Empty<SalesList>());
+
+    Task<int> CountAllOpenAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(0);
+
     Task<IReadOnlyCollection<SalesList>> SearchForAdminAsync(
         string query,
         int? publicCode,

@@ -28,6 +28,16 @@ public sealed class PerfumeRepository : IPerfumeRepository
             .ToArrayAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<Perfume>> GetAllActiveForPriceUpdateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Perfumes
+            .Where(perfume => !perfume.IsDeleted && perfume.IsActive)
+            .OrderBy(perfume => perfume.Brand)
+            .ThenBy(perfume => perfume.EnglishName)
+            .ToArrayAsync(cancellationToken);
+    }
+
     public Task<Perfume?> GetByIdAsync(
         Guid id,
         CancellationToken cancellationToken = default) =>
