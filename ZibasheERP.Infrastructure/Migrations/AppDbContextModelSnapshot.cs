@@ -417,6 +417,13 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<long?>("TelegramInvoiceMessageId")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("TelegramPaymentTrackingChatId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<long?>("TelegramPaymentTrackingMessageId")
+                        .HasColumnType("bigint");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 

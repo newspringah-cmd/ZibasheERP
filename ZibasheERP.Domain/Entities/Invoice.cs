@@ -42,4 +42,8 @@ public class Invoice : BaseEntity
     // محل و شناسه پیام PDF برای ویرایش کپشن همان پیام توسط حسابداری.
     public string? TelegramInvoiceChatId { get; set; }
     public long? TelegramInvoiceMessageId { get; set; }
+
+    // گزارش وضعیت پرداخت فاکتور دستی در گروه واریز جدید.
+    public string? TelegramPaymentTrackingChatId { get; set; }
+    public long? TelegramPaymentTrackingMessageId { get; set; }
 }

@@ -1117,6 +1117,7 @@ public sealed partial class TelegramWebhookController
                             $"⚠️ وضعیت مالی ثبت شد اما گزارش گروه واریز بروزرسانی نشد: {refresh.Error}", ct);
                 }
             }
+            await RefreshManualPaymentTrackingReportAsync(result.InvoiceId, callback.Message.Chat.Id, ct);
         }
         catch (InvalidOperationException exception)
         {
@@ -1718,8 +1719,11 @@ public sealed partial class TelegramWebhookController
                     manualDraft.ProductPhotoFileIds, userId.ToString(),
                     manualDraft.IsGift ? manualDraft.GiftRecipientIdentity : null, ct);
                 _manualInvoiceDrafts.Remove(chatId, userId);
+                var paymentTrackingStatus = await SendManualPaymentTrackingReportAsync(
+                    result.InvoiceNumbers.Single(), ct);
                 await ReplyAsync(chatId,
                     $"✅ فاکتور دستی {result.InvoiceNumbers.Single()} صادر شد.\n" +
+                    paymentTrackingStatus + "\n" +
                     "ارسال خودکار انجام می‌شود؛ در صورت نبود گروه مشتری یا خطای دائمی، مورد به گروه خطاهای فاکتور می‌رود.", ct);
             }
             catch (InvalidOperationException exception)
@@ -1869,6 +1873,113 @@ public sealed partial class TelegramWebhookController
             ? $"گزارش وضعیت {reports.Count} عطر جداگانه به گروه واریز جدید ارسال شد ✅"
             : $"⚠️ ارسال {failures.Count} گزارش واریز ناموفق بود: {string.Join("؛ ", failures)}";
     }
+
+    private async Task<string> SendManualPaymentTrackingReportAsync(
+        string invoiceNumber,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.NewPaymentsChatId))
+            return "⚠️ گروه واریز جدید تنظیم نشده است.";
+
+        var invoice = await LoadManualInvoiceForPaymentTrackingAsync(invoiceNumber, ct);
+        if (invoice is null)
+            return "⚠️ گزارش واریز فاکتور دستی ساخته نشد.";
+
+        var sent = await _sender.SendInlineKeyboardAsync(
+            _options.NewPaymentsChatId.Trim(),
+            FormatManualPaymentTrackingMessage(invoice),
+            BuildManualPaymentTrackingButtons(invoice),
+            ct);
+        if (!sent.IsSuccessful || !sent.MessageId.HasValue)
+            return $"⚠️ ارسال گزارش واریز فاکتور دستی ناموفق بود: {sent.Error ?? "خطای نامشخص"}";
+
+        invoice.TelegramPaymentTrackingChatId = _options.NewPaymentsChatId.Trim();
+        invoice.TelegramPaymentTrackingMessageId = sent.MessageId.Value;
+        invoice.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return "گزارش وضعیت فاکتور دستی به گروه واریز جدید ارسال شد ✅";
+    }
+
+    private async Task RefreshManualPaymentTrackingReportAsync(
+        Guid invoiceId,
+        long sourceChatId,
+        CancellationToken ct)
+    {
+        var invoice = await LoadManualInvoiceForPaymentTrackingAsync(invoiceId, ct);
+        if (invoice is null ||
+            string.IsNullOrWhiteSpace(invoice.TelegramPaymentTrackingChatId) ||
+            !invoice.TelegramPaymentTrackingMessageId.HasValue)
+            return;
+
+        var refreshed = await _sender.EditTextWithKeyboardAsync(
+            invoice.TelegramPaymentTrackingChatId,
+            invoice.TelegramPaymentTrackingMessageId.Value,
+            FormatManualPaymentTrackingMessage(invoice),
+            BuildManualPaymentTrackingButtons(invoice),
+            ct);
+        if (!refreshed.IsSuccessful)
+            await ReplyAsync(sourceChatId,
+                $"⚠️ وضعیت مالی ثبت شد اما گزارش فاکتور دستی بروزرسانی نشد: {refreshed.Error}", ct);
+    }
+
+    private Task<Invoice?> LoadManualInvoiceForPaymentTrackingAsync(
+        string invoiceNumber,
+        CancellationToken ct) => _db.Invoices
+        .Include(value => value.Order)
+            .ThenInclude(value => value!.Customer)
+        .Include(value => value.Order)
+            .ThenInclude(value => value!.Items)
+        .FirstOrDefaultAsync(value => value.InvoiceNumber == invoiceNumber && !value.IsDeleted &&
+            value.Order != null && value.Order.Source == OrderSource.ManualInvoice, ct);
+
+    private Task<Invoice?> LoadManualInvoiceForPaymentTrackingAsync(
+        Guid invoiceId,
+        CancellationToken ct) => _db.Invoices
+        .Include(value => value.Order)
+            .ThenInclude(value => value!.Customer)
+        .Include(value => value.Order)
+            .ThenInclude(value => value!.Items)
+        .FirstOrDefaultAsync(value => value.Id == invoiceId && !value.IsDeleted &&
+            value.Order != null && value.Order.Source == OrderSource.ManualInvoice, ct);
+
+    private static string FormatManualPaymentTrackingMessage(Invoice invoice)
+    {
+        var order = invoice.Order!;
+        var customer = order.Customer;
+        var identity = !string.IsNullOrWhiteSpace(customer?.Username)
+            ? $"@{customer.Username.TrimStart('@')}"
+            : customer?.TelegramId ?? customer?.FullName ?? "مشتری نامشخص";
+        var status = invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
+                     order.Status == OrderStatus.Paid
+            ? "✅ پرداخت‌شده"
+            : "🔴 در انتظار پرداخت";
+        var items = order.Items.Where(item => !item.IsDeleted)
+            .Select(item => $"• {item.ManualDescription ?? "آیتم دستی"} — {item.RequestedVolumeMl} میل")
+            .ToArray();
+        return $"💳 واریز جدید — فاکتور دستی\n" +
+               $"مشتری: {identity}\n" +
+               $"فاکتور: {invoice.InvoiceNumber}\n" +
+               $"مبلغ: {invoice.TotalAmount:N0} تومان\n" +
+               $"وضعیت: {status}\n\n" +
+               string.Join("\n", items) +
+               $"\n\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
+    }
+
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildManualPaymentTrackingButtons(
+        Invoice invoice) => invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
+                            invoice.Order?.Status == OrderStatus.Paid
+        ? new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[] { new TelegramInlineButton("✅ پرداخت‌شده", $"invoicepay:paid:{invoice.Id:N}") }
+        }
+        : new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[]
+            {
+                new TelegramInlineButton("✅ پرداخت‌شده", $"invoicepay:paid:{invoice.Id:N}"),
+                new TelegramInlineButton("⏳ در انتظار پرداخت", $"invoicepay:waiting:{invoice.Id:N}")
+            }
+        };
 
     private async Task SendProductionCopiesToChatAsync(
         string destinationChatId,

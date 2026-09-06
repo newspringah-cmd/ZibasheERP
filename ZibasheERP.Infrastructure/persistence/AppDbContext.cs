@@ -493,6 +493,10 @@ public class AppDbContext : DbContext
             .Property(x => x.TelegramInvoiceChatId)
             .HasMaxLength(100);
 
+        modelBuilder.Entity<Invoice>()
+            .Property(x => x.TelegramPaymentTrackingChatId)
+            .HasMaxLength(100);
+
     }
 
     private static void ConfigureInvoiceIssuanceBatch(ModelBuilder modelBuilder)
