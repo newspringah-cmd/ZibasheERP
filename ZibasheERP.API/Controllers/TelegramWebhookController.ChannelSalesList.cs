@@ -525,8 +525,8 @@ public sealed partial class TelegramWebhookController
         completed.Status = SalesListStatus.Closed;
         completed.ClosedDate = DateTime.UtcNow;
         completed.UpdatedAt = DateTime.UtcNow;
-        await _salesListRepository.UpdateAsync(completed, ct);
-        await _salesListRepository.SaveChangesAsync(ct);
+        var retainedChannelId = completed.TelegramChannelId;
+        var retainedMessageId = completed.TelegramMessageId;
 
         if (!string.IsNullOrWhiteSpace(completed.TelegramChannelId))
         {
@@ -534,19 +534,24 @@ public sealed partial class TelegramWebhookController
                 await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramDiscussionMessageId.Value, ct);
             if (completed.TelegramContinuationMessageId.HasValue)
                 await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramContinuationMessageId.Value, ct);
-            if (completed.TelegramMessageId.HasValue)
-                await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramMessageId.Value, ct);
         }
+        // The channel post is deliberately retained. Its ownership is transferred to the
+        // next cycle below so its public Telegram URL never changes.
+        completed.TelegramChannelId = null;
+        completed.TelegramMessageId = null;
+        completed.TelegramDiscussionMessageId = null;
+        completed.TelegramContinuationMessageId = null;
+        await _salesListRepository.UpdateAsync(completed, ct);
+        await _salesListRepository.SaveChangesAsync(ct);
 
         var queue = requests.Where(x => x.Kind == SalesListRequestKind.NextBottle)
             .OrderBy(x => x.ConfirmedAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id).ToArray();
-        if (queue.Length == 0 || string.IsNullOrWhiteSpace(completed.TelegramPhotoFileId))
-            return;
 
         int publicCode;
         do publicCode = Random.Shared.Next(1000, 10000);
         while (await _salesListRepository.PublicCodeExistsAsync(publicCode, ct));
         var now = DateTime.UtcNow;
+        var nextOwner = queue.FirstOrDefault();
         var nextList = new SalesList
         {
             Id = Guid.NewGuid(), CreatedAt = now, PublicCode = publicCode,
@@ -557,10 +562,12 @@ public sealed partial class TelegramWebhookController
             PerfumeId = completed.PerfumeId, BatchId = null,
             PricePerMl = completed.PricePerMl, TotalVolume = completed.TotalVolume,
             MinimumRequestVolumeMl = completed.MinimumRequestVolumeMl,
-            ReservedVolume = Math.Min(queue[0].VolumeMl, completed.TotalVolume),
-            HasBottleOwner = true,
-            Status = queue[0].VolumeMl >= completed.TotalVolume ? SalesListStatus.Full : SalesListStatus.Open,
-            OpenDate = now, TelegramChannelId = _options.SalesChannelId,
+            ReservedVolume = nextOwner is null ? 0 : Math.Min(nextOwner.VolumeMl, completed.TotalVolume),
+            HasBottleOwner = nextOwner is not null,
+            Status = nextOwner is not null && nextOwner.VolumeMl >= completed.TotalVolume
+                ? SalesListStatus.Full : SalesListStatus.Open,
+            OpenDate = now, TelegramChannelId = retainedChannelId ?? _options.SalesChannelId,
+            TelegramMessageId = retainedMessageId,
             TelegramPhotoFileId = completed.TelegramPhotoFileId, Notes = completed.Notes
         };
         await _salesListRepository.AddAsync(nextList, ct);
@@ -583,25 +590,49 @@ public sealed partial class TelegramWebhookController
         }
         await _salesListRequestRepository.SaveChangesAsync(ct);
         var nextRequests = await _salesListRequestRepository.GetConfirmedAsync(nextList.Id, ct);
-        var post = await _sender.SendPhotoWithKeyboardAsync(_options.SalesChannelId,
-            nextList.TelegramPhotoFileId, FormatChannelSalesList(nextList, nextRequests),
-            BuildChannelVolumeButtons(nextList), ct);
-        if (!post.IsSuccessful)
+        var pages = FormatChannelSalesListPages(nextList, nextRequests);
+        TelegramSendResult post;
+        if (nextList.TelegramMessageId.HasValue)
         {
-            await ReplyAsync(long.Parse(_options.AdminChatId), $"ساخت لیست بعدی انجام شد اما انتشار ناموفق بود: {post.Error}", ct);
+            await SynchronizeContinuationPostAsync(nextList, pages.Continuation, ct);
+            post = !string.IsNullOrWhiteSpace(nextList.TelegramPhotoFileId)
+                ? await _sender.EditPhotoCaptionAsync(nextList.TelegramChannelId!, nextList.TelegramMessageId.Value,
+                    pages.Main, BuildChannelVolumeButtons(nextList), ct)
+                : await _sender.EditTextWithKeyboardAsync(nextList.TelegramChannelId!, nextList.TelegramMessageId.Value,
+                    pages.Main, BuildChannelVolumeButtons(nextList), ct);
+        }
+        else if (!string.IsNullOrWhiteSpace(nextList.TelegramPhotoFileId))
+        {
+            post = await _sender.SendPhotoWithKeyboardAsync(nextList.TelegramChannelId!, nextList.TelegramPhotoFileId,
+                pages.Main, BuildChannelVolumeButtons(nextList), ct);
+            if (post.IsSuccessful && post.MessageId.HasValue)
+                nextList.TelegramMessageId = post.MessageId;
+        }
+        else
+        {
+            post = await _sender.SendInlineKeyboardAsync(nextList.TelegramChannelId!, pages.Main,
+                BuildChannelVolumeButtons(nextList), ct);
+            if (post.IsSuccessful && post.MessageId.HasValue)
+                nextList.TelegramMessageId = post.MessageId;
+        }
+        if (!post.IsSuccessful || !nextList.TelegramMessageId.HasValue)
+        {
+            await ReplyAsync(long.Parse(_options.AdminChatId),
+                $"لیست جدید ساخته شد اما بازنشانی پست کانال ناموفق بود: {post.Error}", ct);
             return;
         }
-        nextList.TelegramMessageId = post.MessageId;
         var discussionText =
             $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\n" +
             "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.";
         var discussion = await _sender.SendReplyAsync(
-            _options.SalesChannelId, discussionText, post.MessageId!.Value, ct);
+            nextList.TelegramChannelId!, discussionText, nextList.TelegramMessageId.Value, ct);
         if (discussion.IsSuccessful) nextList.TelegramDiscussionMessageId = discussion.MessageId;
         await _salesListRepository.UpdateAsync(nextList, ct);
         await _salesListRepository.SaveChangesAsync(ct);
         await ReplyAsync(long.Parse(_options.AdminChatId),
-            $"لیست بعدی به‌صورت خودکار منتشر شد ✅\nکد جدید: {nextList.PublicCode}\nصاحب باتل: {DisplayUser(queue[0])} — {queue[0].VolumeMl} میل", ct);
+            $"پست عطر برای دورهٔ جدید بازنشانی شد ✅\nکد جدید: {nextList.PublicCode}" +
+            (nextOwner is null ? "\nصاحب باتل: هنوز ثبت نشده است."
+                : $"\nصاحب باتل: {DisplayUser(nextOwner)} — {nextOwner.VolumeMl} میل"), ct);
     }
 
     internal static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(
