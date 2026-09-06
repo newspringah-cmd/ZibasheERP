@@ -28,5 +28,8 @@ public interface ISalesListRequestRepository
         CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyCollection<SalesListRequest>>(Array.Empty<SalesListRequest>());
     Task<IReadOnlyCollection<Guid>> RemoveAllActiveCustomerRequestsAsync(string identity, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<Guid>> RemoveActiveRequestsAsync(
+        IReadOnlyCollection<Guid> requestIds,
+        CancellationToken cancellationToken = default);
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

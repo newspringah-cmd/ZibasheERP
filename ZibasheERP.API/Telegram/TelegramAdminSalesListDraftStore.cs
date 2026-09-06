@@ -170,6 +170,7 @@ public enum TelegramAdminRequestKind
     CleanupList,
     ManageBottleQueue,
     RemoveCustomerRequests,
+    RemoveMultipleCustomerRequests,
     RemoveSingleRequest,
     ChangeRequestVolume,
     OmitRequestIdentityOnLabel,
@@ -196,6 +197,8 @@ public sealed class TelegramAdminRequestDraft
     public string EditValue { get; set; } = string.Empty;
     public Guid SelectedRequestId { get; set; }
     public int OriginalVolumeMl { get; set; }
+    public HashSet<Guid> AvailableRequestIds { get; } = [];
+    public HashSet<Guid> SelectedRequestIds { get; } = [];
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
 

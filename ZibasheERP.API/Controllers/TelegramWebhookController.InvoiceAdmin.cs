@@ -1312,6 +1312,9 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("🗑 حذف یک آیتم", "adminrequest:start:removeitem")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("☑️ حذف چند آیتم مشتری", "adminrequest:start:removemultiple")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("🏷 حذف آیدی از لیبل آیتم", "adminrequest:start:labelnoid")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
@@ -2277,6 +2280,7 @@ public sealed partial class TelegramWebhookController
                 "gift" => TelegramAdminRequestKind.GiftRequest,
                 "changevolume" => TelegramAdminRequestKind.ChangeRequestVolume,
                 "removeitem" => TelegramAdminRequestKind.RemoveSingleRequest,
+                "removemultiple" => TelegramAdminRequestKind.RemoveMultipleCustomerRequests,
                 "labelnoid" => TelegramAdminRequestKind.OmitRequestIdentityOnLabel,
                 "labeltext" => TelegramAdminRequestKind.SetRequestLabelIdentityText,
                 "removeall" => TelegramAdminRequestKind.RemoveCustomerRequests,
@@ -2285,16 +2289,21 @@ public sealed partial class TelegramWebhookController
             _adminRequestDrafts.Set(new TelegramAdminRequestDraft
             {
                 ChatId = chatId, UserId = userId, Kind = kind,
-                Stage = kind == TelegramAdminRequestKind.RemoveCustomerRequests
+                Stage = kind is TelegramAdminRequestKind.RemoveCustomerRequests or
+                    TelegramAdminRequestKind.RemoveMultipleCustomerRequests
                     ? TelegramAdminRequestStage.AwaitingIdentity
                     : TelegramAdminRequestStage.AwaitingListSearch
             });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            if (kind == TelegramAdminRequestKind.RemoveCustomerRequests)
+            if (kind is TelegramAdminRequestKind.RemoveCustomerRequests or
+                TelegramAdminRequestKind.RemoveMultipleCustomerRequests)
             {
                 await ReplyAsync(chatId,
-                    "آیدی مشتری را به‌صورت @username یا Telegram ID وارد کنید.\n" +
-                    "همه آیتم‌های فعال او در تمام لیست‌های باز نمایش داده می‌شود تا پیش از حذف تأیید کنید.", ct);
+                    kind == TelegramAdminRequestKind.RemoveMultipleCustomerRequests
+                        ? "آیدی مشتری را به‌صورت @username یا Telegram ID وارد کنید.\n" +
+                          "تمام آیتم‌های فعال او، شامل لیست و صف باتل، برای تیک‌زدن نمایش داده می‌شود."
+                        : "آیدی مشتری را به‌صورت @username یا Telegram ID وارد کنید.\n" +
+                          "همه آیتم‌های فعال او در تمام لیست‌های باز نمایش داده می‌شود تا پیش از حذف تأیید کنید.", ct);
                 return;
             }
             await ReplyAsync(chatId,
@@ -2452,6 +2461,37 @@ public sealed partial class TelegramWebhookController
             {
                 await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
             }
+            return;
+        }
+
+        if (parts.Length == 3 && parts[1] == "multirem" &&
+            Guid.TryParseExact(parts[2], "N", out var multiRemovalRequestId))
+        {
+            if (!_adminRequestDrafts.TryGet(chatId, userId, out var multiRemovalDraft) ||
+                multiRemovalDraft.Kind != TelegramAdminRequestKind.RemoveMultipleCustomerRequests ||
+                multiRemovalDraft.Stage != TelegramAdminRequestStage.AwaitingConfirmation)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return;
+            }
+            if (!multiRemovalDraft.AvailableRequestIds.Contains(multiRemovalRequestId))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این آیتم در فهرست مشتری نیست.", ct, true);
+                return;
+            }
+
+            if (!multiRemovalDraft.SelectedRequestIds.Add(multiRemovalRequestId))
+                multiRemovalDraft.SelectedRequestIds.Remove(multiRemovalRequestId);
+            _adminRequestDrafts.Set(multiRemovalDraft);
+            await _sender.AnswerCallbackAsync(callback.Id,
+                multiRemovalDraft.SelectedRequestIds.Contains(multiRemovalRequestId) ? "انتخاب شد ☑️" : "از انتخاب خارج شد.", ct);
+            await UpdateMultipleRemovalSelectionAsync(callback.Message!, multiRemovalDraft, ct);
+            return;
+        }
+
+        if (callback.Data == "adminrequest:multiremconfirm")
+        {
+            await ConfirmAdminRequestAsync(callback, ct);
             return;
         }
 
@@ -2861,7 +2901,8 @@ public sealed partial class TelegramWebhookController
                     rows, ct);
                 return true;
             }
-            if (draft.Kind == TelegramAdminRequestKind.RemoveCustomerRequests)
+            if (draft.Kind is TelegramAdminRequestKind.RemoveCustomerRequests or
+                TelegramAdminRequestKind.RemoveMultipleCustomerRequests)
             {
                 var identity = input.Trim();
                 var removalUsername = NormalizeAdminRequestUsername(identity);
@@ -2883,7 +2924,19 @@ public sealed partial class TelegramWebhookController
                 }
                 draft.Identity = removalIdentity;
                 draft.Stage = TelegramAdminRequestStage.AwaitingConfirmation;
+                if (draft.Kind == TelegramAdminRequestKind.RemoveMultipleCustomerRequests)
+                {
+                    draft.AvailableRequestIds.Clear();
+                    foreach (var request in activeRequests)
+                        draft.AvailableRequestIds.Add(request.Id);
+                    draft.SelectedRequestIds.Clear();
+                }
                 _adminRequestDrafts.Set(draft);
+                if (draft.Kind == TelegramAdminRequestKind.RemoveMultipleCustomerRequests)
+                {
+                    await SendMultipleRemovalSelectionAsync(message.Chat.Id, draft, activeRequests, ct);
+                    return true;
+                }
                 await SendBulkCustomerRemovalConfirmationAsync(draft, activeRequests, ct);
                 return true;
             }
@@ -3129,6 +3182,69 @@ public sealed partial class TelegramWebhookController
             }, ct);
     }
 
+    private async Task SendMultipleRemovalSelectionAsync(
+        long chatId,
+        TelegramAdminRequestDraft draft,
+        IReadOnlyCollection<SalesListRequest> requests,
+        CancellationToken ct)
+    {
+        var message = BuildMultipleRemovalSelectionMessage(draft, requests);
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message,
+            BuildMultipleRemovalSelectionButtons(draft, requests), ct);
+    }
+
+    private async Task UpdateMultipleRemovalSelectionAsync(
+        TelegramMessage message,
+        TelegramAdminRequestDraft draft,
+        CancellationToken ct)
+    {
+        var requests = (await _salesListRequestRepository.GetActiveCustomerRequestsAsync(draft.Identity, ct))
+            .Where(value => draft.AvailableRequestIds.Contains(value.Id))
+            .ToArray();
+        if (requests.Length != draft.AvailableRequestIds.Count)
+        {
+            _adminRequestDrafts.Remove(draft.ChatId, draft.UserId);
+            await _sender.EditTextAsync(message.Chat.Id.ToString(), message.MessageId,
+                "یکی از آیتم‌ها تغییر کرده است؛ فرایند را دوباره آغاز کنید.", ct);
+            return;
+        }
+        await _sender.EditTextWithKeyboardAsync(message.Chat.Id.ToString(), message.MessageId,
+            BuildMultipleRemovalSelectionMessage(draft, requests),
+            BuildMultipleRemovalSelectionButtons(draft, requests), ct);
+    }
+
+    private static string BuildMultipleRemovalSelectionMessage(
+        TelegramAdminRequestDraft draft,
+        IReadOnlyCollection<SalesListRequest> requests) =>
+        "☑️ حذف چند آیتم مشتری\n\n" +
+        $"مشتری: {draft.Identity}\n" +
+        $"آیتم‌های فعال: {requests.Count}\n" +
+        $"انتخاب‌شده: {draft.SelectedRequestIds.Count}\n\n" +
+        "مواردی که باید حذف شوند را تیک بزنید؛ سپس «تأیید حذف انتخاب‌شده‌ها» را بزنید.";
+
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>
+        BuildMultipleRemovalSelectionButtons(
+            TelegramAdminRequestDraft draft,
+            IReadOnlyCollection<SalesListRequest> requests)
+    {
+        var rows = requests.OrderBy(value => value.SalesList.PublicCode).ThenBy(value => value.CreatedAt)
+            .Select(request => (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"{(draft.SelectedRequestIds.Contains(request.Id) ? "☑️" : "⬜")} " +
+                    $"{request.SalesList.PublicCode} — {DisplayUser(request)} — {request.VolumeMl} میل" +
+                    $"{(request.Kind == SalesListRequestKind.NextBottle ? " — صف باتل" : "")}" +
+                    $"{(request.IsBottleOwner ? " — صاحب باتل" : "")}",
+                    $"adminrequest:multirem:{request.Id:N}")
+            }).ToList();
+        rows.Add(new[]
+        {
+            new TelegramInlineButton("🗑 تأیید حذف انتخاب‌شده‌ها", "adminrequest:multiremconfirm")
+        });
+        rows.Add(new[] { new TelegramInlineButton("❌ لغو", "adminrequest:cancel") });
+        return rows;
+    }
+
     private async Task ConfirmAdminRequestAsync(TelegramCallbackQuery callback, CancellationToken ct)
     {
         var chatId = callback.Message!.Chat.Id;
@@ -3172,6 +3288,38 @@ public sealed partial class TelegramWebhookController
             _adminRequestDrafts.Remove(chatId, callback.From.Id);
             await _sender.AnswerCallbackAsync(callback.Id, "همه آیتم‌های فعال حذف شدند ✅", ct);
             await ReplyAsync(chatId, "همه آیتم‌های فعال مشتری حذف و لیست‌های درگیر به‌روزرسانی شدند ✅", ct);
+            return;
+        }
+        if (draft.Kind == TelegramAdminRequestKind.RemoveMultipleCustomerRequests)
+        {
+            if (draft.SelectedRequestIds.Count == 0)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "حداقل یک آیتم را انتخاب کنید.", ct, true);
+                return;
+            }
+            try
+            {
+                var affectedListIds = await _salesListRequestRepository.RemoveActiveRequestsAsync(
+                    draft.SelectedRequestIds, ct);
+                foreach (var salesListId in affectedListIds)
+                    await RefreshChannelSalesListAsync(salesListId, ct);
+                var selectedRemovalAuditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+                    ? _options.AdminChatId : _options.SalesAuditChatId;
+                await _sender.SendAsync(selectedRemovalAuditChatId,
+                    "🗑 حذف چند آیتم مشتری\n" +
+                    $"زمان: {TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran"):yyyy/MM/dd HH:mm:ss}\n" +
+                    $"ثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
+                    $"مشتری: {draft.Identity}\n" +
+                    $"تعداد آیتم‌های حذف‌شده: {draft.SelectedRequestIds.Count}\n" +
+                    $"تعداد لیست‌های به‌روزشده: {affectedListIds.Count}", ct);
+                _adminRequestDrafts.Remove(chatId, callback.From.Id);
+                await _sender.AnswerCallbackAsync(callback.Id, "آیتم‌های انتخاب‌شده حذف شدند ✅", ct);
+                await ReplyAsync(chatId, "آیتم‌های انتخاب‌شده حذف و لیست‌های درگیر به‌روزرسانی شدند ✅", ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            }
             return;
         }
         var identity = draft.Identity.Trim();

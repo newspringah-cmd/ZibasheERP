@@ -428,6 +428,60 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         return listIds;
     }
 
+    public async Task<IReadOnlyCollection<Guid>> RemoveActiveRequestsAsync(
+        IReadOnlyCollection<Guid> requestIds, CancellationToken cancellationToken = default)
+    {
+        var ids = requestIds.Distinct().ToArray();
+        if (ids.Length == 0) return [];
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var requests = await _dbContext.SalesListRequests
+            .Include(value => value.SalesList)
+            .Where(value => ids.Contains(value.Id) && !value.IsDeleted &&
+                (value.Status == SalesListRequestStatus.PendingConfirmation ||
+                 value.Status == SalesListRequestStatus.Confirmed) &&
+                (value.SalesList.Status == SalesListStatus.Open ||
+                 value.SalesList.Status == SalesListStatus.Full))
+            .ToArrayAsync(cancellationToken);
+        if (requests.Length != ids.Length)
+            throw new InvalidOperationException("یک یا چند آیتم دیگر فعال نیستند؛ دوباره انتخاب کنید.");
+
+        var now = DateTime.UtcNow;
+        var lists = requests.Select(value => value.SalesList).DistinctBy(value => value.Id).ToArray();
+        foreach (var request in requests)
+        {
+            if (request.Status == SalesListRequestStatus.Confirmed &&
+                request.Kind == SalesListRequestKind.CurrentBottle)
+            {
+                request.SalesList.ReservedVolume = Math.Max(0,
+                    request.SalesList.ReservedVolume - request.VolumeMl);
+            }
+            request.Status = SalesListRequestStatus.Cancelled;
+            request.UpdatedAt = now;
+        }
+
+        var listIds = lists.Select(value => value.Id).ToArray();
+        var removedIds = requests.Select(value => value.Id).ToArray();
+        var ownerListIds = (await _dbContext.SalesListRequests.AsNoTracking()
+            .Where(value => listIds.Contains(value.SalesListId) && !value.IsDeleted &&
+                value.Status == SalesListRequestStatus.Confirmed && value.IsBottleOwner &&
+                !removedIds.Contains(value.Id))
+            .Select(value => value.SalesListId)
+            .Distinct()
+            .ToArrayAsync(cancellationToken)).ToHashSet();
+        foreach (var list in lists)
+        {
+            list.HasBottleOwner = ownerListIds.Contains(list.Id);
+            if (list.Status == SalesListStatus.Full && list.RemainingVolume > 0)
+                list.Status = SalesListStatus.Open;
+            list.UpdatedAt = now;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return listIds;
+    }
+
     private IQueryable<SalesListRequest> ActiveRequestCandidates() =>
         _dbContext.SalesListRequests.Where(value => !value.IsDeleted &&
             (value.Status == SalesListRequestStatus.PendingConfirmation ||
