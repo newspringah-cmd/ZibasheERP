@@ -3272,9 +3272,7 @@ public sealed partial class TelegramWebhookController
             {
                 new TelegramInlineButton(
                     $"{(draft.SelectedRequestIds.Contains(request.Id) ? "☑️" : "⬜")} " +
-                    $"{request.SalesList.PublicCode} — {DisplayUser(request)} — {request.VolumeMl} میل" +
-                    $"{(request.Kind == SalesListRequestKind.NextBottle ? " — صف باتل" : "")}" +
-                    $"{(request.IsBottleOwner ? " — صاحب باتل" : "")}",
+                    $"{request.SalesList.PersianName} — {request.VolumeMl} میل",
                     $"adminrequest:multirem:{request.Id:N}")
             }).ToList();
         if (pageCount > 1)
