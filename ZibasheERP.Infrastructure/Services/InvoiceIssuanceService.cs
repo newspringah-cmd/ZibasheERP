@@ -113,6 +113,33 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         if (requests.Length == 0)
             throw new InvalidOperationException("برای لیست‌های انتخاب‌شده درخواست تأییدشده‌ای وجود ندارد.");
 
+        // درخواست‌های قدیمیِ واردشده پیش از ثبت نوع شیشه ممکن است BottleId نداشته باشند.
+        // تنها fallback امن، شیشهٔ نرمالِ پیش‌فرضِ همان حجم است؛ شیشهٔ فانتزی هرگز حدسی نرمال نمی‌شود.
+        var missingBottleVolumes = requests
+            .Select(value => value.Request)
+            .Where(request => !request.IsBottleOwner && !request.BottleId.HasValue)
+            .Select(request => request.VolumeMl)
+            .Distinct()
+            .ToArray();
+        if (missingBottleVolumes.Length > 0)
+        {
+            var defaultNormalBottles = await _db.Bottles
+                .Where(bottle => !bottle.IsDeleted && bottle.IsActive && bottle.IsDefault &&
+                    bottle.Type == BottleType.Normal && missingBottleVolumes.Contains(bottle.VolumeMl))
+                .ToDictionaryAsync(bottle => bottle.VolumeMl, cancellationToken);
+            foreach (var request in requests.Select(value => value.Request)
+                         .Where(request => !request.IsBottleOwner && !request.BottleId.HasValue))
+            {
+                if (!defaultNormalBottles.TryGetValue(request.VolumeMl, out var bottle))
+                    continue;
+                request.BottleId = bottle.Id;
+                request.Bottle = bottle;
+                if (request.BottlePrice <= 0)
+                    request.BottlePrice = bottle.SalePrice;
+                request.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
         var now = DateTime.UtcNow;
         var productionCopies = lists.Select(CreateProductionCopy).ToArray();
         var batch = new InvoiceIssuanceBatch
