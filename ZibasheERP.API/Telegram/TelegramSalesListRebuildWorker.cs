@@ -76,6 +76,7 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
 
         var succeeded = 0;
         var failed = 0;
+        var processed = 0;
         foreach (var listId in listIds)
         {
             try
@@ -91,11 +92,9 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
                 var activeRequests = await requests.GetConfirmedAsync(list.Id, cancellationToken);
                 var captions = TelegramWebhookController.FormatChannelSalesListPages(list, activeRequests);
                 await SynchronizeContinuationAsync(list, captions.Continuation, lists, cancellationToken);
-                var result = await _sender.EditPhotoCaptionAsync(
-                    list.TelegramChannelId,
-                    list.TelegramMessageId.Value,
+                var result = await EditMainPostWithRetryAsync(
+                    list,
                     captions.Main,
-                    TelegramWebhookController.BuildChannelVolumeButtons(list),
                     cancellationToken);
                 if (result.IsSuccessful || IsUnchanged(result.Error)) succeeded++;
                 else
@@ -110,13 +109,32 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
                 failed++;
                 _logger.LogWarning(exception, "Sales-list post {SalesListId} was not rebuilt.", listId);
             }
+            finally
+            {
+                processed++;
+                if (processed % 25 == 0 || processed == listIds.Length)
+                {
+                    _logger.LogInformation(
+                        "Sales-list rebuild progress: {Processed}/{Total}; succeeded={Succeeded}; failed={Failed}.",
+                        processed, listIds.Length, succeeded, failed);
+                }
+            }
 
             await Task.Delay(TimeSpan.FromMilliseconds(1200), cancellationToken);
         }
 
-        await _sender.SendAsync(reportChatId.ToString(),
+        _logger.LogInformation(
+            "Sales-list rebuild completed: total={Total}; succeeded={Succeeded}; failed={Failed}.",
+            listIds.Length, succeeded, failed);
+        var reportResult = await _sender.SendAsync(reportChatId.ToString(),
             $"✅ بازسازی پست‌های لیست پایان یافت.\nموفق: {succeeded}\nناموفق: {failed}\nکل: {listIds.Length}",
             cancellationToken);
+        if (!reportResult.IsSuccessful)
+        {
+            _logger.LogWarning(
+                "Sales-list rebuild completed, but its Telegram report was not delivered: {Error}",
+                reportResult.Error);
+        }
     }
 
     private async Task SynchronizeContinuationAsync(
@@ -162,6 +180,46 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
 
     private static string BuildMessageUrl(string chatId, long messageId) =>
         $"https://t.me/c/{chatId.Trim()[4..]}/{messageId}";
+
+    private async Task<TelegramSendResult> EditMainPostWithRetryAsync(
+        SalesList list,
+        string caption,
+        CancellationToken cancellationToken)
+    {
+        TelegramSendResult? lastResult = null;
+        for (var attempt = 1; attempt <= 6; attempt++)
+        {
+            lastResult = await _sender.EditPhotoCaptionAsync(
+                list.TelegramChannelId!,
+                list.TelegramMessageId!.Value,
+                caption,
+                TelegramWebhookController.BuildChannelVolumeButtons(list),
+                cancellationToken);
+            if (lastResult.IsSuccessful || IsUnchanged(lastResult.Error))
+                return lastResult;
+            if (!TryGetRetryAfter(lastResult.Error, out var retryAfterSeconds) || attempt == 6)
+                return lastResult;
+
+            var delay = TimeSpan.FromSeconds(Math.Clamp(retryAfterSeconds + 1, 2, 60));
+            _logger.LogInformation(
+                "Telegram rate limit for sales-list post {PublicCode}; retrying attempt {Attempt} after {DelaySeconds} seconds.",
+                list.PublicCode, attempt + 1, delay.TotalSeconds);
+            await Task.Delay(delay, cancellationToken);
+        }
+
+        return lastResult ?? new TelegramSendResult(false, "Telegram edit was not attempted.");
+    }
+
+    private static bool TryGetRetryAfter(string? error, out int seconds)
+    {
+        seconds = 0;
+        if (string.IsNullOrWhiteSpace(error)) return false;
+        var match = System.Text.RegularExpressions.Regex.Match(
+            error,
+            @"retry after\s+(\d+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success && int.TryParse(match.Groups[1].Value, out seconds);
+    }
 
     private static bool IsUnchanged(string? error) =>
         error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true;
