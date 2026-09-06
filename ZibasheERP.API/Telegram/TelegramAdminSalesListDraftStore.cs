@@ -199,6 +199,7 @@ public sealed class TelegramAdminRequestDraft
     public int OriginalVolumeMl { get; set; }
     public HashSet<Guid> AvailableRequestIds { get; } = [];
     public HashSet<Guid> SelectedRequestIds { get; } = [];
+    public int MultipleRemovalPage { get; set; }
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
 
