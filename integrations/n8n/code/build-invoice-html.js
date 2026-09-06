@@ -39,7 +39,7 @@ const items = Array.isArray(invoice.Items) ? invoice.Items : [];
 const paymentAccounts = Array.isArray(invoice.PaymentAccounts) ? invoice.PaymentAccounts.slice(0, 4) : [];
 const username = String(customer.Username ?? '').trim().replace(/^@/, '');
 const customerName = username ? `@${username}` : (customer.FullName ?? 'مشتری زیباشی');
-const invoiceFileBase = (username || String(invoice.InvoiceNumber ?? 'invoice'))
+const invoiceFileBase = String(invoice.InvoiceNumber ?? 'invoice')
   .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
   .replace(/[. ]+$/g, '')
   .slice(0, 80) || 'invoice';
@@ -59,7 +59,6 @@ const renderRows = (pageItems) => pageItems.map((item) => {
 const captionLines = [
   `🧾 فاکتور عطر ${customerName}`,
   `تاریخ: ${persianDate(invoice.IssuedAt)}`,
-  `شماره فاکتور: ${invoice.InvoiceNumber}`,
   ''
 ];
 if (isManualReview) {

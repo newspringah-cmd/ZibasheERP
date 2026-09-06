@@ -15,6 +15,48 @@ public sealed class TelegramInvoiceIssuanceDraftStore
     public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);
 }
 
+public enum TelegramInvoiceCaptionEditStage
+{
+    AwaitingCustomerIdentity,
+    AwaitingCaption
+}
+
+public sealed class TelegramInvoiceCaptionEditDraft
+{
+    public required long ChatId { get; init; }
+    public required long UserId { get; init; }
+    public TelegramInvoiceCaptionEditStage Stage { get; set; } = TelegramInvoiceCaptionEditStage.AwaitingCustomerIdentity;
+    public Guid InvoiceId { get; set; }
+    public string InvoiceNumber { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public sealed class TelegramInvoiceCaptionEditDraftStore
+{
+    private readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramInvoiceCaptionEditDraft> _drafts = new();
+
+    public void Set(TelegramInvoiceCaptionEditDraft draft)
+    {
+        draft.UpdatedAt = DateTime.UtcNow;
+        _drafts[(draft.ChatId, draft.UserId)] = draft;
+    }
+
+    public bool TryGet(long chatId, long userId, out TelegramInvoiceCaptionEditDraft draft)
+    {
+        if (_drafts.TryGetValue((chatId, userId), out var found) && found.UpdatedAt > DateTime.UtcNow.AddMinutes(-10))
+        {
+            found.UpdatedAt = DateTime.UtcNow;
+            draft = found;
+            return true;
+        }
+        _drafts.TryRemove((chatId, userId), out _);
+        draft = null!;
+        return false;
+    }
+
+    public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);
+}
+
 public sealed record TelegramInvoiceBottlePriceResolutionDraft(
     Guid SalesListRequestId,
     int SalesListPublicCode,

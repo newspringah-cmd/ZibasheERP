@@ -38,4 +38,8 @@ public class Invoice : BaseEntity
     public InvoiceDeliveryStatus DeliveryStatus { get; set; } = InvoiceDeliveryStatus.Pending;
     public DateTime? DeliveryStatusChangedAt { get; set; }
     public string? DeliveryStatusNote { get; set; }
+
+    // محل و شناسه پیام PDF برای ویرایش کپشن همان پیام توسط حسابداری.
+    public string? TelegramInvoiceChatId { get; set; }
+    public long? TelegramInvoiceMessageId { get; set; }
 }

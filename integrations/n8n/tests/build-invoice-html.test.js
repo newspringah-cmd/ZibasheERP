@@ -51,8 +51,8 @@ if (result.json.invoiceFileName !== 'INV-TEST.pdf') {
 const usernameEvent = structuredClone(event);
 usernameEvent.data.Customer.Username = '@test_customer';
 const [usernameResult] = run({ first: () => ({ json: usernameEvent }) });
-if (usernameResult.json.invoiceFileName !== 'test_customer.pdf') {
-  throw new Error('Invoice renderer did not use the customer username as the PDF filename.');
+if (usernameResult.json.invoiceFileName !== 'INV-TEST.pdf') {
+  throw new Error('Invoice renderer did not use the invoice number as the PDF filename.');
 }
 if (result.json.artifactType !== 'InvoicePdf') {
   throw new Error('Invoice renderer produced an unexpected artifact type.');
@@ -76,8 +76,9 @@ if (!result.json.invoiceHtml.includes('grid-template-rows:repeat(8,1fr)') ||
     result.json.invoiceHtml.includes('flex:1;font-size:8.3px')) {
   throw new Error('Invoice rows are not fixed to readable aligned table slots.');
 }
-if (!result.json.telegramCaption.includes('INV-TEST')) {
-  throw new Error('Invoice renderer did not prepare the PDF Telegram caption.');
+if (result.json.telegramCaption.includes('شماره فاکتور:') ||
+    result.json.telegramCaption.includes('INV-TEST')) {
+  throw new Error('Invoice renderer leaked the invoice number into the PDF Telegram caption.');
 }
 if (!result.json.telegramCaption.includes('مبلغ قابل پرداخت') ||
     result.json.paidCallbackData !== 'invoicepay:paid:aaaaaaaabbbbccccddddeeeeeeeeeeee' ||

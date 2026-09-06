@@ -40,11 +40,13 @@ public sealed class N8nIntegrationsController : ControllerBase
         [FromForm] Guid sourceEventId,
         [FromForm] string chatId,
         [FromForm] string caption,
+        [FromForm] string? fileName,
         [FromForm] IFormFile document,
         CancellationToken cancellationToken)
     {
         chatId = chatId.Trim();
         caption = caption.Trim();
+        fileName = Path.GetFileName(fileName?.Trim() ?? string.Empty);
         if (!long.TryParse(chatId, out var numericChatId) || numericChatId >= 0 ||
             document.Length == 0 || document.Length > 20 * 1024 * 1024 ||
             caption.Length > 1024)
@@ -120,12 +122,23 @@ public sealed class N8nIntegrationsController : ControllerBase
         var result = await _telegramSender.SendDocumentWithKeyboardAsync(
             chatId,
             buffer.ToArray(),
-            string.IsNullOrWhiteSpace(document.FileName) ? "invoice.pdf" : document.FileName,
+            string.IsNullOrWhiteSpace(fileName) ? "invoice.pdf" : fileName,
             caption,
             rows,
             cancellationToken);
         if (!result.IsSuccessful)
             return StatusCode(StatusCodes.Status502BadGateway, new { Message = result.Error });
+
+        var invoice = await _context.Invoices.FirstOrDefaultAsync(
+            value => value.Id == invoiceId && !value.IsDeleted,
+            cancellationToken);
+        if (invoice is not null && result.MessageId.HasValue)
+        {
+            invoice.TelegramInvoiceChatId = chatId;
+            invoice.TelegramInvoiceMessageId = result.MessageId.Value;
+            invoice.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
 
         return Ok(new
         {

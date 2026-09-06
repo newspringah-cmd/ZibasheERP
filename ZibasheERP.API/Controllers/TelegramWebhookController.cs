@@ -54,6 +54,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramOwnerPricingDraftStore _ownerPricingDrafts;
     private readonly TelegramAdminRequestDraftStore _adminRequestDrafts;
     private readonly TelegramInvoiceIssuanceDraftStore _invoiceIssuanceDrafts;
+    private readonly TelegramInvoiceCaptionEditDraftStore _invoiceCaptionEditDrafts;
     private readonly TelegramInvoiceBottlePriceResolutionDraftStore _invoiceBottlePriceResolutionDrafts;
     private readonly IInvoiceIssuanceService _invoiceIssuanceService;
     private readonly IInvoicePaymentStatusService _invoicePaymentStatusService;
@@ -82,6 +83,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramOwnerPricingDraftStore ownerPricingDrafts,
         TelegramAdminRequestDraftStore adminRequestDrafts,
         TelegramInvoiceIssuanceDraftStore invoiceIssuanceDrafts,
+        TelegramInvoiceCaptionEditDraftStore invoiceCaptionEditDrafts,
         TelegramInvoiceBottlePriceResolutionDraftStore invoiceBottlePriceResolutionDrafts,
         IInvoiceIssuanceService invoiceIssuanceService,
         IInvoicePaymentStatusService invoicePaymentStatusService,
@@ -110,6 +112,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _ownerPricingDrafts = ownerPricingDrafts;
         _adminRequestDrafts = adminRequestDrafts;
         _invoiceIssuanceDrafts = invoiceIssuanceDrafts;
+        _invoiceCaptionEditDrafts = invoiceCaptionEditDrafts;
         _invoiceBottlePriceResolutionDrafts = invoiceBottlePriceResolutionDrafts;
         _invoiceIssuanceService = invoiceIssuanceService;
         _invoicePaymentStatusService = invoicePaymentStatusService;
@@ -908,6 +911,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return true;
 
         if (await TryHandleInvoiceStickerMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandleInvoiceCaptionEditMessageAsync(message, cancellationToken))
             return true;
 
         if (await TryHandleAdminCommandAsync(message, cancellationToken))

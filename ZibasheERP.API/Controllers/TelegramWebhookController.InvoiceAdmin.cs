@@ -420,6 +420,45 @@ public sealed partial class TelegramWebhookController
             await SendWaitingInvoiceListsAsync(callback.Message.Chat.Id, ct);
             return true;
         }
+        if (callback.Data == "invoiceadmin:edit-caption")
+        {
+            _invoiceCaptionEditDrafts.Set(new TelegramInvoiceCaptionEditDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "آیدی مشتری را وارد کنید؛ مثال: @zahraa_frj\nحداکثر ۳ فاکتور آخر نمایش داده می‌شود.\n\nبرای لغو، /cancel را بفرستید.", ct);
+            return true;
+        }
+        if (callback.Data.StartsWith("invoiceadmin:caption:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["invoiceadmin:caption:".Length..], "N", out var captionInvoiceId))
+        {
+            if (!_invoiceCaptionEditDrafts.TryGet(callback.Message.Chat.Id, callback.From.Id, out var captionDraft))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return true;
+            }
+            var invoice = await _db.Invoices.FirstOrDefaultAsync(
+                value => value.Id == captionInvoiceId && !value.IsDeleted &&
+                    !string.IsNullOrWhiteSpace(value.TelegramInvoiceChatId) &&
+                    value.TelegramInvoiceMessageId.HasValue,
+                ct);
+            if (invoice is null)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "PDF این فاکتور قابل ویرایش نیست.", ct, showAlert: true);
+                return true;
+            }
+            captionDraft.InvoiceId = invoice.Id;
+            captionDraft.InvoiceNumber = invoice.InvoiceNumber;
+            captionDraft.Stage = TelegramInvoiceCaptionEditStage.AwaitingCaption;
+            _invoiceCaptionEditDrafts.Set(captionDraft);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                $"کپشن جدید برای {invoice.InvoiceNumber} را بفرستید. حداکثر ۱۰۲۴ کاراکتر.\nبرای لغو، /cancel را بفرستید.", ct);
+            return true;
+        }
         if (callback.Data == "invoiceadmin:manual")
         {
             _manualInvoiceDrafts.Set(new TelegramManualInvoiceDraft
@@ -1294,6 +1333,9 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("📦 مخزن انتظار عطرها", "invoiceadmin:waiting")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
+            new TelegramInlineButton("✏️ ویرایش کپشن PDF فاکتور", "invoiceadmin:edit-caption")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
             new TelegramInlineButton("📸 ارسال عکس دکانت", "decantphoto:start")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
@@ -1355,6 +1397,140 @@ public sealed partial class TelegramWebhookController
         message += "\n\nثبت صف بطری بعدی (فقط ادمین):\n/nextbottle کدلیست | @username | مقدارمیل";
         message += "\n\nثبت آیتم دستی از کامنت:\n/listrequest کدلیست | @username | مقدارمیل | نرمال یا فانتزی";
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons.ToArray(), ct);
+    }
+
+    private async Task<bool> TryHandleInvoiceCaptionEditMessageAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null ||
+            !_invoiceCaptionEditDrafts.TryGet(message.Chat.Id, message.From.Id, out var draft))
+            return false;
+
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            _invoiceCaptionEditDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "دسترسی مدیریت ندارید.", ct);
+            return true;
+        }
+
+        var text = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await ReplyAsync(message.Chat.Id, "لطفاً متن را به‌صورت پیام متنی ارسال کنید.", ct);
+            return true;
+        }
+        if (text.Equals("/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            _invoiceCaptionEditDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "ویرایش کپشن لغو شد.", ct);
+            return true;
+        }
+
+        if (draft.Stage == TelegramInvoiceCaptionEditStage.AwaitingCustomerIdentity)
+        {
+            var customerIdentity = text.Trim().TrimStart('@');
+            if (string.IsNullOrWhiteSpace(customerIdentity))
+            {
+                await ReplyAsync(message.Chat.Id, "آیدی مشتری معتبر نیست. مثال: @zahraa_frj", ct);
+                return true;
+            }
+            var invoices = await _db.Invoices
+                .Include(value => value.Order)
+                .ThenInclude(value => value!.Customer)
+                .Where(value => !value.IsDeleted &&
+                    value.Order != null && value.Order.Customer != null &&
+                    (value.Order.Customer.Username == customerIdentity ||
+                     value.Order.Customer.TelegramId == customerIdentity))
+                .OrderByDescending(value => value.IssuedAt)
+                .Take(3)
+                .Select(value => new
+                {
+                    value.Id,
+                    value.InvoiceNumber,
+                    value.IssuedAt,
+                    CanEdit = value.TelegramInvoiceChatId != null && value.TelegramInvoiceMessageId != null
+                })
+                .ToListAsync(ct);
+            if (invoices.Count == 0)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "برای این آیدی فاکتوری پیدا نشد. آیدی را بدون فاصله و با یا بدون @ وارد کنید.", ct);
+                return true;
+            }
+            var buttons = invoices.Select(invoice =>
+                (IReadOnlyCollection<TelegramInlineButton>)new[]
+                {
+                    new TelegramInlineButton(
+                        $"{invoice.InvoiceNumber} — {invoice.IssuedAt:yyyy/MM/dd}" +
+                        (invoice.CanEdit ? string.Empty : " (قدیمی/غیرقابل‌ویرایش)"),
+                        $"invoiceadmin:caption:{invoice.Id:N}")
+                }).ToArray();
+            await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+                "یکی از حداکثر سه فاکتور آخر را انتخاب کنید:", buttons, ct);
+            return true;
+        }
+
+        if (text.Length > 1024)
+        {
+            await ReplyAsync(message.Chat.Id, "کپشن بیشتر از ۱۰۲۴ کاراکتر است. متن کوتاه‌تری بفرستید.", ct);
+            return true;
+        }
+
+        var targetInvoice = await _db.Invoices.FirstOrDefaultAsync(
+            value => value.Id == draft.InvoiceId && !value.IsDeleted,
+            ct);
+        if (targetInvoice is null ||
+            string.IsNullOrWhiteSpace(targetInvoice.TelegramInvoiceChatId) ||
+            !targetInvoice.TelegramInvoiceMessageId.HasValue)
+        {
+            _invoiceCaptionEditDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "پیام PDF این فاکتور برای ویرایش در دسترس نیست.", ct);
+            return true;
+        }
+
+        var paymentAccounts = await _paymentAccountRepository.GetActiveAsync(ct);
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
+        {
+            new TelegramInlineButton[]
+            {
+                new("✅ پرداخت‌شده", $"invoicepay:paid:{targetInvoice.Id:N}"),
+                new("⏳ در انتظار پرداخت", $"invoicepay:waiting:{targetInvoice.Id:N}")
+            }
+        };
+        foreach (var account in paymentAccounts.Take(4))
+        {
+            rows.Add(new TelegramInlineButton[]
+            {
+                new($"📋 کپی شماره کارت {account.BankName}".Trim(), CopyText: account.CardNumber)
+            });
+        }
+        if (string.Equals(targetInvoice.TelegramInvoiceChatId, _options.InvoiceFailureChatId.Trim(), StringComparison.Ordinal))
+        {
+            rows.Add(new TelegramInlineButton[]
+            {
+                new("📋 کپی فرمان اتصال گروه", CopyText: $"/connect {targetInvoice.InvoiceNumber}")
+            });
+        }
+
+        var result = await _sender.EditCaptionWithKeyboardAsync(
+            targetInvoice.TelegramInvoiceChatId,
+            targetInvoice.TelegramInvoiceMessageId.Value,
+            text,
+            rows,
+            ct);
+        if (!result.IsSuccessful)
+        {
+            await ReplyAsync(message.Chat.Id,
+                $"ویرایش کپشن انجام نشد: {result.Error ?? "خطای ناشناخته"}", ct);
+            return true;
+        }
+
+        targetInvoice.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        _invoiceCaptionEditDrafts.Remove(message.Chat.Id, message.From.Id);
+        await ReplyAsync(message.Chat.Id, $"کپشن PDF فاکتور {targetInvoice.InvoiceNumber} ویرایش شد ✅", ct);
+        return true;
     }
 
     private async Task<bool> TryHandleInvoiceStickerMessageAsync(
@@ -2680,6 +2856,7 @@ public sealed partial class TelegramWebhookController
         _ownerPricingDrafts.Remove(chatId, userId);
         _adminRequestDrafts.Remove(chatId, userId);
         _invoiceIssuanceDrafts.Remove(chatId, userId);
+        _invoiceCaptionEditDrafts.Remove(chatId, userId);
         _manualInvoiceDrafts.Remove(chatId, userId);
         _invoiceStickerDrafts.Remove(chatId, userId);
         _invoiceInventoryDrafts.Remove(chatId, userId);
