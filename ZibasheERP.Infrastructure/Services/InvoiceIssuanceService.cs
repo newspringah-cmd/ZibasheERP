@@ -620,12 +620,16 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                                                   value.Username.ToLower() == usernameWithAt))), cancellationToken);
         if (customer is not null) return customer;
 
+        var customerId = Guid.NewGuid();
         customer = new Customer
         {
-            Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+            Id = customerId, CreatedAt = DateTime.UtcNow,
             TelegramId = telegramId, Username = username,
             FullName = string.IsNullOrWhiteSpace(username) ? $"مشتری تلگرام {telegramId}" : $"@{username}",
-            Mobile = $"TG-{telegramId}"[..Math.Min(20, telegramId.Length + 3)],
+            // Imported/admin identities can share a long common prefix (for example
+            // "admin-username:"). Truncating that identity produced duplicate mobile
+            // values. Use the entity id so every placeholder remains unique.
+            Mobile = $"TG-{customerId:N}"[..20],
             Notes = "مشتری به‌صورت خودکار از درخواست فروش‌لیست ایجاد شد؛ اطلاعات تماس نیازمند تکمیل است."
         };
         await _db.Customers.AddAsync(customer, cancellationToken);

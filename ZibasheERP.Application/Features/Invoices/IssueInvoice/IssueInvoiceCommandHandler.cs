@@ -119,6 +119,23 @@ public sealed class IssueInvoiceCommandHandler
             else
                 notification = null;
         }
+        else if (hasDeliveryGroup)
+        {
+            // A manually-created customer can legitimately have no Telegram user id while
+            // already being linked to a delivery group.  The greeting and product photos
+            // must follow that group, just like the n8n PDF does.
+            notification = new NotificationOutbox
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = now,
+                CustomerId = order.CustomerId,
+                OrderId = order.Id,
+                Channel = "Telegram",
+                EventType = "InvoiceIssued",
+                Recipient = telegramGroup!.ChatId.Trim(),
+                Payload = "{}"
+            };
+        }
         if (notification is not null)
         {
             var sequence = 0;
