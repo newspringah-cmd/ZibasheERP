@@ -168,7 +168,11 @@ public sealed class N8nIntegrationsController : ControllerBase
             return caption;
 
         var giftLine = $"🎁 فاکتور هدیه به {recipient}";
-        return $"{giftLine}\n{caption}"[..Math.Min(giftLine.Length + 1 + caption.Length, 1024)];
+        var firstLineEnd = caption.IndexOf('\n');
+        var updatedCaption = firstLineEnd < 0
+            ? $"{caption}\n{giftLine}"
+            : $"{caption[..firstLineEnd]}\n{giftLine}{caption[firstLineEnd..]}";
+        return updatedCaption[..Math.Min(updatedCaption.Length, 1024)];
     }
 
     [HttpPost("order-artifacts")]
