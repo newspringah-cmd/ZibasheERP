@@ -80,7 +80,7 @@ const captionLines = [
   ...(giftDeliveryRole === 'Recipient' && giftGiver
     ? [`🎁 هدیه از طرف ${giftGiver}`]
     : isGiftOnlyInvoice && (explicitGiftRecipient || giftRecipients.length > 0)
-    ? [`🎁 فاکتور هدیه برای ${explicitGiftRecipient || giftRecipients.join('، ')}`]
+    ? [`🎁 فاکتور هدیه به ${explicitGiftRecipient || giftRecipients.join('، ')}`]
     : []),
   `تاریخ: ${persianDate(invoice.IssuedAt)}`,
   ''

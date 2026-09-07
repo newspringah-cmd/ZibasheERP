@@ -71,6 +71,7 @@ public sealed class N8nIntegrationsController : ControllerBase
 
         using var payload = JsonDocument.Parse(sourceEvent.Payload);
         var data = payload.RootElement;
+        caption = EnsureGiftGiverCaption(data, caption);
         var invoiceId = data.TryGetProperty("InvoiceId", out var invoiceIdElement) &&
             invoiceIdElement.TryGetGuid(out var parsedInvoiceId)
                 ? parsedInvoiceId
@@ -148,6 +149,26 @@ public sealed class N8nIntegrationsController : ControllerBase
                 document = new { file_id = result.ExternalFileId }
             }
         });
+    }
+
+    private static string EnsureGiftGiverCaption(JsonElement data, string caption)
+    {
+        if (!data.TryGetProperty("GiftDeliveryRole", out var roleElement) ||
+            !string.Equals(roleElement.GetString(), "Giver", StringComparison.OrdinalIgnoreCase))
+            return caption;
+
+        var username = data.TryGetProperty("GiftRecipientUsername", out var usernameElement)
+            ? usernameElement.GetString()?.Trim().TrimStart('@')
+            : null;
+        var telegramId = data.TryGetProperty("GiftRecipientTelegramId", out var telegramIdElement)
+            ? telegramIdElement.GetString()?.Trim()
+            : null;
+        var recipient = !string.IsNullOrWhiteSpace(username) ? $"@{username}" : telegramId;
+        if (string.IsNullOrWhiteSpace(recipient) || caption.Contains(recipient, StringComparison.OrdinalIgnoreCase))
+            return caption;
+
+        var giftLine = $"🎁 فاکتور هدیه به {recipient}";
+        return $"{giftLine}\n{caption}"[..Math.Min(giftLine.Length + 1 + caption.Length, 1024)];
     }
 
     [HttpPost("order-artifacts")]
