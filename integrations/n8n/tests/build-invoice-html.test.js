@@ -91,7 +91,8 @@ const giftGiverEvent = structuredClone(event);
 giftGiverEvent.data.Items[0].IsGift = true;
 giftGiverEvent.data.Items[0].GiftRecipientUsername = '@MB_Sama';
 const [giftGiverResult] = run({ first: () => ({ json: giftGiverEvent }) });
-if (!giftGiverResult.json.telegramCaption.includes('فاکتور هدیه به @MB_Sama')) {
+if (!giftGiverResult.json.telegramCaption.includes('۱۰ میل — ۱٬۲۰۰ تومان') ||
+    !giftGiverResult.json.telegramCaption.includes('هدیه به @MB_Sama')) {
   throw new Error('Gift-giver invoice caption did not name the gift recipient.');
 }
 
@@ -101,6 +102,18 @@ giftRecipientEvent.data.GiverUsername = '@gift_giver';
 const [giftRecipientResult] = run({ first: () => ({ json: giftRecipientEvent }) });
 if (!giftRecipientResult.json.telegramCaption.includes('هدیه از طرف @gift_giver')) {
   throw new Error('Gift-recipient invoice caption did not name the gift giver.');
+}
+
+const combinedGiftEvent = structuredClone(event);
+combinedGiftEvent.data.Items.push({
+  ...event.data.Items[0],
+  RowNumber: 2,
+  IsGift: true,
+  GiftRecipientUsername: '@combined_receiver'
+});
+const [combinedGiftResult] = run({ first: () => ({ json: combinedGiftEvent }) });
+if (!combinedGiftResult.json.telegramCaption.includes('هدیه به @combined_receiver')) {
+  throw new Error('Combined invoice caption did not name its gift recipient.');
 }
 if (result.json.firstCardCopyText !== '6280231544451379' ||
     result.json.secondCardCopyText !== '6037997450926374' ||

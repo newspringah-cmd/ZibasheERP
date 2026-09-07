@@ -153,8 +153,10 @@ public sealed class N8nIntegrationsController : ControllerBase
 
     private static string EnsureGiftGiverCaption(JsonElement data, string caption)
     {
-        if (!data.TryGetProperty("GiftDeliveryRole", out var roleElement) ||
-            !string.Equals(roleElement.GetString(), "Giver", StringComparison.OrdinalIgnoreCase))
+        var role = data.TryGetProperty("GiftDeliveryRole", out var roleElement)
+            ? roleElement.GetString()
+            : null;
+        if (string.Equals(role, "Recipient", StringComparison.OrdinalIgnoreCase))
             return caption;
 
         var username = data.TryGetProperty("GiftRecipientUsername", out var usernameElement)
@@ -163,11 +165,52 @@ public sealed class N8nIntegrationsController : ControllerBase
         var telegramId = data.TryGetProperty("GiftRecipientTelegramId", out var telegramIdElement)
             ? telegramIdElement.GetString()?.Trim()
             : null;
-        var recipient = !string.IsNullOrWhiteSpace(username) ? $"@{username}" : telegramId;
-        if (string.IsNullOrWhiteSpace(recipient) || caption.Contains(recipient, StringComparison.OrdinalIgnoreCase))
+        var recipients = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var giftLines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(username)) recipients.Add($"@{username}");
+        else if (!string.IsNullOrWhiteSpace(telegramId)) recipients.Add(telegramId);
+        if (data.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                if (!item.TryGetProperty("IsGift", out var isGift) || isGift.ValueKind != JsonValueKind.True)
+                    continue;
+                var itemUsername = item.TryGetProperty("GiftRecipientUsername", out var itemUsernameElement)
+                    ? itemUsernameElement.GetString()?.Trim().TrimStart('@')
+                    : null;
+                var itemTelegramId = item.TryGetProperty("GiftRecipientTelegramId", out var itemTelegramIdElement)
+                    ? itemTelegramIdElement.GetString()?.Trim()
+                    : null;
+                if (!string.IsNullOrWhiteSpace(itemUsername)) recipients.Add($"@{itemUsername}");
+                else if (!string.IsNullOrWhiteSpace(itemTelegramId)) recipients.Add(itemTelegramId);
+                var itemRecipient = !string.IsNullOrWhiteSpace(itemUsername)
+                    ? $"@{itemUsername}"
+                    : itemTelegramId;
+                if (!string.IsNullOrWhiteSpace(itemRecipient))
+                {
+                    var volume = item.TryGetProperty("RequestedVolumeMl", out var volumeElement) &&
+                                 volumeElement.TryGetDecimal(out var parsedVolume)
+                        ? parsedVolume
+                        : 0m;
+                    var amount = item.TryGetProperty("LineTotal", out var amountElement) &&
+                                 amountElement.TryGetDecimal(out var parsedAmount)
+                        ? parsedAmount
+                        : 0m;
+                    giftLines.Add($"🎁 {volume:N0} میل — {amount:N0} تومان\nهدیه به {itemRecipient}");
+                }
+            }
+        }
+        if (recipients.Count == 0)
             return caption;
 
-        var giftLine = $"🎁 فاکتور هدیه به {recipient}";
+        var missingRecipients = recipients
+            .Where(recipient => !caption.Contains(recipient, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (missingRecipients.Length == 0)
+            return caption;
+        var giftLine = giftLines.Count > 0
+            ? string.Join("\n", giftLines)
+            : $"🎁 فاکتور هدیه به {string.Join("، ", missingRecipients)}";
         var firstLineEnd = caption.IndexOf('\n');
         var updatedCaption = firstLineEnd < 0
             ? $"{caption}\n{giftLine}"

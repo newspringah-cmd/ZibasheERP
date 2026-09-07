@@ -204,11 +204,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         _db.Orders.AddRange(orders);
         await _db.SaveChangesAsync(cancellationToken);
         var invoiceNumbers = new List<string>();
+        var queuedGiftRecipientPhotos = new HashSet<string>(StringComparer.Ordinal);
         foreach (var order in orders)
         {
             var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id), cancellationToken);
             invoiceNumbers.Add(invoice.InvoiceNumber);
-            await QueueGiftRecipientNotificationsAsync(order, invoice.InvoiceNumber, cancellationToken);
+            await QueueGiftRecipientNotificationsAsync(
+                order, invoice.InvoiceNumber, queuedGiftRecipientPhotos, cancellationToken);
         }
         foreach (var list in lists)
         {
@@ -342,6 +344,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     private async Task QueueGiftRecipientNotificationsAsync(
         Order order,
         string invoiceNumber,
+        HashSet<string> queuedRecipientPhotos,
         CancellationToken cancellationToken)
     {
         var giftItems = order.Items
@@ -353,7 +356,6 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
         var now = DateTime.UtcNow;
         var sequence = 0;
-        var queuedRecipientPhotos = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in giftItems)
         {
             var request = item.SourceSalesListRequest!;
