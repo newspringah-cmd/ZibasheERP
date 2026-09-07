@@ -173,9 +173,11 @@ public sealed class TelegramGroupMembershipTracker(
 
         var now = DateTime.UtcNow;
         var sequence = 0;
+        var queuedPhotoFileIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in giftItems)
         {
-            if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+            if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId) &&
+                queuedPhotoFileIds.Add(item.SalesList.TelegramPhotoFileId))
                 context.NotificationOutbox.Add(new NotificationOutbox
                 {
                     Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++), CustomerId = customer.Id,
@@ -213,6 +215,9 @@ public sealed class TelegramGroupMembershipTracker(
                     TotalAmount = 0m,
                     Customer = new { customer.Id, customer.FullName, customer.Mobile, customer.TelegramId, customer.Username },
                     PaymentDeadlineHours = 0,
+                    GiftDeliveryRole = "Recipient",
+                    GiverUsername = request.TelegramUsername,
+                    GiverTelegramId = request.TelegramUserId,
                     PaymentAccounts = Array.Empty<object>(),
                     Items = new[]
                     {

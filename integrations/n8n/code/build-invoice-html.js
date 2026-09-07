@@ -54,6 +54,15 @@ const giftRecipients = [...new Set(items
   })
   .filter(Boolean))];
 const isGiftOnlyInvoice = items.every((item) => item.IsGift === true);
+const giftDeliveryRole = String(invoice.GiftDeliveryRole ?? '').trim();
+const giftGiverUsername = String(invoice.GiverUsername ?? '').trim().replace(/^@/, '');
+const giftGiverTelegramId = String(invoice.GiverTelegramId ?? '').trim();
+const giftGiver = giftGiverUsername ? `@${giftGiverUsername}` : giftGiverTelegramId;
+const explicitGiftRecipientUsername = String(invoice.GiftRecipientUsername ?? '').trim().replace(/^@/, '');
+const explicitGiftRecipientTelegramId = String(invoice.GiftRecipientTelegramId ?? '').trim();
+const explicitGiftRecipient = explicitGiftRecipientUsername
+  ? `@${explicitGiftRecipientUsername}`
+  : explicitGiftRecipientTelegramId;
 
 const renderRows = (pageItems) => pageItems.map((item) => {
   const englishName = item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
@@ -68,8 +77,10 @@ const renderRows = (pageItems) => pageItems.map((item) => {
 
 const captionLines = [
   `🧾 فاکتور عطر ${customerName}`,
-  ...(isGiftOnlyInvoice && giftRecipients.length > 0
-    ? [`🎁 هدیه به ${giftRecipients.join('، ')}`]
+  ...(giftDeliveryRole === 'Recipient' && giftGiver
+    ? [`🎁 هدیه از طرف ${giftGiver}`]
+    : isGiftOnlyInvoice && (explicitGiftRecipient || giftRecipients.length > 0)
+    ? [`🎁 فاکتور هدیه برای ${explicitGiftRecipient || giftRecipients.join('، ')}`]
     : []),
   `تاریخ: ${persianDate(invoice.IssuedAt)}`,
   ''

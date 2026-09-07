@@ -1763,6 +1763,11 @@ public sealed partial class TelegramWebhookController
             {
                 var preview = await _invoiceIssuanceService.PreviewCompletedListsAsync(selected.ToArray(), ct);
                 await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نمایش آماده شد.", ct);
+                foreach (var completedList in preview.CompletedListMessages)
+                {
+                    foreach (var part in SplitTelegramMessage(completedList))
+                        await ReplyAsync(chatId, part, ct);
+                }
                 var previewText = "🔎 پیش‌نمایش صدور فاکتور\n" +
                     $"تعداد فاکتور: {preview.InvoiceCount} | جمع: {preview.TotalAmount:N0} تومان\n\n" +
                     string.Join("\n", preview.Lines);

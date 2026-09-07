@@ -105,9 +105,9 @@ public sealed class IssueInvoiceCommandHandler
                     item.RequestedVolumeMl,
                     item.PerfumeAmount,
                     item.IsBottleOwner,
-                    IsGift = item.SourceSalesListRequest?.IsGift == true,
-                    GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername,
-                    GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId,
+                    IsGift = request.IsGift || item.SourceSalesListRequest?.IsGift == true,
+                    GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername ?? request.GiftRecipientUsername,
+                    GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId ?? request.GiftRecipientTelegramId,
                     BottleName = item.Bottle?.Name,
                     item.BottlePrice,
                     item.LineTotal
@@ -288,6 +288,9 @@ public sealed class IssueInvoiceCommandHandler
                     ,order.Customer.Username
                 },
                 PaymentDeadlineHours = 24,
+                GiftDeliveryRole = request.IsGift ? "Giver" : null,
+                request.GiftRecipientUsername,
+                request.GiftRecipientTelegramId,
                 PaymentAccounts = paymentAccounts.Select(value => new
                 {
                     value.CardNumber, value.AccountHolder, value.BankName
@@ -302,9 +305,9 @@ public sealed class IssueInvoiceCommandHandler
                     item.PerfumePricePerMl,
                     item.PerfumeAmount,
                     item.IsBottleOwner,
-                    IsGift = item.SourceSalesListRequest?.IsGift == true,
-                    GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername,
-                    GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId,
+                    IsGift = request.IsGift || item.SourceSalesListRequest?.IsGift == true,
+                    GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername ?? request.GiftRecipientUsername,
+                    GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId ?? request.GiftRecipientTelegramId,
                     BottleName = item.Bottle?.Name,
                     item.BottlePrice,
                     item.LineTotal

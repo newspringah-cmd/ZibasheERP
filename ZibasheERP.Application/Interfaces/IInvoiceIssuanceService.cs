@@ -40,6 +40,7 @@ public sealed record InvoiceIssuanceResult(
 public sealed record InvoiceIssuancePreview(
     int InvoiceCount,
     decimal TotalAmount,
+    IReadOnlyCollection<string> CompletedListMessages,
     IReadOnlyCollection<string> Lines);
 
 public sealed record SalesListProductionCopy(

@@ -290,7 +290,28 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
         var total = rows.Sum(row => row.PerfumePricePerMl * row.VolumeMl + row.BottlePrice);
-        return new InvoiceIssuancePreview(invoiceCount, total, lines);
+        var completedListMessages = rows
+            .GroupBy(row => new { row.ListCode, row.PerfumeName })
+            .OrderBy(group => group.Key.ListCode)
+            .Select(group =>
+            {
+                var listRows = group.Select((row, index) =>
+                {
+                    var giver = !string.IsNullOrWhiteSpace(row.TelegramUsername)
+                        ? $"@{row.TelegramUsername.Trim().TrimStart('@')}"
+                        : row.TelegramUserId;
+                    if (!row.IsGift)
+                        return $"{index + 1}. {giver} — {row.VolumeMl} میل";
+                    var recipient = !string.IsNullOrWhiteSpace(row.GiftRecipientTelegramUsername)
+                        ? $"@{row.GiftRecipientTelegramUsername.Trim().TrimStart('@')}"
+                        : row.GiftRecipientTelegramUserId ?? "گیرنده نامشخص";
+                    return $"{index + 1}. {giver} برای {recipient} — {row.VolumeMl} میل 🎁";
+                });
+                return $"📋 لیست تکمیل‌شده {group.Key.ListCode}\n" +
+                       $"عطر: {group.Key.PerfumeName}\n\n" + string.Join("\n", listRows);
+            })
+            .ToArray();
+        return new InvoiceIssuancePreview(invoiceCount, total, completedListMessages, lines);
     }
 
     private static decimal ResolveInvoiceBottleAmount(SalesListRequest request, int publicCode)
@@ -332,6 +353,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
         var now = DateTime.UtcNow;
         var sequence = 0;
+        var queuedRecipientPhotos = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in giftItems)
         {
             var request = item.SourceSalesListRequest!;
@@ -364,7 +386,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             }
 
             var chatId = group!.ChatId.Trim();
-            if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+            if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId) &&
+                queuedRecipientPhotos.Add($"{chatId}:{item.SalesList.TelegramPhotoFileId}"))
             {
                 await _db.NotificationOutbox.AddAsync(new NotificationOutbox
                 {
@@ -414,6 +437,9 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         recipient.TelegramId, recipient.Username
                     },
                     PaymentDeadlineHours = 0,
+                    GiftDeliveryRole = "Recipient",
+                    GiverUsername = request.TelegramUsername,
+                    GiverTelegramId = request.TelegramUserId,
                     PaymentAccounts = Array.Empty<object>(),
                     Items = new[]
                     {
@@ -496,11 +522,11 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         if (!string.IsNullOrWhiteSpace(giftRecipientIdentity))
         {
             var recipientIdentity = giftRecipientIdentity.Trim().TrimStart('@');
-            var recipientUsernameWithAt = $"@{recipientIdentity}";
-            giftRecipient = await _db.Customers.Include(value => value.TelegramGroup)
-                .FirstOrDefaultAsync(value => !value.IsDeleted &&
-                    (value.TelegramId == recipientIdentity || value.Username == recipientIdentity ||
-                     value.Username == recipientUsernameWithAt), cancellationToken)
+            var isTelegramId = recipientIdentity.All(char.IsDigit);
+            giftRecipient = await ResolveGiftRecipientAsync(
+                    isTelegramId ? null : recipientIdentity,
+                    isTelegramId ? recipientIdentity : null,
+                    cancellationToken)
                 ?? throw new InvalidOperationException("هدیه‌گیرنده پیدا نشد؛ ابتدا او را با Telegram ID یا @username شناسایی کنید.");
             if (giftRecipient.Id == customer.Id)
                 throw new InvalidOperationException("هدیه‌دهنده و هدیه‌گیرنده نمی‌توانند یک نفر باشند.");
@@ -537,7 +563,12 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         await _db.Orders.AddAsync(order, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
         var invoice = await _sender.Send(
-            new IssueInvoiceCommand(order.Id, validPhotoFileIds, giftRecipient is not null),
+            new IssueInvoiceCommand(
+                order.Id,
+                validPhotoFileIds,
+                giftRecipient is not null,
+                giftRecipient?.Username,
+                giftRecipient?.TelegramId),
             cancellationToken);
         if (giftRecipient is not null)
             await QueueManualGiftRecipientNotificationsAsync(order, invoice, giftRecipient, validPhotoFileIds, cancellationToken);
@@ -568,7 +599,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var now = DateTime.UtcNow;
         var chatId = group.ChatId.Trim();
         var sequence = 0;
-        foreach (var photoFileId in photoFileIds)
+        foreach (var photoFileId in photoFileIds.Distinct(StringComparer.Ordinal))
         {
             await _db.NotificationOutbox.AddAsync(new NotificationOutbox
             {
@@ -584,6 +615,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             Payload = System.Text.Json.JsonSerializer.Serialize(new
             {
                 invoice.InvoiceNumber, invoice.IssuedAt,
+                GiverUsername = order.Customer?.Username,
+                GiverTelegramId = order.Customer?.TelegramId,
                 PerfumePersianName = string.Join("، ", invoice.Items.Select(item => item.PerfumeName)),
                 RequestedVolumeMl = invoice.Items.Sum(item => item.VolumeMl), TotalAmount = 0
             })
@@ -593,7 +626,11 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             OrderId = order.Id, order.OrderNumber, InvoiceId = (Guid?)null,
             invoice.InvoiceNumber, invoice.IssuedAt, PerfumeTotal = 0m, BottleTotal = 0m, TotalAmount = 0m,
             Customer = new { recipient.Id, recipient.FullName, recipient.Mobile, recipient.TelegramId, recipient.Username },
-            PaymentDeadlineHours = 0, PaymentAccounts = Array.Empty<object>(),
+            PaymentDeadlineHours = 0,
+            GiftDeliveryRole = "Recipient",
+            GiverUsername = order.Customer?.Username,
+            GiverTelegramId = order.Customer?.TelegramId,
+            PaymentAccounts = Array.Empty<object>(),
             Items = invoice.Items.Select((item, index) => new
             {
                 RowNumber = index + 1, PerfumePersianName = item.PerfumeName,
