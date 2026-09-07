@@ -1631,6 +1631,8 @@ public sealed partial class TelegramWebhookController
         var identityWithAt = $"@{identity}";
         var invoices = await _db.Invoices.AsNoTracking()
             .Include(value => value.Order).ThenInclude(value => value!.Customer)
+            .Include(value => value.Order).ThenInclude(value => value!.Items)
+                .ThenInclude(value => value.Perfume)
             .Where(value => !value.IsDeleted && value.Order != null && value.Order.Customer != null &&
                 ((value.Order.Customer.Username != null &&
                   (value.Order.Customer.Username.ToLower() == identity ||
@@ -1638,11 +1640,6 @@ public sealed partial class TelegramWebhookController
                  value.Order.Customer.TelegramId == identity))
             .OrderByDescending(value => value.IssuedAt)
             .Take(3)
-            .Select(value => new
-            {
-                value.Id, value.InvoiceNumber, value.IssuedAt,
-                CanResend = value.TelegramInvoiceChatId != null && value.TelegramInvoiceMessageId != null
-            })
             .ToArrayAsync(ct);
         if (invoices.Length == 0)
         {
@@ -1650,13 +1647,34 @@ public sealed partial class TelegramWebhookController
             return true;
         }
         var buttons = invoices.Select(invoice =>
-            (IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            var perfumeNames = string.Join("، ", invoice.Order!.Items
+                .Where(item => !item.IsDeleted)
+                .OrderBy(item => item.RowNumber)
+                .Select(item => item.Perfume?.Name ?? item.ManualDescription)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(perfumeNames))
+                perfumeNames = "عطر";
+            const int maxPerfumeLabelLength = 40;
+            if (perfumeNames.Length > maxPerfumeLabelLength)
+                perfumeNames = $"{perfumeNames[..(maxPerfumeLabelLength - 1)]}…";
+
+            var invoiceSuffix = invoice.InvoiceNumber.Length <= 4
+                ? invoice.InvoiceNumber
+                : invoice.InvoiceNumber[^4..];
+            var canResend = invoice.TelegramInvoiceChatId != null &&
+                            invoice.TelegramInvoiceMessageId != null;
+
+            return (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton(
-                    $"{invoice.InvoiceNumber} — {invoice.IssuedAt:yyyy/MM/dd}" +
-                    (invoice.CanResend ? string.Empty : " (PDF در دسترس نیست)"),
+                    $"{perfumeNames} — {invoiceSuffix}" +
+                    (canResend ? string.Empty : " ⚠️"),
                     $"invoiceadmin:resend:{invoice.Id:N}")
-            }).ToArray();
+            };
+        }).ToArray();
         await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
             "یکی از حداکثر سه فاکتور آخر را برای ارسال مجدد انتخاب کنید:", buttons, ct);
         return true;
