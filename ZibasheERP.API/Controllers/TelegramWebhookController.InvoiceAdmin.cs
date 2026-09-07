@@ -432,6 +432,72 @@ public sealed partial class TelegramWebhookController
                 "آیدی مشتری را وارد کنید؛ مثال: @zahraa_frj\nحداکثر ۳ فاکتور آخر نمایش داده می‌شود.\n\nبرای لغو، /cancel را بفرستید.", ct);
             return true;
         }
+        if (callback.Data == "invoiceadmin:resend")
+        {
+            _invoiceResendDrafts.Set(callback.Message.Chat.Id, callback.From.Id);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "آیدی مشتری را وارد کنید؛ مثال: @zahraa_frj\nحداکثر ۳ فاکتور آخر نمایش داده می‌شود.\n\nبرای لغو، /cancel را بفرستید.", ct);
+            return true;
+        }
+        if (callback.Data.StartsWith("invoiceadmin:resend:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["invoiceadmin:resend:".Length..], "N", out var resendInvoiceId))
+        {
+            if (!_invoiceResendDrafts.IsWaiting(callback.Message.Chat.Id, callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
+                return true;
+            }
+            var invoice = await _db.Invoices
+                .Include(value => value.Order).ThenInclude(value => value!.Customer)
+                .ThenInclude(value => value!.TelegramGroup)
+                .FirstOrDefaultAsync(value => value.Id == resendInvoiceId && !value.IsDeleted, ct);
+            var destination = invoice?.Order?.Customer?.TelegramGroup;
+            if (invoice is null || string.IsNullOrWhiteSpace(invoice.TelegramInvoiceChatId) ||
+                !invoice.TelegramInvoiceMessageId.HasValue)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "PDF قبلی این فاکتور در دسترس نیست.", ct, true);
+                return true;
+            }
+            if (destination is null || destination.IsDeleted || !destination.IsActive ||
+                string.IsNullOrWhiteSpace(destination.ChatId))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "گروه فعال مشتری متصل نیست.", ct, true);
+                return true;
+            }
+            var paymentAccounts = await _paymentAccountRepository.GetActiveAsync(ct);
+            var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
+            {
+                new TelegramInlineButton[]
+                {
+                    new("✅ پرداخت‌شده", $"invoicepay:paid:{invoice.Id:N}"),
+                    new("⏳ در انتظار پرداخت", $"invoicepay:waiting:{invoice.Id:N}")
+                }
+            };
+            foreach (var account in paymentAccounts.Take(4))
+                rows.Add(new TelegramInlineButton[]
+                {
+                    new($"📋 کپی شماره کارت {account.BankName}".Trim(), CopyText: account.CardNumber)
+                });
+            var resend = await _sender.CopyMessageWithKeyboardAsync(
+                destination.ChatId.Trim(), invoice.TelegramInvoiceChatId,
+                invoice.TelegramInvoiceMessageId.Value, rows, ct);
+            if (!resend.IsSuccessful || !resend.MessageId.HasValue)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id,
+                    $"ارسال مجدد انجام نشد: {resend.Error ?? "پیام PDF پیدا نشد."}", ct, true);
+                return true;
+            }
+            invoice.TelegramInvoiceChatId = destination.ChatId.Trim();
+            invoice.TelegramInvoiceMessageId = resend.MessageId.Value;
+            invoice.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            _invoiceResendDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
+            await _sender.AnswerCallbackAsync(callback.Id, "فاکتور مجدداً ارسال شد ✅", ct, true);
+            await ReplyAsync(callback.Message.Chat.Id,
+                $"فاکتور {invoice.InvoiceNumber} مجدداً به گروه مشتری ارسال شد ✅", ct);
+            return true;
+        }
         if (callback.Data.StartsWith("invoiceadmin:caption:", StringComparison.Ordinal) &&
             Guid.TryParseExact(callback.Data["invoiceadmin:caption:".Length..], "N", out var captionInvoiceId))
         {
@@ -1092,7 +1158,7 @@ public sealed partial class TelegramWebhookController
                         callback.Message.Text!,
                         paidRows,
                         ct);
-                if (!invoiceRefresh.IsSuccessful)
+                if (!invoiceRefresh.IsSuccessful && !IsTelegramMessageUnchanged(invoiceRefresh.Error))
                 {
                     await ReplyAsync(callback.Message.Chat.Id,
                         $"⚠️ پرداخت ثبت شد اما دکمه‌های فاکتور بروزرسانی نشد: {invoiceRefresh.Error}", ct);
@@ -1112,7 +1178,7 @@ public sealed partial class TelegramWebhookController
                         report.Message,
                         BuildPaymentTrackingButtons(report),
                         ct);
-                    if (!refresh.IsSuccessful)
+                    if (!refresh.IsSuccessful && !IsTelegramMessageUnchanged(refresh.Error))
                         await ReplyAsync(callback.Message.Chat.Id,
                             $"⚠️ وضعیت مالی ثبت شد اما گزارش گروه واریز بروزرسانی نشد: {refresh.Error}", ct);
                 }
@@ -1302,7 +1368,7 @@ public sealed partial class TelegramWebhookController
             var refresh = await _sender.EditTextWithKeyboardAsync(
                 report.TelegramChatId!, report.TelegramMessageId!.Value,
                 report.Message, BuildPaymentTrackingButtons(report), ct);
-            if (!refresh.IsSuccessful)
+            if (!refresh.IsSuccessful && !IsTelegramMessageUnchanged(refresh.Error))
                 await ReplyAsync(fallbackChatId,
                     $"⚠️ گزارش واریز لیست مربوطه بروزرسانی نشد: {refresh.Error}", ct);
         }
@@ -1335,6 +1401,9 @@ public sealed partial class TelegramWebhookController
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton("✏️ ویرایش کپشن PDF فاکتور", "invoiceadmin:edit-caption")
+        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
+        {
+            new TelegramInlineButton("🔁 ارسال مجدد فاکتور", "invoiceadmin:resend")
         }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton("📸 ارسال عکس دکانت", "decantphoto:start")
@@ -1531,6 +1600,65 @@ public sealed partial class TelegramWebhookController
         await _db.SaveChangesAsync(ct);
         _invoiceCaptionEditDrafts.Remove(message.Chat.Id, message.From.Id);
         await ReplyAsync(message.Chat.Id, $"کپشن PDF فاکتور {targetInvoice.InvoiceNumber} ویرایش شد ✅", ct);
+        return true;
+    }
+
+    private async Task<bool> TryHandleInvoiceResendMessageAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null || !_invoiceResendDrafts.IsWaiting(message.Chat.Id, message.From.Id))
+            return false;
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            _invoiceResendDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "دسترسی مدیریت ندارید.", ct);
+            return true;
+        }
+        var text = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await ReplyAsync(message.Chat.Id, "آیدی مشتری را به‌صورت متن بفرستید.", ct);
+            return true;
+        }
+        if (text.Equals("/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            _invoiceResendDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "ارسال مجدد فاکتور لغو شد.", ct);
+            return true;
+        }
+        var identity = text.Trim().TrimStart('@').ToLowerInvariant();
+        var identityWithAt = $"@{identity}";
+        var invoices = await _db.Invoices.AsNoTracking()
+            .Include(value => value.Order).ThenInclude(value => value!.Customer)
+            .Where(value => !value.IsDeleted && value.Order != null && value.Order.Customer != null &&
+                ((value.Order.Customer.Username != null &&
+                  (value.Order.Customer.Username.ToLower() == identity ||
+                   value.Order.Customer.Username.ToLower() == identityWithAt)) ||
+                 value.Order.Customer.TelegramId == identity))
+            .OrderByDescending(value => value.IssuedAt)
+            .Take(3)
+            .Select(value => new
+            {
+                value.Id, value.InvoiceNumber, value.IssuedAt,
+                CanResend = value.TelegramInvoiceChatId != null && value.TelegramInvoiceMessageId != null
+            })
+            .ToArrayAsync(ct);
+        if (invoices.Length == 0)
+        {
+            await ReplyAsync(message.Chat.Id, "برای این آیدی فاکتوری پیدا نشد.", ct);
+            return true;
+        }
+        var buttons = invoices.Select(invoice =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(
+                    $"{invoice.InvoiceNumber} — {invoice.IssuedAt:yyyy/MM/dd}" +
+                    (invoice.CanResend ? string.Empty : " (PDF در دسترس نیست)"),
+                    $"invoiceadmin:resend:{invoice.Id:N}")
+            }).ToArray();
+        await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+            "یکی از حداکثر سه فاکتور آخر را برای ارسال مجدد انتخاب کنید:", buttons, ct);
         return true;
     }
 
@@ -1953,10 +2081,13 @@ public sealed partial class TelegramWebhookController
             FormatManualPaymentTrackingMessage(invoice),
             BuildManualPaymentTrackingButtons(invoice),
             ct);
-        if (!refreshed.IsSuccessful)
+        if (!refreshed.IsSuccessful && !IsTelegramMessageUnchanged(refreshed.Error))
             await ReplyAsync(sourceChatId,
                 $"⚠️ وضعیت مالی ثبت شد اما گزارش فاکتور دستی بروزرسانی نشد: {refreshed.Error}", ct);
     }
+
+    private static bool IsTelegramMessageUnchanged(string? error) =>
+        error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true;
 
     private Task<Invoice?> LoadManualInvoiceForPaymentTrackingAsync(
         string invoiceNumber,

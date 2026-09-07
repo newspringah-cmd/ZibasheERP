@@ -55,6 +55,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramAdminRequestDraftStore _adminRequestDrafts;
     private readonly TelegramInvoiceIssuanceDraftStore _invoiceIssuanceDrafts;
     private readonly TelegramInvoiceCaptionEditDraftStore _invoiceCaptionEditDrafts;
+    private readonly TelegramInvoiceResendDraftStore _invoiceResendDrafts;
     private readonly TelegramInvoiceBottlePriceResolutionDraftStore _invoiceBottlePriceResolutionDrafts;
     private readonly IInvoiceIssuanceService _invoiceIssuanceService;
     private readonly IInvoicePaymentStatusService _invoicePaymentStatusService;
@@ -84,6 +85,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramAdminRequestDraftStore adminRequestDrafts,
         TelegramInvoiceIssuanceDraftStore invoiceIssuanceDrafts,
         TelegramInvoiceCaptionEditDraftStore invoiceCaptionEditDrafts,
+        TelegramInvoiceResendDraftStore invoiceResendDrafts,
         TelegramInvoiceBottlePriceResolutionDraftStore invoiceBottlePriceResolutionDrafts,
         IInvoiceIssuanceService invoiceIssuanceService,
         IInvoicePaymentStatusService invoicePaymentStatusService,
@@ -113,6 +115,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _adminRequestDrafts = adminRequestDrafts;
         _invoiceIssuanceDrafts = invoiceIssuanceDrafts;
         _invoiceCaptionEditDrafts = invoiceCaptionEditDrafts;
+        _invoiceResendDrafts = invoiceResendDrafts;
         _invoiceBottlePriceResolutionDrafts = invoiceBottlePriceResolutionDrafts;
         _invoiceIssuanceService = invoiceIssuanceService;
         _invoicePaymentStatusService = invoicePaymentStatusService;
@@ -913,6 +916,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandleInvoiceStickerMessageAsync(message, cancellationToken))
             return true;
 
+        if (await TryHandleInvoiceResendMessageAsync(message, cancellationToken))
+            return true;
         if (await TryHandleInvoiceCaptionEditMessageAsync(message, cancellationToken))
             return true;
 

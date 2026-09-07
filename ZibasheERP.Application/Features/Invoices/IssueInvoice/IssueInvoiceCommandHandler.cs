@@ -48,8 +48,6 @@ public sealed class IssueInvoiceCommandHandler
         var now = DateTime.UtcNow;
         var paymentAccounts = await _paymentAccountRepository.GetActiveAsync(cancellationToken);
         var telegramGroup = order.Customer.TelegramGroup;
-        var isGiftOnlyInvoice = request.IsGift ||
-            order.Items.All(item => item.SourceSalesListRequest?.IsGift == true);
         var hasDeliveryGroup = telegramGroup is not null && !telegramGroup.IsDeleted &&
             telegramGroup.IsActive && !string.IsNullOrWhiteSpace(telegramGroup.ChatId);
         var invoice = new Invoice
@@ -185,60 +183,6 @@ public sealed class IssueInvoiceCommandHandler
                         Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
                         CustomerId = order.CustomerId, OrderId = order.Id, Channel = "Telegram",
                         EventType = "InvoicePerfumePhoto", Recipient = notification.Recipient,
-                        Payload = System.Text.Json.JsonSerializer.Serialize(new { FileId = photoFileId.Trim() })
-                    }, cancellationToken);
-                }
-            }
-        }
-        else if (notification is null && !isGiftOnlyInvoice)
-        {
-            // The invoice PDF is routed by n8n to the configured manual-review group.
-            // Keep the greeting and product photos with it so an admin receives the same package.
-            var sequence = 0;
-            await _outboxRepository.AddAsync(new NotificationOutbox
-            {
-                Id = Guid.NewGuid(),
-                CreatedAt = now.AddTicks(sequence++),
-                CustomerId = order.CustomerId,
-                OrderId = order.Id,
-                Channel = "Telegram",
-                EventType = "InvoiceManualReviewGreeting",
-                Recipient = "manual-review",
-                Payload = "{}"
-            }, cancellationToken);
-            foreach (var photo in order.Items
-                         .Where(item => item.SourceSalesListRequest?.IsGift != true &&
-                                        !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
-                         .Select(item => new
-                         {
-                             FileId = item.SalesList!.TelegramPhotoFileId!,
-                             PersianName = item.Perfume?.Name ?? item.ManualDescription,
-                             EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
-                         })
-                         .GroupBy(value => value.FileId)
-                         .Select(group => group.First()))
-            {
-                await _outboxRepository.AddAsync(new NotificationOutbox
-                {
-                    Id = Guid.NewGuid(),
-                    CreatedAt = now.AddTicks(sequence++),
-                    CustomerId = order.CustomerId,
-                    OrderId = order.Id,
-                    Channel = "Telegram",
-                    EventType = "InvoiceManualReviewPerfumePhoto",
-                    Recipient = "manual-review",
-                    Payload = System.Text.Json.JsonSerializer.Serialize(photo)
-                }, cancellationToken);
-            }
-            if (!request.IsGift && request.ManualProductPhotoFileIds is { Count: > 0 })
-            {
-                foreach (var photoFileId in request.ManualProductPhotoFileIds.Where(value => !string.IsNullOrWhiteSpace(value)))
-                {
-                    await _outboxRepository.AddAsync(new NotificationOutbox
-                    {
-                        Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
-                        CustomerId = order.CustomerId, OrderId = order.Id, Channel = "Telegram",
-                        EventType = "InvoiceManualReviewPerfumePhoto", Recipient = "manual-review",
                         Payload = System.Text.Json.JsonSerializer.Serialize(new { FileId = photoFileId.Trim() })
                     }, cancellationToken);
                 }

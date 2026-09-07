@@ -57,6 +57,26 @@ public sealed class TelegramInvoiceCaptionEditDraftStore
     public void Remove(long chatId, long userId) => _drafts.TryRemove((chatId, userId), out _);
 }
 
+public sealed class TelegramInvoiceResendDraftStore
+{
+    private readonly ConcurrentDictionary<(long ChatId, long UserId), DateTime> _drafts = new();
+
+    public void Set(long chatId, long userId) =>
+        _drafts[(chatId, userId)] = DateTime.UtcNow;
+
+    public bool IsWaiting(long chatId, long userId)
+    {
+        if (_drafts.TryGetValue((chatId, userId), out var updatedAt) &&
+            updatedAt > DateTime.UtcNow.AddMinutes(-10))
+            return true;
+        _drafts.TryRemove((chatId, userId), out _);
+        return false;
+    }
+
+    public void Remove(long chatId, long userId) =>
+        _drafts.TryRemove((chatId, userId), out _);
+}
+
 public sealed record TelegramInvoiceBottlePriceResolutionDraft(
     Guid SalesListRequestId,
     int SalesListPublicCode,
