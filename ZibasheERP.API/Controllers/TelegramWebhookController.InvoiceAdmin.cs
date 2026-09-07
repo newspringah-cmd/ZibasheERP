@@ -2846,6 +2846,7 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(chatId,
                 parts[2] == "photo" ? "عکس جدید عطر را ارسال کنید:"
                 : parts[2] == "perfumenotes" ? CombinedNotesPrompt
+                : parts[2] == "pricing" ? SalesListPricingPrompt
                 : "مقدار جدید را وارد کنید:", ct);
             return;
         }
@@ -3244,6 +3245,12 @@ public sealed partial class TelegramWebhookController
                     "فرمت نت‌ها معتبر نیست. یک خط برای تک‌نت یا دقیقاً سه خط برای نت ابتدایی، میانی و پایانی بفرستید.", ct);
                 return true;
             }
+            if (draft.EditField == "pricing" &&
+                !TryParseSalesListPricing(input, out _, out _, out _, out var pricingError))
+            {
+                await ReplyAsync(message.Chat.Id, $"{pricingError}\n\n{SalesListPricingPrompt}", ct);
+                return true;
+            }
             draft.EditValue = input;
             draft.Stage = TelegramAdminRequestStage.AwaitingConfirmation;
             _adminRequestDrafts.Set(draft);
@@ -3609,7 +3616,7 @@ public sealed partial class TelegramWebhookController
             [new("لینک عطردان", "adminrequest:editfield:url"), new("برند", "adminrequest:editfield:brand")],
             [new("جنسیت", "adminrequest:editfield:gender"), new("سال تولید", "adminrequest:editfield:year")],
             [new("نت‌ها", "adminrequest:editfield:perfumenotes"), new("آکوردها", "adminrequest:editfield:accords")],
-            [new("قیمت هر میل", "adminrequest:editfield:price"), new("حداقل سفارش", "adminrequest:editfield:minimum")],
+            [new("💰 قیمت، حجم کل و حداقل", "adminrequest:editfield:pricing")],
             [new("توضیحات", "adminrequest:editfield:notes"), new("🖼 تغییر عکس", "adminrequest:editfield:photo")],
             [new("❌ لغو", "adminrequest:cancel")]
         ];
@@ -4079,10 +4086,15 @@ public sealed partial class TelegramWebhookController
                     break;
                 case "perfumenotes": throw new InvalidOperationException("یک خط برای تک‌نت یا دقیقاً سه خط برای نت ابتدایی، میانی و پایانی بفرستید.");
                 case "accords": list.Accords = draft.EditValue.Trim(); break;
-                case "price" when TryParsePositiveDecimal(draft.EditValue, out var price): list.PricePerMl = price; break;
-                case "price": throw new InvalidOperationException("قیمت معتبر نیست.");
-                case "minimum" when TryParsePositiveInt(draft.EditValue, out var minimum) && minimum <= list.TotalVolume: list.MinimumRequestVolumeMl = minimum; break;
-                case "minimum": throw new InvalidOperationException("حداقل سفارش معتبر نیست.");
+                case "pricing" when TryParseSalesListPricing(draft.EditValue, out var price, out var total,
+                    out var minimum, out _):
+                    if (total < list.ReservedVolume)
+                        throw new InvalidOperationException($"حجم کل نمی‌تواند از حجم ثبت‌شده فعلی ({list.ReservedVolume:N0} میل) کمتر باشد.");
+                    list.PricePerMl = price;
+                    list.TotalVolume = total;
+                    list.MinimumRequestVolumeMl = minimum;
+                    break;
+                case "pricing": throw new InvalidOperationException("قیمت، حجم کل یا حداقل حجم معتبر نیست.");
                 case "notes": list.Notes = draft.EditValue == "-" ? null : draft.EditValue.Trim(); break;
                 case "photo": list.TelegramPhotoFileId = draft.EditValue; break;
                 default: throw new InvalidOperationException("فیلد ویرایش معتبر نیست.");

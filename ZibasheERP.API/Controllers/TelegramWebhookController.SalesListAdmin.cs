@@ -21,15 +21,13 @@ public sealed partial class TelegramWebhookController
         TelegramAdminSalesListStage.AwaitingPersianName,
         TelegramAdminSalesListStage.AwaitingTopNotes,
         TelegramAdminSalesListStage.AwaitingAccords,
-        TelegramAdminSalesListStage.AwaitingPrice,
-        TelegramAdminSalesListStage.AwaitingVolume,
-        TelegramAdminSalesListStage.AwaitingMinimumVolume
+        TelegramAdminSalesListStage.AwaitingPrice
     ];
 
     private static readonly string[] ExistingReviewLabels =
     [
         "نام انگلیسی", "لینک صفحه عطر", "برند", "جنسیت", "سال تولید",
-        "نام فارسی", "نت‌ها", "آکوردهای اصلی", "قیمت هر میل", "حجم کل", "حداقل حجم درخواست"
+        "نام فارسی", "نت‌ها", "آکوردهای اصلی", "قیمت، حجم کل و حداقل حجم"
     ];
 
     private static readonly string[] ExistingEditPrompts =
@@ -42,10 +40,15 @@ public sealed partial class TelegramWebhookController
         "نام فارسی جدید عطر را وارد کنید.",
         CombinedNotesPrompt,
         "آکوردهای اصلی جدید را به فارسی وارد کنید.",
-        "قیمت جدید هر میل را به تومان وارد کنید.",
-        "حجم کل لیست جدید را به میل وارد کنید.",
-        "حداقل حجم قابل درخواست مشتری را وارد کنید."
+        SalesListPricingPrompt
     ];
+
+    private const string SalesListPricingPrompt =
+        "سه مقدار را در سه خط وارد کنید:\n" +
+        "خط اول: قیمت هر میل به تومان\n" +
+        "خط دوم: حجم کل به میل\n" +
+        "خط سوم: حداقل حجم درخواست به میل\n\n" +
+        "مثال:\n150000\n100\n1";
 
     private async Task<bool> TryHandleAdminSalesListCallbackAsync(
         TelegramCallbackQuery callback,
@@ -300,41 +303,18 @@ public sealed partial class TelegramWebhookController
                 if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingPrice;
                 _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "قیمت فروش هر میل را به تومان وارد کنید؛ مثال: 150000", cancellationToken);
+                await ReplyAsync(message.Chat.Id, SalesListPricingPrompt, cancellationToken);
                 return true;
 
             case TelegramAdminSalesListStage.AwaitingPrice:
-                if (!TryParsePositiveDecimal(input, out var price))
+                if (!TryParseSalesListPricing(input, out var price, out var volume, out var minimumVolume,
+                        out var pricingError))
                 {
-                    await ReplyAsync(message.Chat.Id, "قیمت معتبر نیست. قیمت هر میل را فقط به تومان وارد کنید؛ مثال: 150000", cancellationToken);
+                    await ReplyAsync(message.Chat.Id, $"{pricingError}\n\n{SalesListPricingPrompt}", cancellationToken);
                     return true;
                 }
                 draft.PricePerMl = price;
-                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
-                draft.Stage = TelegramAdminSalesListStage.AwaitingVolume;
-                _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "برای باز کردن لیست جدید، حجم کل را به میل وارد کنید؛ مثال: 100", cancellationToken);
-                return true;
-
-            case TelegramAdminSalesListStage.AwaitingVolume:
-                if (!TryParsePositiveInt(input, out var volume))
-                {
-                    await ReplyAsync(message.Chat.Id, "حجم هدف باید عددی مثبت باشد.", cancellationToken);
-                    return true;
-                }
                 draft.TotalVolume = volume;
-                if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
-                draft.Stage = TelegramAdminSalesListStage.AwaitingMinimumVolume;
-                _adminSalesListDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id, "حداقل حجم قابل درخواست مشتری را وارد کنید؛ مثال: 1", cancellationToken);
-                return true;
-
-            case TelegramAdminSalesListStage.AwaitingMinimumVolume:
-                if (!TryParsePositiveInt(input, out var minimumVolume) || minimumVolume > draft.TotalVolume)
-                {
-                    await ReplyAsync(message.Chat.Id, $"حداقل حجم باید عددی مثبت و حداکثر {draft.TotalVolume:N0} میل باشد.", cancellationToken);
-                    return true;
-                }
                 draft.MinimumRequestVolumeMl = minimumVolume;
                 if (await ContinueExistingPerfumeReviewAsync(draft, message.Chat.Id, cancellationToken)) return true;
                 draft.Stage = TelegramAdminSalesListStage.AwaitingBottleOwnerChoice;
@@ -573,11 +553,52 @@ public sealed partial class TelegramWebhookController
         5 => draft.PersianName,
         6 => FormatNotesForReview(draft.TopNotes, draft.MiddleNotes, draft.BaseNotes),
         7 => draft.Accords,
-        8 => $"{draft.PricePerMl:N0} تومان",
-        9 => $"{draft.TotalVolume:N0} میل",
-        10 => $"{draft.MinimumRequestVolumeMl:N0} میل",
+        8 => $"قیمت هر میل: {draft.PricePerMl:N0} تومان\n" +
+             $"حجم کل: {draft.TotalVolume:N0} میل\n" +
+             $"حداقل درخواست: {draft.MinimumRequestVolumeMl:N0} میل",
         _ => "—"
     };
+
+    private static bool TryParseSalesListPricing(
+        string input,
+        out decimal pricePerMl,
+        out int totalVolume,
+        out int minimumVolume,
+        out string error)
+    {
+        pricePerMl = 0;
+        totalVolume = 0;
+        minimumVolume = 0;
+        var lines = input.Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length != 3)
+        {
+            error = "فرمت نامعتبر است؛ دقیقاً سه خط بفرستید.";
+            return false;
+        }
+        if (!TryParsePositiveDecimal(lines[0], out pricePerMl))
+        {
+            error = "قیمت هر میل در خط اول معتبر نیست.";
+            return false;
+        }
+        if (!TryParsePositiveInt(lines[1], out totalVolume))
+        {
+            error = "حجم کل در خط دوم معتبر نیست.";
+            return false;
+        }
+        if (!TryParsePositiveInt(lines[2], out minimumVolume))
+        {
+            error = "حداقل حجم در خط سوم معتبر نیست.";
+            return false;
+        }
+        if (minimumVolume > totalVolume)
+        {
+            error = "حداقل حجم نمی‌تواند از حجم کل بیشتر باشد.";
+            return false;
+        }
+        error = string.Empty;
+        return true;
+    }
 
     private async Task SendSalesListPreviewAsync(
         TelegramAdminSalesListDraft draft,
