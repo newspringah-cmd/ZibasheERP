@@ -1761,6 +1761,37 @@ public sealed partial class TelegramWebhookController
             }
             try
             {
+                var preview = await _invoiceIssuanceService.PreviewCompletedListsAsync(selected.ToArray(), ct);
+                await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نمایش آماده شد.", ct);
+                var previewText = "🔎 پیش‌نمایش صدور فاکتور\n" +
+                    $"تعداد فاکتور: {preview.InvoiceCount} | جمع: {preview.TotalAmount:N0} تومان\n\n" +
+                    string.Join("\n", preview.Lines);
+                var previewParts = SplitTelegramMessage(previewText);
+                foreach (var part in previewParts.Take(Math.Max(0, previewParts.Count - 1)))
+                    await ReplyAsync(chatId, part, ct);
+                await _sender.SendInlineKeyboardAsync(chatId.ToString(), previewParts.Last(),
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[] { new TelegramInlineButton("✅ تأیید و ارسال فاکتورها", "invoicebatch:confirmissue") },
+                        new[] { new TelegramInlineButton("↩ بازگشت به انتخاب", "invoiceadmin:batch") },
+                        new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:cancel") }
+                    }, ct);
+            }
+            catch (InvalidOperationException exception)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            }
+            return;
+        }
+        if (callback.Data == "invoicebatch:confirmissue")
+        {
+            if (!_invoiceIssuanceDrafts.TryGet(chatId, userId, out var selected) || selected.Count == 0)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "پیش‌نمایش منقضی شده است.", ct);
+                return;
+            }
+            try
+            {
                 await _sender.AnswerCallbackAsync(callback.Id, "صدور فاکتورها شروع شد…", ct);
                 var result = await _invoiceIssuanceService.IssueCompletedListsAsync(
                     selected.ToArray(), userId.ToString(), ct);

@@ -86,6 +86,14 @@ if (!result.json.telegramCaption.includes('مبلغ قابل پرداخت') ||
     result.json.telegramCaption.length > 1024) {
   throw new Error('Invoice renderer did not prepare the combined Telegram document message.');
 }
+
+const giftGiverEvent = structuredClone(event);
+giftGiverEvent.data.Items[0].IsGift = true;
+giftGiverEvent.data.Items[0].GiftRecipientUsername = '@MB_Sama';
+const [giftGiverResult] = run({ first: () => ({ json: giftGiverEvent }) });
+if (!giftGiverResult.json.telegramCaption.includes('هدیه به @MB_Sama')) {
+  throw new Error('Gift-giver invoice caption did not name the gift recipient.');
+}
 if (result.json.firstCardCopyText !== '6280231544451379' ||
     result.json.secondCardCopyText !== '6037997450926374' ||
     !result.json.firstCardCopyLabel.includes('مسکن') ||

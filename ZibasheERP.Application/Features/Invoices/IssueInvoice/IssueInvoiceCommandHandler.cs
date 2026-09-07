@@ -48,6 +48,8 @@ public sealed class IssueInvoiceCommandHandler
         var now = DateTime.UtcNow;
         var paymentAccounts = await _paymentAccountRepository.GetActiveAsync(cancellationToken);
         var telegramGroup = order.Customer.TelegramGroup;
+        var isGiftOnlyInvoice = request.IsGift ||
+            order.Items.All(item => item.SourceSalesListRequest?.IsGift == true);
         var hasDeliveryGroup = telegramGroup is not null && !telegramGroup.IsDeleted &&
             telegramGroup.IsActive && !string.IsNullOrWhiteSpace(telegramGroup.ChatId);
         var invoice = new Invoice
@@ -188,7 +190,7 @@ public sealed class IssueInvoiceCommandHandler
                 }
             }
         }
-        else
+        else if (notification is null && !isGiftOnlyInvoice)
         {
             // The invoice PDF is routed by n8n to the configured manual-review group.
             // Keep the greeting and product photos with it so an admin receives the same package.

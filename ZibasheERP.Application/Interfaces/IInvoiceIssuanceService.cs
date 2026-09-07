@@ -37,6 +37,11 @@ public sealed record InvoiceIssuanceResult(
     IReadOnlyCollection<string> InvoiceNumbers,
     IReadOnlyCollection<SalesListProductionCopy> ProductionCopies);
 
+public sealed record InvoiceIssuancePreview(
+    int InvoiceCount,
+    decimal TotalAmount,
+    IReadOnlyCollection<string> Lines);
+
 public sealed record SalesListProductionCopy(
     Guid SalesListId,
     int PublicCode,
@@ -79,6 +84,10 @@ public interface IInvoiceIssuanceService
     Task<InvoiceIssuanceResult> IssueCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,
         string issuedByTelegramUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<InvoiceIssuancePreview> PreviewCompletedListsAsync(
+        IReadOnlyCollection<Guid> salesListIds,
         CancellationToken cancellationToken = default);
 
     Task<InvoiceIssuanceResult> IssueManualAsync(

@@ -44,6 +44,16 @@ const invoiceFileBase = String(invoice.InvoiceNumber ?? 'invoice')
   .replace(/[. ]+$/g, '')
   .slice(0, 80) || 'invoice';
 if (items.length === 0) throw new Error('Invoice has no items.');
+const giftRecipients = [...new Set(items
+  .filter((item) => item.IsGift === true)
+  .map((item) => {
+    const giftUsername = String(item.GiftRecipientUsername ?? '').trim().replace(/^@/, '');
+    if (giftUsername) return `@${giftUsername}`;
+    const giftTelegramId = String(item.GiftRecipientTelegramId ?? '').trim();
+    return giftTelegramId || null;
+  })
+  .filter(Boolean))];
+const isGiftOnlyInvoice = items.every((item) => item.IsGift === true);
 
 const renderRows = (pageItems) => pageItems.map((item) => {
   const englishName = item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
@@ -58,6 +68,9 @@ const renderRows = (pageItems) => pageItems.map((item) => {
 
 const captionLines = [
   `🧾 فاکتور عطر ${customerName}`,
+  ...(isGiftOnlyInvoice && giftRecipients.length > 0
+    ? [`🎁 هدیه به ${giftRecipients.join('، ')}`]
+    : []),
   `تاریخ: ${persianDate(invoice.IssuedAt)}`,
   ''
 ];

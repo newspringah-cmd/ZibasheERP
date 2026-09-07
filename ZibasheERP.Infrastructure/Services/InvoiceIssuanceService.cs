@@ -222,6 +222,77 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         return new InvoiceIssuanceResult(batch.Id, orders.Count, invoiceNumbers, productionCopies);
     }
 
+    public async Task<InvoiceIssuancePreview> PreviewCompletedListsAsync(
+        IReadOnlyCollection<Guid> salesListIds,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = salesListIds.Where(id => id != Guid.Empty).Distinct().ToArray();
+        if (ids.Length == 0)
+            throw new InvalidOperationException("حداقل یک لیست تکمیل‌شده را انتخاب کنید.");
+
+        var rows = await _db.SalesListRequests.AsNoTracking()
+            .Where(request => !request.IsDeleted && ids.Contains(request.SalesListId) &&
+                request.Kind == SalesListRequestKind.CurrentBottle &&
+                request.Status == SalesListRequestStatus.Confirmed)
+            .OrderBy(request => request.SalesList!.OpenDate)
+            .ThenBy(request => request.ConfirmedAt)
+            .Select(request => new
+            {
+                request.TelegramUsername,
+                request.TelegramUserId,
+                request.IsGift,
+                request.GiftRecipientTelegramUsername,
+                request.GiftRecipientTelegramUserId,
+                request.VolumeMl,
+                request.PerfumePricePerMl,
+                request.BottlePrice,
+                ListCode = request.SalesList!.PublicCode,
+                PerfumeName = request.SalesList.Perfume != null
+                    ? request.SalesList.Perfume.Name
+                    : request.SalesList.EnglishName
+            })
+            .ToArrayAsync(cancellationToken);
+        if (rows.Length == 0)
+            throw new InvalidOperationException("درخواست تأییدشده‌ای برای پیش‌نمایش وجود ندارد.");
+
+        var lines = new List<string>(rows.Length);
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var row = rows[index];
+            var giver = !string.IsNullOrWhiteSpace(row.TelegramUsername)
+                ? $"@{row.TelegramUsername.Trim().TrimStart('@')}"
+                : row.TelegramUserId;
+            var recipient = !string.IsNullOrWhiteSpace(row.GiftRecipientTelegramUsername)
+                ? $"@{row.GiftRecipientTelegramUsername.Trim().TrimStart('@')}"
+                : row.GiftRecipientTelegramUserId;
+            var identity = row.IsGift
+                ? $"{giver} ← هدیه به {recipient ?? "نامشخص"}"
+                : giver;
+            var destination = string.Empty;
+            if (row.IsGift)
+            {
+                var recipientCustomer = await ResolveGiftRecipientAsync(
+                    row.GiftRecipientTelegramUsername,
+                    row.GiftRecipientTelegramUserId,
+                    cancellationToken);
+                var recipientGroup = recipientCustomer?.TelegramGroup;
+                destination = recipientGroup is { IsDeleted: false, IsActive: true } &&
+                              !string.IsNullOrWhiteSpace(recipientGroup.ChatId)
+                    ? $" | مقصد گیرنده: {recipientGroup.Title ?? recipient}"
+                    : " | مقصد گیرنده: بررسی دستی";
+            }
+            lines.Add($"{index + 1}. {identity} | {row.PerfumeName} | {row.VolumeMl} میل | لیست {row.ListCode}{destination}");
+        }
+        var invoiceCount = rows.Select(row =>
+                !string.IsNullOrWhiteSpace(row.TelegramUsername)
+                    ? $"u:{NormalizeCustomerUsername(row.TelegramUsername)}"
+                    : $"t:{row.TelegramUserId.Trim()}")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        var total = rows.Sum(row => row.PerfumePricePerMl * row.VolumeMl + row.BottlePrice);
+        return new InvoiceIssuancePreview(invoiceCount, total, lines);
+    }
+
     private static decimal ResolveInvoiceBottleAmount(SalesListRequest request, int publicCode)
     {
         if (request.IsBottleOwner)
@@ -266,14 +337,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             var request = item.SourceSalesListRequest!;
             var recipientTelegramId = request.GiftRecipientTelegramUserId?.Trim();
             var recipientUsername = request.GiftRecipientTelegramUsername?.Trim().TrimStart('@');
-            var recipientWithAt = string.IsNullOrWhiteSpace(recipientUsername) ? null : $"@{recipientUsername}";
-            var recipient = await _db.Customers.AsNoTracking()
-                .Include(customer => customer.TelegramGroup)
-                .FirstOrDefaultAsync(customer => !customer.IsDeleted &&
-                    (customer.TelegramId == recipientTelegramId ||
-                     (!string.IsNullOrWhiteSpace(recipientUsername) &&
-                      (customer.Username == recipientUsername || customer.Username == recipientWithAt))),
-                    cancellationToken);
+            var recipient = await ResolveGiftRecipientAsync(
+                recipientUsername, recipientTelegramId, cancellationToken);
             var group = recipient?.TelegramGroup;
             var hasGroup = group is not null && !group.IsDeleted && group.IsActive &&
                            !string.IsNullOrWhiteSpace(group.ChatId);
@@ -372,6 +437,36 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     }
                 }, now.AddTicks(sequence++)), cancellationToken);
         }
+    }
+
+    private async Task<Customer?> ResolveGiftRecipientAsync(
+        string? recipientUsername,
+        string? recipientTelegramId,
+        CancellationToken cancellationToken)
+    {
+        var normalizedUsername = NormalizeCustomerUsername(recipientUsername);
+        if (!string.IsNullOrWhiteSpace(normalizedUsername))
+        {
+            // Imported identities can reuse synthetic TelegramId values. When the
+            // request contains a username, it is the authoritative gift recipient.
+            // Falling back to an OR match here could silently deliver the gift to a
+            // different customer whose synthetic TelegramId happens to collide.
+            return await _db.Customers.AsNoTracking()
+                .Include(customer => customer.TelegramGroup)
+                .Where(customer => !customer.IsDeleted && customer.Username != null)
+                .FirstOrDefaultAsync(customer =>
+                    customer.Username!.ToLower() == normalizedUsername ||
+                    customer.Username.ToLower() == $"@{normalizedUsername}",
+                    cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(recipientTelegramId))
+            return null;
+
+        return await _db.Customers.AsNoTracking()
+            .Include(customer => customer.TelegramGroup)
+            .FirstOrDefaultAsync(customer => !customer.IsDeleted &&
+                customer.TelegramId == recipientTelegramId.Trim(), cancellationToken);
     }
 
     public async Task<InvoiceIssuanceResult> IssueManualAsync(

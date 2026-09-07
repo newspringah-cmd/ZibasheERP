@@ -50,6 +50,54 @@ public sealed class IssueInvoiceCommandHandlerTests
         Assert.True(repository.SaveChangesCalled);
     }
 
+    [Fact]
+    public async Task Handle_GiftOnlyOrder_SendsGreetingThenInvoiceAndNoPhotoToGiver()
+    {
+        var customer = new Customer
+        {
+            Id = Guid.NewGuid(), FullName = "Gift Giver", Mobile = "09120000001",
+            TelegramId = "1001",
+            TelegramGroup = new CustomerTelegramGroup
+            {
+                Id = Guid.NewGuid(), ChatId = "-1001234567890", IsActive = true
+            }
+        };
+        var giftRequest = new SalesListRequest
+        {
+            Id = Guid.NewGuid(), IsGift = true,
+            GiftRecipientTelegramUsername = "MB_Sama"
+        };
+        var order = new Order
+        {
+            Id = Guid.NewGuid(), Customer = customer, CustomerId = customer.Id,
+            OrderNumber = "ZS-GIFT-TEST", FinalAmount = 100_000,
+            Items =
+            {
+                new OrderItem
+                {
+                    Id = Guid.NewGuid(), RequestedVolumeMl = 2,
+                    SourceSalesListRequest = giftRequest
+                }
+            }
+        };
+        var repository = new InvoiceRepositoryStub(order);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new IssueInvoiceCommandHandler(repository, outbox, new PaymentAccountRepositoryStub());
+
+        await handler.Handle(new IssueInvoiceCommand(order.Id), CancellationToken.None);
+
+        Assert.Equal(2, outbox.AddedNotifications.Count);
+        var greeting = outbox.AddedNotifications[0];
+        Assert.Equal("Telegram", greeting.Channel);
+        Assert.Equal("InvoiceGreeting", greeting.EventType);
+        var invoiceEvent = outbox.AddedNotifications[1];
+        Assert.Equal("N8n", invoiceEvent.Channel);
+        Assert.Equal("InvoiceIssued", invoiceEvent.EventType);
+        Assert.Contains("MB_Sama", invoiceEvent.Payload);
+        Assert.False(outbox.AddedNotifications.Any(
+            value => value.EventType == "InvoicePerfumePhoto"));
+    }
+
     private sealed class InvoiceRepositoryStub(Order order) : IInvoiceRepository
     {
         public Invoice? AddedInvoice { get; private set; }
