@@ -671,14 +671,31 @@ public sealed partial class TelegramWebhookController
         => FormatChannelSalesListPages(list, requests).Main;
 
     internal static (string Main, string? Continuation) FormatChannelSalesListPages(
-        SalesList list, IReadOnlyCollection<SalesListRequest> requests)
+        SalesList list, IReadOnlyCollection<SalesListRequest> requests,
+        bool aggregateBottleOwnerGifts = false)
     {
         const int safeCaptionLength = 1000;
-        var rosterGroups = requests
+        var currentRequests = requests
             .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
+            .ToArray();
+        var bottleOwner = aggregateBottleOwnerGifts
+            ? currentRequests.FirstOrDefault(value => value.IsBottleOwner)
+            : null;
+        var bottleOwnerGiftVolume = bottleOwner is null
+            ? 0
+            : currentRequests.Where(value => value.IsGift && IsBottleOwnerGift(value, bottleOwner))
+                .Sum(value => value.VolumeMl);
+        var rosterGroups = currentRequests
+            .Where(value => bottleOwner is null || !value.IsGift || !IsBottleOwnerGift(value, bottleOwner))
+            .Select(value => new
+            {
+                Request = value,
+                VolumeMl = value.VolumeMl + (value.IsBottleOwner ? bottleOwnerGiftVolume : 0)
+            })
             .GroupBy(value => value.VolumeMl)
             .OrderByDescending(value => value.Key)
-            .Select(value => (Volume: value.Key, Users: value.Select(item => Html(DisplayUser(item))).ToArray()))
+            .Select(value => (Volume: value.Key,
+                Users: value.Select(item => Html(DisplayUser(item.Request))).ToArray()))
             .ToArray();
         var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle)
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
@@ -818,6 +835,19 @@ public sealed partial class TelegramWebhookController
     }
     private static string? NormalizeUsername(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimStart('@');
+    private static bool IsBottleOwnerGift(
+        SalesListRequest gift, SalesListRequest bottleOwner)
+    {
+        if (!string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUserId) &&
+            string.Equals(gift.GiftRecipientTelegramUserId.Trim(), bottleOwner.TelegramUserId.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+            return true;
+        var giftRecipientUsername = NormalizeUsername(gift.GiftRecipientTelegramUsername);
+        var ownerUsername = NormalizeUsername(bottleOwner.TelegramUsername);
+        return !string.IsNullOrWhiteSpace(giftRecipientUsername) &&
+               !string.IsNullOrWhiteSpace(ownerUsername) &&
+               string.Equals(giftRecipientUsername, ownerUsername, StringComparison.OrdinalIgnoreCase);
+    }
     private static string BottleLabel(string type) =>
         string.Equals(type, nameof(BottleType.Fancy), StringComparison.OrdinalIgnoreCase) ? "شیشه فانتزی" : "شیشه نرمال";
     private static string EncodeCompactGuid(Guid value) => TelegramCallbackParser.EncodeGuid(value);

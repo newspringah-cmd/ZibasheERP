@@ -369,22 +369,32 @@ public sealed partial class TelegramWebhookController
     {
         if (string.IsNullOrWhiteSpace(_options.DecantChatId))
             return new TelegramSendResult(false, "گروه دکانت تنظیم نشده است.");
-        var items = await _db.OrderItems.AsNoTracking()
-            .Include(value => value.Order).ThenInclude(value => value!.Customer)
+        var requests = await _db.SalesListRequests.AsNoTracking()
             .Include(value => value.Bottle)
             .Where(value => !value.IsDeleted && value.SalesListId == list.Id &&
-                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue)
-            .OrderBy(value => value.RowNumber).ThenBy(value => value.CreatedAt).ToArrayAsync(ct);
-        var rows = items.Select((item, index) =>
-            $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — {item.RequestedVolumeMl} میل — " +
-            $"{(item.IsBottleOwner ? "صاحب باتل" : item.Bottle?.Name ?? "شیشه ثبت‌نشده")}");
-        var name = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
-        return await _sender.SendInlineKeyboardAsync(_options.DecantChatId.Trim(),
-            $"🧴 دکانت جدید\n\nعطر: {name}\nکد لیست: {list.PublicCode}\nتعداد آیتم: {items.Length}\n\n{string.Join("\n", rows)}",
-            new IReadOnlyCollection<TelegramInlineButton>[]
-            {
-                new[] { new TelegramInlineButton("📸 ارسال عکس دکانت", $"decantphoto:list:{list.Id:N}") }
-            }, ct);
+                value.Kind == SalesListRequestKind.CurrentBottle &&
+                (value.Status == SalesListRequestStatus.Confirmed ||
+                 value.Status == SalesListRequestStatus.Promoted ||
+                 value.Status == SalesListRequestStatus.QueuedForInvoice ||
+                 value.Status == SalesListRequestStatus.Invoiced))
+            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
+            .ToArrayAsync(ct);
+        var pages = FormatChannelSalesListPages(list, requests, aggregateBottleOwnerGifts: true);
+        var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[] { new TelegramInlineButton("📸 ارسال عکس دکانت", $"decantphoto:list:{list.Id:N}") }
+        };
+        TelegramSendResult result;
+        var caption = "🧴 <b>دکانت جدید</b>\n\n" + pages.Main;
+        if (!string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
+            result = await _sender.SendPhotoWithKeyboardAsync(
+                _options.DecantChatId.Trim(), list.TelegramPhotoFileId, caption, buttons, ct);
+        else
+            result = await _sender.SendInlineKeyboardAsync(
+                _options.DecantChatId.Trim(), caption, buttons, ct);
+        if (result.IsSuccessful && !string.IsNullOrWhiteSpace(pages.Continuation))
+            await _sender.SendHtmlAsync(_options.DecantChatId.Trim(), pages.Continuation, ct);
+        return result;
     }
 
     private async Task SendOrderFlowListAsync(long chatId, OrderStatus status, int page, CancellationToken ct)

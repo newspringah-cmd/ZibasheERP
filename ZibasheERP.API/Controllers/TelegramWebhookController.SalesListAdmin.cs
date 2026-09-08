@@ -1,5 +1,6 @@
 using System.Globalization;
 using MediatR;
+using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Perfumes.CreatePerfume;
 using ZibasheERP.Application.Features.SalesLists.ManageSalesLists;
@@ -649,16 +650,31 @@ public sealed partial class TelegramWebhookController
             {
                 if (!draft.PerfumeId.HasValue)
                 {
-                    var perfume = await _mediator.Send(new CreatePerfumeCommand(
-                        draft.PersianName,
-                        draft.EnglishName,
-                        draft.DisplayBrand,
-                        draft.PricePerMl,
-                        draft.TotalVolume,
-                        draft.Notes), cancellationToken);
-                    draft.PerfumeId = perfume.Id;
-                    draft.PerfumeName = perfume.Name;
-                    draft.Brand = perfume.Brand;
+                    // Admins may publish another sales list for an existing perfume. Reuse
+                    // the perfume master record while still creating a distinct list/post.
+                    var existingPerfume = await _db.Perfumes.FirstOrDefaultAsync(value =>
+                        !value.IsDeleted &&
+                        value.EnglishName == draft.EnglishName.Trim() &&
+                        value.Brand == draft.DisplayBrand.Trim(), cancellationToken);
+                    if (existingPerfume is not null)
+                    {
+                        draft.PerfumeId = existingPerfume.Id;
+                        draft.PerfumeName = existingPerfume.Name;
+                        draft.Brand = existingPerfume.Brand;
+                    }
+                    else
+                    {
+                        var perfume = await _mediator.Send(new CreatePerfumeCommand(
+                            draft.PersianName,
+                            draft.EnglishName,
+                            draft.DisplayBrand,
+                            draft.PricePerMl,
+                            draft.TotalVolume,
+                            draft.Notes), cancellationToken);
+                        draft.PerfumeId = perfume.Id;
+                        draft.PerfumeName = perfume.Name;
+                        draft.Brand = perfume.Brand;
+                    }
                 }
 
                 var created = await _mediator.Send(
