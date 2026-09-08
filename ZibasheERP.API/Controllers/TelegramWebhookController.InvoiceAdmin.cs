@@ -288,6 +288,17 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("invoiceadmin:menu:", StringComparison.Ordinal))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            var section = callback.Data["invoiceadmin:menu:".Length..];
+            if (section == "main")
+                await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id, null, ct);
+            else
+                await SendInvoiceAdminSectionAsync(callback.Message.Chat.Id, section, callback.From.Id, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal))
         {
             if (!IsPrimaryOwner(callback.From.Id))
@@ -582,8 +593,16 @@ public sealed partial class TelegramWebhookController
             }
             await _invoiceTelegramSettingRepository.SetGreetingStickerFileIdAsync(null, callback.From.Id, ct);
             await _sender.AnswerCallbackAsync(callback.Id, "استیکر حذف شد.", ct);
-            await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id,
-                "از این پس پیام «سلام 👋» ارسال می‌شود.", ct);
+            await ReplyAsync(callback.Message.Chat.Id, "از این پس پیام «سلام 👋» ارسال می‌شود.", ct);
+            await SendInvoiceAdminSectionAsync(callback.Message.Chat.Id, "settings", callback.From.Id, ct);
+            return true;
+        }
+
+        if (callback.Data == "invoiceadmin:add")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "برای افزودن حساب این دستور را بفرستید:\n/bankadd شماره‌کارت | نام صاحب حساب | نام بانک", ct);
             return true;
         }
 
@@ -600,7 +619,7 @@ public sealed partial class TelegramWebhookController
             }
         }
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-        await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id, null, ct);
+        await SendInvoiceAdminSectionAsync(callback.Message.Chat.Id, "settings", callback.From.Id, ct);
         return true;
     }
 
@@ -1376,97 +1395,111 @@ public sealed partial class TelegramWebhookController
 
     private async Task SendInvoiceAdminMenuAsync(long chatId, string? notice, CancellationToken ct)
     {
-        var accounts = await _paymentAccountRepository.GetForAdminAsync(ct);
-        var greetingSticker = await _invoiceTelegramSettingRepository.GetGreetingStickerFileIdAsync(ct);
-        var lines = accounts.Count == 0
-            ? "هنوز حساب بانکی ثبت نشده است."
-            : string.Join("\n\n", accounts.Select((x, i) =>
-                $"{i + 1}. {(x.IsActive ? "✅" : "⛔")} {FormatCard(x.CardNumber)}\n{x.AccountHolder} — بانک {x.BankName}"));
-        var buttons = accounts.SelectMany(x => new IReadOnlyCollection<TelegramInlineButton>[]
+        var message = (notice is null ? "" : notice + "\n\n") +
+            "⚙️ مدیریت زیباشی\n\nبخش موردنظر را انتخاب کنید:";
+        IReadOnlyCollection<TelegramInlineButton>[] buttons =
         {
-            new[] { new TelegramInlineButton(x.IsActive ? "غیرفعال‌کردن" : "فعال‌کردن", $"invoiceadmin:toggle:{x.Id:N}"),
-                    new TelegramInlineButton("حذف", $"invoiceadmin:delete:{x.Id:N}") }
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("➕ راهنمای افزودن حساب", "invoiceadmin:add")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🧴 لیست فروش جدید", "adminlist:new")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🧾 صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("📦 مخزن انتظار عطرها", "invoiceadmin:waiting")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("✏️ ویرایش کپشن PDF فاکتور", "invoiceadmin:edit-caption")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🔁 ارسال مجدد فاکتور", "invoiceadmin:resend")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("📸 ارسال عکس دکانت", "decantphoto:start")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("⏭ ثبت صف بطری بعدی", "adminrequest:start:next")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("✍️ ثبت آیتم دستی", "adminrequest:start:custom")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("↕️ تغییر میل آیتم", "adminrequest:start:changevolume")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🗑 حذف یک آیتم", "adminrequest:start:removeitem")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("☑️ حذف چند آیتم مشتری", "adminrequest:start:removemultiple")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🏷 حذف آیدی از لیبل آیتم", "adminrequest:start:labelnoid")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("✏️ نام دلخواه روی لیبل آیتم", "adminrequest:start:labeltext")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🎁 ثبت دستی هدیه", "adminrequest:start:gift")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🗑 حذف تمام آیتم‌های مشتری", "adminrequest:start:removeall")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("✏️ ویرایش لیست فروش", "adminrequest:start:edit")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("👑 مدیریت صاحب و صف باتل", "adminrequest:start:queue")
-        }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
-        {
-            new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup")
-        }).ToList();
-        if (long.TryParse(_options.OwnerUserId, out var ownerUserId))
-        {
-            buttons.Add(new[] { new TelegramInlineButton("💰 مدیریت قیمت‌ها", "invoiceadmin:pricing") });
-            buttons.Add(new[]
+            new[]
             {
-                new TelegramInlineButton("👋 تغییر استیکر سلام", "invoiceadmin:sticker"),
-                new TelegramInlineButton("🗑 حذف استیکر", "invoiceadmin:sticker-clear")
-            });
-            if (chatId == ownerUserId)
+                new TelegramInlineButton("🧾 فاکتورها", "invoiceadmin:menu:invoices"),
+                new TelegramInlineButton("🧴 لیست‌های فروش", "invoiceadmin:menu:lists")
+            },
+            new[]
+            {
+                new TelegramInlineButton("👥 آیتم‌ها و صف", "invoiceadmin:menu:items"),
+                new TelegramInlineButton("⚙️ تنظیمات", "invoiceadmin:menu:settings")
+            }
+        };
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
+    }
+
+    private async Task SendInvoiceAdminSectionAsync(long chatId, string section, long userId, CancellationToken ct)
+    {
+        var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        string message;
+        switch (section)
+        {
+            case "invoices":
+                message = "🧾 مدیریت فاکتورها";
+                buttons.Add(new[] { new TelegramInlineButton("صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch") });
+                buttons.Add(new[] { new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual") });
                 buttons.Add(new[]
                 {
-                    new TelegramInlineButton("🔄 بازسازی همه پست‌های لیست", "invoiceadmin:rebuild-sales-lists")
+                    new TelegramInlineButton("📦 مخزن انتظار", "invoiceadmin:waiting"),
+                    new TelegramInlineButton("🔁 ارسال مجدد", "invoiceadmin:resend")
                 });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("✏️ ویرایش کپشن PDF", "invoiceadmin:edit-caption"),
+                    new TelegramInlineButton("📸 عکس دکانت", "decantphoto:start")
+                });
+                break;
+            case "lists":
+                message = "🧴 مدیریت لیست‌های فروش";
+                buttons.Add(new[] { new TelegramInlineButton("➕ لیست فروش جدید", "adminlist:new") });
+                buttons.Add(new[] { new TelegramInlineButton("✏️ ویرایش لیست فروش", "adminrequest:start:edit") });
+                buttons.Add(new[] { new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup") });
+                if (IsPrimaryOwner(userId))
+                    buttons.Add(new[] { new TelegramInlineButton("🔄 بازسازی همه پست‌های لیست", "invoiceadmin:rebuild-sales-lists") });
+                break;
+            case "items":
+                message = "👥 مدیریت آیتم‌ها و صف باتل";
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("✍️ ثبت آیتم دستی", "adminrequest:start:custom"),
+                    new TelegramInlineButton("🎁 ثبت هدیه", "adminrequest:start:gift")
+                });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("⏭ ثبت صف بعدی", "adminrequest:start:next"),
+                    new TelegramInlineButton("👑 صاحب و صف باتل", "adminrequest:start:queue")
+                });
+                buttons.Add(new[] { new TelegramInlineButton("↕️ تغییر میل آیتم", "adminrequest:start:changevolume") });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("🗑 حذف یک آیتم", "adminrequest:start:removeitem"),
+                    new TelegramInlineButton("☑️ حذف چند آیتم", "adminrequest:start:removemultiple")
+                });
+                buttons.Add(new[] { new TelegramInlineButton("🗑 حذف همه آیتم‌های مشتری", "adminrequest:start:removeall") });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("🏷 حذف آیدی از لیبل", "adminrequest:start:labelnoid"),
+                    new TelegramInlineButton("✏️ نام دلخواه لیبل", "adminrequest:start:labeltext")
+                });
+                break;
+            case "settings":
+            {
+                var accounts = await _paymentAccountRepository.GetForAdminAsync(ct);
+                var greetingSticker = await _invoiceTelegramSettingRepository.GetGreetingStickerFileIdAsync(ct);
+                var accountLines = accounts.Count == 0
+                    ? "هنوز حساب بانکی ثبت نشده است."
+                    : string.Join("\n\n", accounts.Select((x, i) =>
+                        $"{i + 1}. {(x.IsActive ? "✅" : "⛔")} {FormatCard(x.CardNumber)}\n{x.AccountHolder} — بانک {x.BankName}"));
+                message = $"⚙️ تنظیمات فاکتور\n👋 استیکر سلام: {(string.IsNullOrWhiteSpace(greetingSticker) ? "پیام متنی" : "فعال")}\n🏦 حساب‌ها: {accounts.Count}/4\n\n{accountLines}\n\nافزودن حساب:\n/bankadd شماره‌کارت | نام صاحب حساب | نام بانک";
+                foreach (var account in accounts)
+                    buttons.Add(new[]
+                    {
+                        new TelegramInlineButton(account.IsActive ? "غیرفعال‌کردن" : "فعال‌کردن", $"invoiceadmin:toggle:{account.Id:N}"),
+                        new TelegramInlineButton("حذف", $"invoiceadmin:delete:{account.Id:N}")
+                    });
+                buttons.Add(new[] { new TelegramInlineButton("➕ راهنمای افزودن حساب", "invoiceadmin:add") });
+                if (IsPrimaryOwner(userId))
+                {
+                    buttons.Add(new[] { new TelegramInlineButton("💰 مدیریت قیمت‌ها", "invoiceadmin:pricing") });
+                    buttons.Add(new[]
+                    {
+                        new TelegramInlineButton("👋 تغییر استیکر", "invoiceadmin:sticker"),
+                        new TelegramInlineButton("🗑 حذف استیکر", "invoiceadmin:sticker-clear")
+                    });
+                }
+                break;
+            }
+            default:
+                await SendInvoiceAdminMenuAsync(chatId, null, ct);
+                return;
         }
-        var message = (notice is null ? "" : notice + "\n\n") +
-            $"⚙️ تنظیمات فاکتور زیباشی\n⏱ مهلت پرداخت: ۲۴ ساعت\n👋 استیکر سلام: {(string.IsNullOrWhiteSpace(greetingSticker) ? "پیام متنی" : "فعال")}\n🏦 حساب‌ها: {accounts.Count}/4 (پیشنهاد: ۲ حساب فعال)\n\nحساب‌های بانکی:\n" + lines +
-            "\n\nافزودن حساب:\n/bankadd شماره‌کارت | نام صاحب حساب | نام بانک";
-        message += "\n\nثبت صف بطری بعدی (فقط ادمین):\n/nextbottle کدلیست | @username | مقدارمیل";
-        message += "\n\nثبت آیتم دستی از کامنت:\n/listrequest کدلیست | @username | مقدارمیل | نرمال یا فانتزی";
-        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons.ToArray(), ct);
+        buttons.Add(new[] { new TelegramInlineButton("↩️ بازگشت به منوی اصلی", "invoiceadmin:menu:main") });
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
     }
 
     private async Task<bool> TryHandleInvoiceCaptionEditMessageAsync(
