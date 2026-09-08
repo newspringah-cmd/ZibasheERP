@@ -174,6 +174,14 @@ public sealed partial class TelegramWebhookController
         var itemCounts = await _db.OrderItems.AsNoTracking().Where(value => !value.IsDeleted)
             .GroupBy(value => value.FulfillmentStatus).Select(group => new { group.Key, Count = group.Count() })
             .ToDictionaryAsync(value => value.Key, value => value.Count, ct);
+        var completedListCount = listCounts.GetValueOrDefault(SalesListStatus.Full) +
+                                 listCounts.GetValueOrDefault(SalesListStatus.Closed);
+        var awaitingPurchaseListCount = completedListCount +
+                                        listCounts.GetValueOrDefault(SalesListStatus.AwaitingAvailability);
+        var decantQueueListCount = await _db.OrderItems.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
+                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue)
+            .Select(value => value.SalesListId).Distinct().CountAsync(ct);
         var waitingArrivalLists = await _db.OrderItems.AsNoTracking()
             .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
@@ -181,12 +189,12 @@ public sealed partial class TelegramWebhookController
         var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>
         {
             new[] { new TelegramInlineButton($"📝 انتظار تکمیل لیست ({listCounts.GetValueOrDefault(SalesListStatus.Open)})", "orderflow:summary:open") },
-            new[] { new TelegramInlineButton($"✅ لیست تکمیل‌شده ({listCounts.GetValueOrDefault(SalesListStatus.Full)})", "orderflow:summary:full") },
-            new[] { new TelegramInlineButton($"🛒 در انتظار خرید ({listCounts.GetValueOrDefault(SalesListStatus.AwaitingAvailability)})", "orderflow:summary:awaiting") },
+            new[] { new TelegramInlineButton($"✅ لیست تکمیل‌شده ({completedListCount})", "orderflow:summary:full") },
+            new[] { new TelegramInlineButton($"🛒 در انتظار خرید ({awaitingPurchaseListCount})", "orderflow:summary:awaiting") },
             new[] { new TelegramInlineButton($"✅ خرید شده ({waitingArrivalLists})", "orderflow:completed:purchased") },
             new[] { new TelegramInlineButton($"✅ فاکتور شده ({waitingArrivalLists})", "orderflow:completed:invoiced") },
             new[] { new TelegramInlineButton($"✈️ منتظر رسیدن به ایران ({waitingArrivalLists})", "orderflow:arrival") },
-            new[] { new TelegramInlineButton($"🧴 صف دکانت ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.DecantQueue)})", "orderflow:itemstatus:8") },
+            new[] { new TelegramInlineButton($"🧴 صف دکانت ({decantQueueListCount})", "orderflow:itemstatus:8") },
             new[] { new TelegramInlineButton($"📦 آماده ارسال ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.DecantedReadyToShip)})", "orderflow:itemstatus:9") },
             new[] { new TelegramInlineButton($"🚚 ارسال‌شده ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.Shipped)})", "orderflow:itemstatus:10") }
         };
@@ -267,8 +275,12 @@ public sealed partial class TelegramWebhookController
         var statuses = stage switch
         {
             "open" => new[] { SalesListStatus.Open },
-            "full" => new[] { SalesListStatus.Full },
-            "awaiting" => new[] { SalesListStatus.AwaitingAvailability },
+            "full" => new[] { SalesListStatus.Full, SalesListStatus.Closed },
+            "awaiting" => new[]
+            {
+                SalesListStatus.Full, SalesListStatus.Closed,
+                SalesListStatus.AwaitingAvailability
+            },
             _ => Array.Empty<SalesListStatus>()
         };
         if (statuses.Length == 0)
