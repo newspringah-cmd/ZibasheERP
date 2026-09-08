@@ -538,10 +538,17 @@ public sealed partial class TelegramWebhookController
     }
 
     private async Task<bool> IsAuthorizedAccountingShippingAdminAsync(long chatId, long userId, CancellationToken ct) =>
-        (IsPrimaryOwner(userId) ||
-         await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct)) &&
+        IsAuthorizedShippingOperator(userId) &&
         await _db.CustomerTelegramGroups.AsNoTracking().AnyAsync(value =>
             !value.IsDeleted && value.IsActive && value.ChatId == chatId.ToString(), ct);
+
+    private bool IsAuthorizedShippingOperator(long userId)
+    {
+        if (IsPrimaryOwner(userId)) return true;
+        return _options.ShippingOperatorUserIds
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(value => long.TryParse(value, out var configuredId) && configuredId == userId);
+    }
 
     private async Task<bool> IsAuthorizedShippingAdminAsync(long chatId, long userId, CancellationToken ct)
     {

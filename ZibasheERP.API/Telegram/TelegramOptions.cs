@@ -25,6 +25,7 @@ public sealed class TelegramOptions
     public string AccountingChatId { get; set; } = string.Empty;
     public string InvoiceGreetingStickerFileId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
+    public string ShippingOperatorUserIds { get; set; } = string.Empty;
     public int PollIntervalSeconds { get; set; } = 10;
     public int BatchSize { get; set; } = 20;
     public int MaxAttempts { get; set; } = 5;
