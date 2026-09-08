@@ -370,9 +370,6 @@ public sealed partial class TelegramWebhookController
         var customer = await _db.Customers.AsNoTracking().FirstAsync(value => value.Id == draft.CustomerId, ct);
         var addresses = await _db.Addresses.AsNoTracking().Where(value => !value.IsDeleted && value.CustomerId == draft.CustomerId)
             .OrderByDescending(value => value.IsDefault).ThenByDescending(value => value.CreatedAt).Take(10).ToArrayAsync(ct);
-        var readyCount = await _db.OrderItems.CountAsync(value => !value.IsDeleted && value.Order != null &&
-            value.Order.CustomerId == draft.CustomerId &&
-            value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && value.ShippingRequestId == null, ct);
         var buttons = addresses.Select(address => (IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton($"{address.ReceiverName} — {address.City}{(address.IsDefault ? " ✅" : "")}",
@@ -380,22 +377,15 @@ public sealed partial class TelegramWebhookController
         }).ToList();
         buttons.Add(new[] { new TelegramInlineButton("➕ ثبت آدرس جدید", "shipping:preparenew") });
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
-            $"📮 آماده‌سازی پست\nمشتری: {OrderCustomerLabel(customer)}\nدکانت آماده و بدون درخواست: {readyCount}\n\nآدرس را بررسی و انتخاب کنید:", buttons, ct);
+            $"📮 آماده‌سازی پست\nمشتری: {OrderCustomerLabel(customer)}\n\nآدرس را بررسی و انتخاب کنید:", buttons, ct);
     }
 
     private async Task SendShippingPreparationPreviewAsync(TelegramShippingPreparationDraft draft, CancellationToken ct)
     {
         var customer = await _db.Customers.AsNoTracking().FirstAsync(value => value.Id == draft.CustomerId, ct);
         var address = await _db.Addresses.AsNoTracking().FirstAsync(value => value.Id == draft.AddressId, ct);
-        var items = await ReadyShippingItems(draft.CustomerId).ToArrayAsync(ct);
-        var lines = items.Select((item, index) =>
-            $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل");
-        await SendShippingTextChunksAsync(draft.ChatId, "اقلام آماده ارسال:", lines, ct);
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
-            $"پیش‌نمایش ارسال برای پست\n\nمشتری: {OrderCustomerLabel(customer)}\n" +
-            $"گیرنده: {address.ReceiverName}\nموبایل: {address.Mobile}\nکدپستی: {address.PostalCode}\n" +
-            $"آدرس: {address.Province}، {address.City}، {address.FullAddress}\n\n" +
-            $"تعداد دکانت آماده: {items.Length}\nمجموع میل: {items.Sum(value => value.RequestedVolumeMl)}",
+            $"📍 آدرس\n\nمشتری: {OrderCustomerLabel(customer)}\n\n{FormatAddressForDisplay(address)}",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[] { new TelegramInlineButton("📮 ارسال آدرس به گروه پست", "shipping:preparedispatch") }
@@ -413,28 +403,21 @@ public sealed partial class TelegramWebhookController
         var customer = await _db.Customers.AsNoTracking().FirstAsync(value => value.Id == draft.CustomerId, ct);
         var address = await _db.Addresses.AsNoTracking().FirstAsync(value => value.Id == draft.AddressId, ct);
         var items = await ReadyShippingItems(draft.CustomerId).ToArrayAsync(ct);
-        if (items.Length == 0)
-        {
-            await _sender.AnswerCallbackAsync(callback.Id, "دکانت آماده‌ای برای ارسال باقی نمانده است.", ct, true);
-            return;
-        }
         var requestId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         foreach (var item in items) { item.ShippingRequestId = requestId; item.ShippingRequestedAt = now; item.UpdatedAt = now; }
         await _db.SaveChangesAsync(ct);
         var identity = OrderCustomerLabel(customer);
-        var lines = items.Select((item, index) =>
-            $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل — {identity}");
-        var sent = await _sender.SendInlineKeyboardAsync(_options.ShippingChatId.Trim(),
-            $"📦 درخواست ارسال جدید\n\nآیدی: {identity}\nگیرنده: {address.ReceiverName}\nموبایل: {address.Mobile}\n" +
-            $"کدپستی: {address.PostalCode}\nآدرس: {address.Province}، {address.City}، {address.FullAddress}\n\n" +
-            $"تعداد دکانت آماده: {items.Length}\nمجموع دکانت قابل ارسال: {items.Sum(value => value.RequestedVolumeMl)} میل",
-            new IReadOnlyCollection<TelegramInlineButton>[]
-            {
-                new[] { new TelegramInlineButton("☑️ انتخاب برای گزارش کلی", $"shipping:select:{requestId:N}") },
-                new[] { new TelegramInlineButton("📊 گزارش کلی انتخاب‌ها", "shipping:batchreport") },
-                new[] { new TelegramInlineButton("🚚 ارسال شد", $"shipping:sent:{requestId:N}") }
-            }, ct);
+        var shippingMessage = $"📦 درخواست ارسال جدید\n\nآیدی: {identity}\n\n{FormatAddressForDisplay(address)}";
+        var sent = items.Length == 0
+            ? await _sender.SendAsync(_options.ShippingChatId.Trim(), shippingMessage, ct)
+            : await _sender.SendInlineKeyboardAsync(_options.ShippingChatId.Trim(), shippingMessage,
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("☑️ انتخاب برای گزارش کلی", $"shipping:select:{requestId:N}") },
+                    new[] { new TelegramInlineButton("📊 گزارش کلی انتخاب‌ها", "shipping:batchreport") },
+                    new[] { new TelegramInlineButton("🚚 ارسال شد", $"shipping:sent:{requestId:N}") }
+                }, ct);
         if (!sent.IsSuccessful)
         {
             foreach (var item in items) { item.ShippingRequestId = null; item.ShippingRequestedAt = null; }
@@ -443,8 +426,6 @@ public sealed partial class TelegramWebhookController
             return;
         }
         await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
-        await SendShippingTextChunksAsync(long.Parse(_options.ShippingChatId.Trim()),
-            $"جزئیات دکانت‌های {identity}:", lines, ct);
         _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, "برای گروه پست ارسال شد ✅", ct, true);
     }
@@ -489,6 +470,12 @@ public sealed partial class TelegramWebhookController
 
     private static string ShippingItemName(OrderItem item) =>
         item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر";
+
+    private static string FormatAddressForDisplay(Address address) =>
+        string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)
+            ? address.FullAddress
+            : $"گیرنده: {address.ReceiverName}\nموبایل: {address.Mobile}\nکدپستی: {address.PostalCode}\n" +
+              $"آدرس: {address.Province}، {address.City}، {address.FullAddress}";
 
     private async Task SendAddressLabelCopyAsync(
         Guid requestId, Customer customer, Address address, long warningChatId, CancellationToken ct)
