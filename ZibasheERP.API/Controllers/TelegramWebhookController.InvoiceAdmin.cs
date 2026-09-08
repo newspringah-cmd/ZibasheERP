@@ -3041,7 +3041,7 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        if (parts.Length == 3 && parts[1] == "removeitem" &&
+        if (parts.Length == 3 && parts[1] is "removeitem" or "removeitemforce" &&
             Guid.TryParseExact(parts[2], "N", out var removableRequestId))
         {
             if (!_adminRequestDrafts.TryGet(chatId, userId, out var removalDraft) ||
@@ -3054,6 +3054,22 @@ public sealed partial class TelegramWebhookController
             if (removable is null || removable.SalesListId != removalDraft.SalesListId)
             {
                 await _sender.AnswerCallbackAsync(callback.Id, "آیتم فعال پیدا نشد.", ct, true);
+                return;
+            }
+            if (IsLowRemainingRemoval(removable.SalesList) &&
+                parts[1] != "removeitemforce")
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این لیست نزدیک تکمیل است؛ تأیید مجدد لازم است.", ct, true);
+                await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                    BuildLowRemainingRemovalWarning([removable.SalesList]),
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[]
+                        {
+                            new TelegramInlineButton("⚠️ بله، حذف شود", $"adminrequest:removeitemforce:{removableRequestId:N}"),
+                            new TelegramInlineButton("❌ انصراف", "adminrequest:cancel")
+                        }
+                    }, ct);
                 return;
             }
             try
@@ -3096,6 +3112,7 @@ public sealed partial class TelegramWebhookController
 
             if (!multiRemovalDraft.SelectedRequestIds.Add(multiRemovalRequestId))
                 multiRemovalDraft.SelectedRequestIds.Remove(multiRemovalRequestId);
+            multiRemovalDraft.LowRemainingRemovalConfirmed = false;
             _adminRequestDrafts.Set(multiRemovalDraft);
             await _sender.AnswerCallbackAsync(callback.Id,
                 multiRemovalDraft.SelectedRequestIds.Contains(multiRemovalRequestId) ? "انتخاب شد ☑️" : "از انتخاب خارج شد.", ct);
@@ -3256,11 +3273,30 @@ public sealed partial class TelegramWebhookController
                 await ReplyAsync(chatId, "شناسه جدید صاحب باتل را به‌صورت @username یا Telegram ID وارد کنید:", ct);
                 return;
             }
+            if (parts[2] == "remove")
+            {
+                var removal = await _salesListRequestRepository.GetAsync(requestId, ct);
+                if (removal is not null && removal.IsBottleOwner && IsLowRemainingRemoval(removal.SalesList))
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "این لیست نزدیک تکمیل است؛ تأیید مجدد لازم است.", ct, true);
+                    await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                        BuildLowRemainingRemovalWarning([removal.SalesList]),
+                        new IReadOnlyCollection<TelegramInlineButton>[]
+                        {
+                            new[]
+                            {
+                                new TelegramInlineButton("⚠️ بله، صاحب باتل حذف شود", $"adminrequest:queue:removeforce:{requestId:N}"),
+                                new TelegramInlineButton("❌ انصراف", "adminrequest:cancel")
+                            }
+                        }, ct);
+                    return;
+                }
+            }
             try
             {
                 if (parts[2] == "promote")
                     await _salesListRequestRepository.PromoteNextBottleOwnerAsync(requestId, ct);
-                else if (parts[2] == "remove")
+                else if (parts[2] is "remove" or "removeforce")
                     await _salesListRequestRepository.RemoveConfirmedAsync(requestId, ct);
                 else
                     throw new InvalidOperationException("عملیات نامعتبر است.");
@@ -4159,6 +4195,26 @@ public sealed partial class TelegramWebhookController
         }
         if (draft.Kind == TelegramAdminRequestKind.RemoveCustomerRequests)
         {
+            var activeRequests = await _salesListRequestRepository.GetActiveCustomerRequestsAsync(draft.Identity, ct);
+            var protectedLists = activeRequests.Select(value => value.SalesList)
+                .Where(IsLowRemainingRemoval).DistinctBy(value => value.Id).ToArray();
+            if (protectedLists.Length > 0 && !draft.LowRemainingRemovalConfirmed)
+            {
+                draft.LowRemainingRemovalConfirmed = true;
+                _adminRequestDrafts.Set(draft);
+                await _sender.AnswerCallbackAsync(callback.Id, "لیست نزدیک تکمیل است؛ تأیید مجدد لازم است.", ct, true);
+                await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                    BuildLowRemainingRemovalWarning(protectedLists),
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[]
+                        {
+                            new TelegramInlineButton("⚠️ بله، همه حذف شوند", "adminrequest:confirm"),
+                            new TelegramInlineButton("❌ انصراف", "adminrequest:cancel")
+                        }
+                    }, ct);
+                return;
+            }
             var affectedListIds = await _salesListRequestRepository.RemoveAllActiveCustomerRequestsAsync(
                 draft.Identity, ct);
             if (affectedListIds.Count == 0)
@@ -4190,6 +4246,27 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "حداقل یک آیتم را انتخاب کنید.", ct, true);
                 return;
             }
+            var selectedRequests = (await _salesListRequestRepository.GetActiveCustomerRequestsAsync(draft.Identity, ct))
+                .Where(value => draft.SelectedRequestIds.Contains(value.Id)).ToArray();
+            var protectedLists = selectedRequests.Select(value => value.SalesList)
+                .Where(IsLowRemainingRemoval).DistinctBy(value => value.Id).ToArray();
+            if (protectedLists.Length > 0 && !draft.LowRemainingRemovalConfirmed)
+            {
+                draft.LowRemainingRemovalConfirmed = true;
+                _adminRequestDrafts.Set(draft);
+                await _sender.AnswerCallbackAsync(callback.Id, "لیست نزدیک تکمیل است؛ تأیید مجدد لازم است.", ct, true);
+                await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                    BuildLowRemainingRemovalWarning(protectedLists),
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[]
+                        {
+                            new TelegramInlineButton("⚠️ بله، انتخاب‌شده‌ها حذف شوند", "adminrequest:multiremconfirm"),
+                            new TelegramInlineButton("❌ انصراف", "adminrequest:cancel")
+                        }
+                    }, ct);
+                return;
+            }
             try
             {
                 var removedCount = draft.SelectedRequestIds.Count;
@@ -4208,6 +4285,7 @@ public sealed partial class TelegramWebhookController
                     $"تعداد لیست‌های به‌روزشده: {affectedListIds.Count}", ct);
                 draft.AvailableRequestIds.ExceptWith(draft.SelectedRequestIds);
                 draft.SelectedRequestIds.Clear();
+                draft.LowRemainingRemovalConfirmed = false;
                 _adminRequestDrafts.Set(draft);
                 await _sender.AnswerCallbackAsync(callback.Id, "آیتم‌های انتخاب‌شده حذف شدند ✅", ct);
                 if (draft.AvailableRequestIds.Count == 0)
@@ -4355,6 +4433,24 @@ public sealed partial class TelegramWebhookController
         }
         _adminRequestDrafts.Remove(chatId, callback.From.Id);
         await ReplyAsync(chatId, "درخواست با موفقیت ثبت و لیست فروش به‌روزرسانی شد ✅", ct);
+    }
+
+    private static bool IsLowRemainingRemoval(SalesList list)
+    {
+        if (list.TotalVolume <= 0) return false;
+        return list.TotalVolume == 50
+            ? list.RemainingVolume < 10
+            : list.RemainingVolume < list.TotalVolume * 0.10m;
+    }
+
+    private static string BuildLowRemainingRemovalWarning(IEnumerable<SalesList> lists)
+    {
+        var details = lists
+            .OrderBy(value => value.PublicCode)
+            .Select(value =>
+                $"• {value.PublicCode} — {value.PersianName} — باقی‌مانده: {value.RemainingVolume} از {value.TotalVolume} میل");
+        return "⚠️ این لیست زیر محدوده مجاز حذف است. آیا از حذف مطمئن هستید؟\n\n" +
+               string.Join("\n", details);
     }
 
     private async Task ApplyRequestVolumeChangeAsync(
