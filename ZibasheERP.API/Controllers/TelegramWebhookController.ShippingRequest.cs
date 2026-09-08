@@ -32,40 +32,8 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای حسابدار در گروه حسابداری فعال است.", ct, true);
                 return true;
             }
-            var linkedCustomers = await _db.CustomerTelegramGroups.AsNoTracking()
-                .Where(value => !value.IsDeleted && value.IsActive &&
-                    value.ChatId == callback.Message.Chat.Id.ToString())
-                .Include(value => value.Customer)
-                .OrderBy(value => value.Customer.FullName).ToArrayAsync(ct);
-            if (linkedCustomers.Length == 0)
-            {
-                await _sender.AnswerCallbackAsync(callback.Id, "این گروه هنوز به مشتری متصل نشده است.", ct, true);
-                return true;
-            }
-            var draft = new TelegramShippingPreparationDraft
-            {
-                ChatId = callback.Message.Chat.Id, UserId = callback.From.Id,
-                Stage = TelegramShippingPreparationStage.AwaitingAddressChoice
-            };
-            _orderFlowDrafts.SetShippingPreparation(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            if (linkedCustomers.Length == 1)
-            {
-                draft.CustomerId = linkedCustomers[0].CustomerId;
-                _orderFlowDrafts.SetShippingPreparation(draft);
-                await SendShippingAddressChoicesAsync(draft, ct);
-            }
-            else
-            {
-                var buttons = linkedCustomers.Select(value =>
-                    (IReadOnlyCollection<TelegramInlineButton>)new[]
-                    {
-                        new TelegramInlineButton(OrderCustomerLabel(value.Customer),
-                            $"shipping:preparecustomer:{value.CustomerId:N}")
-                    }).ToArray();
-                await _sender.SendInlineKeyboardAsync(callback.Message.Chat.Id.ToString(),
-                    "این گروه به چند مشتری متصل است؛ مشتری را انتخاب کنید:", buttons, ct);
-            }
+            await StartShippingPreparationAsync(callback.Message.Chat.Id, callback.From.Id, ct);
             return true;
         }
 
@@ -104,7 +72,8 @@ public sealed partial class TelegramWebhookController
             _orderFlowDrafts.SetShippingPreparation(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await ReplyAsync(callback.Message.Chat.Id,
-                "آدرس جدید را در یک پیام و با ۶ بخش بفرستید:\nنام گیرنده | موبایل | استان | شهر | کدپستی | آدرس کامل", ct);
+                "کل متن آدرس مشتری را بدون تغییر در یک پیام کپی و ارسال کنید.\n" +
+                "نام گیرنده، موبایل، کدپستی و نشانی کامل می‌تواند داخل همان متن باشد؛ بعداً سرویس پردازش آدرس اجزای آن را تشخیص می‌دهد.", ct);
             return true;
         }
 
@@ -318,21 +287,21 @@ public sealed partial class TelegramWebhookController
         }
         if (draft.Stage == TelegramShippingPreparationStage.AwaitingNewAddress)
         {
-            var fields = input.Split('|', StringSplitOptions.TrimEntries);
-            if (fields.Length != 6 || fields.Any(string.IsNullOrWhiteSpace) ||
-                new string(fields[4].Where(char.IsDigit).ToArray()).Length != 10)
+            if (input.Length > 1000)
             {
-                await ReplyAsync(message.Chat.Id,
-                    "فرمت معتبر نیست. دقیقاً بفرستید:\nنام گیرنده | موبایل | استان | شهر | کدپستی ۱۰ رقمی | آدرس کامل", ct);
+                await ReplyAsync(message.Chat.Id, "متن آدرس حداکثر می‌تواند ۱۰۰۰ کاراکتر باشد.", ct);
                 return true;
             }
+            var customer = await _db.Customers.AsNoTracking()
+                .FirstAsync(value => value.Id == draft.CustomerId && !value.IsDeleted, ct);
             var hasAddress = await _db.Addresses.AnyAsync(value => !value.IsDeleted && value.CustomerId == draft.CustomerId, ct);
             var address = new Address
             {
                 Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, CustomerId = draft.CustomerId,
-                ReceiverName = fields[0], Mobile = fields[1], Province = fields[2], City = fields[3],
-                PostalCode = new string(fields[4].Where(char.IsDigit).ToArray()), FullAddress = fields[5],
-                Description = "ثبت حسابدار", IsDefault = !hasAddress
+                ReceiverName = customer.FullName, Mobile = customer.Mobile,
+                Province = string.Empty, City = string.Empty, PostalCode = string.Empty,
+                FullAddress = input, Description = "آدرس خام ثبت‌شده توسط حسابدار",
+                IsDefault = !hasAddress
             };
             _db.Addresses.Add(address);
             await _db.SaveChangesAsync(ct);
@@ -344,6 +313,56 @@ public sealed partial class TelegramWebhookController
         }
         await ReplyAsync(message.Chat.Id, "از دکمه‌های فرایند ارسال استفاده کنید.", ct);
         return true;
+    }
+
+    private async Task<bool> TryHandleShippingPreparationCommandAsync(TelegramMessage message, CancellationToken ct)
+    {
+        var command = message.Text?.Trim().Split((char[]?)null, 2,
+            StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Split('@', 2)[0];
+        if (!string.Equals(command, "/ad", StringComparison.OrdinalIgnoreCase)) return false;
+        if (message.From is null ||
+            !await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            await ReplyAsync(message.Chat.Id,
+                "دستور /ad فقط برای ادمین، داخل گروه اختصاصی متصل به مشتری فعال است.", ct);
+            return true;
+        }
+        await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
+        return true;
+    }
+
+    private async Task StartShippingPreparationAsync(long chatId, long userId, CancellationToken ct)
+    {
+        var linkedCustomers = await _db.CustomerTelegramGroups.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive && value.ChatId == chatId.ToString())
+            .Include(value => value.Customer)
+            .OrderBy(value => value.Customer.FullName).ToArrayAsync(ct);
+        if (linkedCustomers.Length == 0)
+        {
+            await ReplyAsync(chatId, "این گروه هنوز به مشتری متصل نشده است.", ct);
+            return;
+        }
+        var draft = new TelegramShippingPreparationDraft
+        {
+            ChatId = chatId, UserId = userId,
+            Stage = TelegramShippingPreparationStage.AwaitingAddressChoice
+        };
+        _orderFlowDrafts.SetShippingPreparation(draft);
+        if (linkedCustomers.Length == 1)
+        {
+            draft.CustomerId = linkedCustomers[0].CustomerId;
+            _orderFlowDrafts.SetShippingPreparation(draft);
+            await SendShippingAddressChoicesAsync(draft, ct);
+            return;
+        }
+        var buttons = linkedCustomers.Select(value =>
+            (IReadOnlyCollection<TelegramInlineButton>)new[]
+            {
+                new TelegramInlineButton(OrderCustomerLabel(value.Customer),
+                    $"shipping:preparecustomer:{value.CustomerId:N}")
+            }).ToArray();
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+            "این گروه به چند مشتری متصل است؛ مشتری را انتخاب کنید:", buttons, ct);
     }
 
     private async Task SendShippingAddressChoicesAsync(TelegramShippingPreparationDraft draft, CancellationToken ct)
@@ -476,16 +495,22 @@ public sealed partial class TelegramWebhookController
     {
         if (string.IsNullOrWhiteSpace(_options.AddressLabelPrintChatId)) return;
         var identity = OrderCustomerLabel(customer);
+        var rawAddress = string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)
+            ? address.FullAddress
+            : string.Join("\n", new[]
+            {
+                $"نام گیرنده: {address.ReceiverName}",
+                $"موبایل: {address.Mobile}",
+                $"کدپستی: {address.PostalCode}",
+                $"استان: {address.Province}",
+                $"شهر: {address.City}",
+                $"نشانی: {address.FullAddress}"
+            });
         var payload =
             "🏷 ADDRESS_LABEL_REQUEST\n" +
             $"RequestId: {requestId:N}\n" +
             $"Customer: {identity}\n" +
-            $"ReceiverName: {address.ReceiverName}\n" +
-            $"Mobile: {address.Mobile}\n" +
-            $"PostalCode: {address.PostalCode}\n" +
-            $"Province: {address.Province}\n" +
-            $"City: {address.City}\n" +
-            $"FullAddress: {address.FullAddress}\n" +
+            "RawAddress:\n" + rawAddress + "\n" +
             "Status: READY_FOR_LABEL";
         var result = await _sender.SendAsync(_options.AddressLabelPrintChatId.Trim(), payload, ct);
         if (!result.IsSuccessful)
