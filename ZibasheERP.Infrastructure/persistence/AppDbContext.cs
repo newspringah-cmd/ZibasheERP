@@ -415,6 +415,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<OrderItem>()
             .Property(x => x.ManualDescription)
             .HasMaxLength(300);
+        modelBuilder.Entity<OrderItem>()
+            .HasIndex(x => new { x.FulfillmentStatus, x.SalesListId });
+        modelBuilder.Entity<OrderItem>()
+            .HasIndex(x => x.ShippingRequestId);
     }
 
     private static void ConfigurePayment(ModelBuilder modelBuilder)
