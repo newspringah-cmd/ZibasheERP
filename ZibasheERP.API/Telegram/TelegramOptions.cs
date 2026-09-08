@@ -18,6 +18,7 @@ public sealed class TelegramOptions
     public string DecantPhotoFailureChatId { get; set; } = string.Empty;
     public string DecantChatId { get; set; } = string.Empty;
     public string LabelPrintChatId { get; set; } = string.Empty;
+    public string AddressLabelPrintChatId { get; set; } = string.Empty;
     public string NewPaymentsChatId { get; set; } = string.Empty;
     public string InventoryChatId { get; set; } = string.Empty;
     public string ShippingChatId { get; set; } = string.Empty;

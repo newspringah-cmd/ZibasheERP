@@ -97,6 +97,8 @@ builder.Services.AddOptions<TelegramOptions>()
          (long.TryParse(options.DecantChatId, out var decantChatId) && decantChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.LabelPrintChatId) ||
          (long.TryParse(options.LabelPrintChatId, out var labelPrintChatId) && labelPrintChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.AddressLabelPrintChatId) ||
+         (long.TryParse(options.AddressLabelPrintChatId, out var addressLabelPrintChatId) && addressLabelPrintChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.NewPaymentsChatId) ||
          (long.TryParse(options.NewPaymentsChatId, out var newPaymentsChatId) && newPaymentsChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.InventoryChatId) ||
