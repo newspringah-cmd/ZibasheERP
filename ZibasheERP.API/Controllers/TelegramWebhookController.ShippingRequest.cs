@@ -538,7 +538,8 @@ public sealed partial class TelegramWebhookController
     }
 
     private async Task<bool> IsAuthorizedAccountingShippingAdminAsync(long chatId, long userId, CancellationToken ct) =>
-        await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct) &&
+        (IsPrimaryOwner(userId) ||
+         await _sender.IsChatAdministratorAsync(chatId.ToString(), userId.ToString(), ct)) &&
         await _db.CustomerTelegramGroups.AsNoTracking().AnyAsync(value =>
             !value.IsDeleted && value.IsActive && value.ChatId == chatId.ToString(), ct);
 
