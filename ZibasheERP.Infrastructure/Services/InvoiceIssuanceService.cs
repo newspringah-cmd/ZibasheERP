@@ -175,7 +175,16 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             foreach (var (list, request) in customerRequests.OrderBy(value => value.List.OpenDate).ThenBy(value => value.Request.ConfirmedAt))
             {
                 row++;
-                var perfumeAmount = request.PerfumePricePerMl * request.VolumeMl;
+                if (list.PricePerMl <= 0)
+                    throw new InvalidOperationException(
+                        $"قیمت نهایی هر میل برای لیست {list.PublicCode} معتبر نیست.");
+
+                // The list price is the authoritative final price. Requests can have been registered
+                // before an admin price update and therefore carry an outdated price snapshot.
+                var finalPricePerMl = list.PricePerMl;
+                request.PerfumePricePerMl = finalPricePerMl;
+                request.UpdatedAt = now;
+                var perfumeAmount = finalPricePerMl * request.VolumeMl;
                 var bottleAmount = ResolveInvoiceBottleAmount(request, list.PublicCode);
                 order.Items.Add(new OrderItem
                 {
@@ -184,7 +193,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     SourceSalesListRequestId = request.Id,
                     SourceSalesListRequest = request,
                     RequestedVolumeMl = request.VolumeMl, Quantity = 1,
-                    PerfumePricePerMl = request.PerfumePricePerMl,
+                    PerfumePricePerMl = finalPricePerMl,
                     PerfumeAmount = perfumeAmount, IsBottleOwner = request.IsBottleOwner,
                     BottleId = request.BottleId, BottlePrice = bottleAmount,
                     LineTotal = perfumeAmount + bottleAmount, RowNumber = row,
@@ -246,7 +255,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 request.GiftRecipientTelegramUsername,
                 request.GiftRecipientTelegramUserId,
                 request.VolumeMl,
-                request.PerfumePricePerMl,
+                PerfumePricePerMl = request.SalesList!.PricePerMl,
                 request.BottlePrice,
                 ListCode = request.SalesList!.PublicCode,
                 PerfumeName = request.SalesList.Perfume != null
