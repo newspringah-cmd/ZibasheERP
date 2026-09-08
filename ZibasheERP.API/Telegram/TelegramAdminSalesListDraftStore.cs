@@ -191,6 +191,7 @@ public sealed class TelegramAdminRequestDraft
     public bool IsGift { get; set; }
     public string GiftRecipientIdentity { get; set; } = string.Empty;
     public bool IsBottleOwner { get; set; }
+    public bool IsComplimentaryBottle { get; set; }
     public int VolumeMl { get; set; }
     public BottleType? BottleType { get; set; }
     public string EditField { get; set; } = string.Empty;

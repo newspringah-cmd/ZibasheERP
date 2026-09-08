@@ -331,7 +331,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
     private static decimal ResolveInvoiceBottleAmount(SalesListRequest request, int publicCode)
     {
-        if (request.IsBottleOwner)
+        if (request.IsBottleOwner || request.IsComplimentaryBottle)
             return 0m;
 
         if (request.BottlePrice > 0)

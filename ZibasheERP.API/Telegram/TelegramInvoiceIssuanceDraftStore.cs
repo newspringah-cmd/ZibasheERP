@@ -77,11 +77,14 @@ public sealed class TelegramInvoiceResendDraftStore
         _drafts.TryRemove((chatId, userId), out _);
 }
 
-public sealed record TelegramInvoiceBottlePriceResolutionDraft(
+public sealed record TelegramInvoiceBottlePriceResolutionItem(
     Guid SalesListRequestId,
     int SalesListPublicCode,
     string CustomerIdentity,
-    string BottleName,
+    string BottleName);
+
+public sealed record TelegramInvoiceBottlePriceResolutionDraft(
+    IReadOnlyCollection<TelegramInvoiceBottlePriceResolutionItem> Items,
     IReadOnlyCollection<Guid> SelectedSalesListIds);
 
 public sealed class TelegramInvoiceBottlePriceResolutionDraftStore
