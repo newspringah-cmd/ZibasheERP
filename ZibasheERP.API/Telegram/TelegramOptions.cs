@@ -20,6 +20,8 @@ public sealed class TelegramOptions
     public string LabelPrintChatId { get; set; } = string.Empty;
     public string NewPaymentsChatId { get; set; } = string.Empty;
     public string InventoryChatId { get; set; } = string.Empty;
+    public string ShippingChatId { get; set; } = string.Empty;
+    public string AccountingChatId { get; set; } = string.Empty;
     public string InvoiceGreetingStickerFileId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
     public int PollIntervalSeconds { get; set; } = 10;

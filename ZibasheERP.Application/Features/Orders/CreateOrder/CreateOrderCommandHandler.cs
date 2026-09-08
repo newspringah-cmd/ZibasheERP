@@ -192,6 +192,9 @@ public class CreateOrderCommandHandler
             BottlePrice = bottlePrice,
             LineTotal = lineTotal,
             RowNumber = CalculateRowNumber(salesList),
+            FulfillmentStatus = salesList.Status == SalesListStatus.Full
+                ? OrderItemFulfillmentStatus.ListCompleted
+                : OrderItemFulfillmentStatus.WaitingForListCompletion,
             Notes = NormalizeNotes(request.Notes)
         };
 

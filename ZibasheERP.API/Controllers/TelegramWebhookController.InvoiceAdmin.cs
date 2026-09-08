@@ -264,6 +264,7 @@ public sealed partial class TelegramWebhookController
               callback.Data.StartsWith("invoicebatch:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoicepay:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoiceinventory:", StringComparison.Ordinal) ||
+              callback.Data.StartsWith("orderflow:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal)))
             return false;
@@ -285,6 +286,12 @@ public sealed partial class TelegramWebhookController
         if (!await IsAuthorizedInvoiceAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
         {
             await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مدیریت ندارید.", ct);
+            return true;
+        }
+
+        if (callback.Data.StartsWith("orderflow:", StringComparison.Ordinal))
+        {
+            await HandleOrderFlowCallbackAsync(callback, ct);
             return true;
         }
 
@@ -1408,7 +1415,8 @@ public sealed partial class TelegramWebhookController
             {
                 new TelegramInlineButton("👥 آیتم‌ها و صف", "invoiceadmin:menu:items"),
                 new TelegramInlineButton("⚙️ تنظیمات", "invoiceadmin:menu:settings")
-            }
+            },
+            new[] { new TelegramInlineButton("📦 وضعیت سفارش‌ها", "orderflow:dashboard") }
         };
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
     }
@@ -1900,9 +1908,11 @@ public sealed partial class TelegramWebhookController
                 _manualInvoiceDrafts.Remove(chatId, userId);
                 var paymentTrackingStatus = await SendManualPaymentTrackingReportAsync(
                     result.InvoiceNumbers.Single(), ct);
+                var accountingStatus = await SendManualAccountingReportAsync(
+                    result.InvoiceNumbers.Single(), ct);
                 await ReplyAsync(chatId,
                     $"✅ فاکتور دستی {result.InvoiceNumbers.Single()} صادر شد.\n" +
-                    paymentTrackingStatus + "\n" +
+                    paymentTrackingStatus + "\n" + accountingStatus + "\n" +
                     "ارسال خودکار انجام می‌شود؛ در صورت نبود گروه مشتری یا خطای دائمی، مورد به گروه خطاهای فاکتور می‌رود.", ct);
             }
             catch (InvalidOperationException exception)
@@ -1987,13 +1997,14 @@ public sealed partial class TelegramWebhookController
                 _invoiceIssuanceDrafts.Remove(chatId, userId);
                 var productionDispatchFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
                 var paymentTrackingStatus = await SendPaymentTrackingReportAsync(result.BatchId, ct);
+                var accountingStatus = await SendAccountingReportsAsync(result.BatchId, ct);
                 var productionDispatchStatus = productionDispatchFailures.Count == 0
-                    ? $"نسخهٔ عملیاتی {result.ProductionCopies.Count} لیست به گروه دکانت و گروه چاپ لیبل ارسال شد ✅"
+                    ? $"نسخهٔ چاپ لیبل {result.ProductionCopies.Count} لیست ارسال شد ✅؛ ارسال به صف دکانت پس از ثبت رسیدن عطر انجام می‌شود."
                     : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionDispatchFailures);
                 await ReplyAsync(chatId,
                     $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
                     $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
-                    productionDispatchStatus + "\n" + paymentTrackingStatus + "\n\n" +
+                    productionDispatchStatus + "\n" + paymentTrackingStatus + "\n" + accountingStatus + "\n\n" +
                     "ارسال خودکار فاکتور انجام می‌شود؛ موارد بدون گروه یا با خطای دائمی در گروه خطاهای فاکتور ثبت خواهند شد.", ct);
             }
             catch (BottlePriceResolutionRequiredException)
@@ -2044,13 +2055,6 @@ public sealed partial class TelegramWebhookController
         if (copies.Count == 0)
             return failures;
 
-        await SendProductionCopiesToChatAsync(
-            _options.DecantChatId,
-            "گروه دکانت",
-            copies,
-            copy => copy.DecantMessage,
-            failures,
-            ct);
         await SendProductionCopiesToChatAsync(
             _options.LabelPrintChatId,
             "گروه چاپ لیبل",
@@ -2111,6 +2115,45 @@ public sealed partial class TelegramWebhookController
         invoice.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return "گزارش وضعیت فاکتور دستی به گروه واریز جدید ارسال شد ✅";
+    }
+
+    private async Task<string> SendAccountingReportsAsync(Guid batchId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.AccountingChatId))
+            return "⚠️ گروه اطلاع حسابدار تنظیم نشده است.";
+        var reports = await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(batchId, ct);
+        if (reports.Count == 0)
+            return "⚠️ گزارش حسابداری ساخته نشد.";
+        var failures = new List<string>();
+        foreach (var report in reports)
+        {
+            var sent = await _sender.SendAsync(
+                _options.AccountingChatId.Trim(),
+                "🧾 گزارش صدور فاکتور جهت اطلاع حسابدار\n\n" + report.Message,
+                ct);
+            if (!sent.IsSuccessful)
+                failures.Add(sent.Error ?? "خطای نامشخص");
+        }
+        return failures.Count == 0
+            ? $"گزارش {reports.Count} عطر برای حسابدار ارسال شد ✅"
+            : $"⚠️ ارسال {failures.Count} گزارش حسابداری ناموفق بود.";
+    }
+
+    private async Task<string> SendManualAccountingReportAsync(
+        string invoiceNumber, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.AccountingChatId))
+            return "⚠️ گروه اطلاع حسابدار تنظیم نشده است.";
+        var invoice = await LoadManualInvoiceForPaymentTrackingAsync(invoiceNumber, ct);
+        if (invoice is null)
+            return "⚠️ گزارش حسابداری فاکتور دستی ساخته نشد.";
+        var sent = await _sender.SendAsync(
+            _options.AccountingChatId.Trim(),
+            "🧾 گزارش صدور فاکتور دستی جهت اطلاع حسابدار\n\n" +
+            FormatManualPaymentTrackingMessage(invoice), ct);
+        return sent.IsSuccessful
+            ? "گزارش فاکتور دستی برای حسابدار ارسال شد ✅"
+            : $"⚠️ ارسال گزارش حسابداری فاکتور دستی ناموفق بود: {sent.Error ?? "خطای نامشخص"}";
     }
 
     private async Task RefreshManualPaymentTrackingReportAsync(
@@ -2576,13 +2619,14 @@ public sealed partial class TelegramWebhookController
             _invoiceIssuanceDrafts.Remove(message.Chat.Id, message.From.Id);
             var productionFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
             var paymentTrackingStatus = await SendPaymentTrackingReportAsync(result.BatchId, ct);
+            var accountingStatus = await SendAccountingReportsAsync(result.BatchId, ct);
             var productionStatus = productionFailures.Count == 0
-                ? $"نسخهٔ عملیاتی {result.ProductionCopies.Count} لیست ارسال شد ✅"
+                ? $"نسخهٔ چاپ لیبل {result.ProductionCopies.Count} لیست ارسال شد ✅؛ صف دکانت بعد از ثبت رسیدن عطر ساخته می‌شود."
                 : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionFailures);
             await ReplyAsync(message.Chat.Id,
                 $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
                 $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
-                productionStatus + "\n" + paymentTrackingStatus, ct);
+                productionStatus + "\n" + paymentTrackingStatus + "\n" + accountingStatus, ct);
         }
         catch (BottlePriceResolutionRequiredException)
         {

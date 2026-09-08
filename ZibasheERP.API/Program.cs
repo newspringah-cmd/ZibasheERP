@@ -70,6 +70,7 @@ builder.Services.AddScoped<IInvoiceInventoryService, InvoiceInventoryService>();
 builder.Services.AddSingleton<TelegramInvoiceStickerDraftStore>();
 builder.Services.AddSingleton<TelegramInvoiceInventoryDraftStore>();
 builder.Services.AddSingleton<TelegramDecantPhotoDraftStore>();
+builder.Services.AddSingleton<TelegramOrderFlowDraftStore>();
 
 builder.Services.AddOptions<TelegramOptions>()
     .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
@@ -100,6 +101,10 @@ builder.Services.AddOptions<TelegramOptions>()
          (long.TryParse(options.NewPaymentsChatId, out var newPaymentsChatId) && newPaymentsChatId != 0)) &&
         (string.IsNullOrWhiteSpace(options.InventoryChatId) ||
          (long.TryParse(options.InventoryChatId, out var inventoryChatId) && inventoryChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.ShippingChatId) ||
+         (long.TryParse(options.ShippingChatId, out var shippingChatId) && shippingChatId != 0)) &&
+        (string.IsNullOrWhiteSpace(options.AccountingChatId) ||
+         (long.TryParse(options.AccountingChatId, out var accountingChatId) && accountingChatId != 0)) &&
         options.PollIntervalSeconds is >= 1 and <= 300 &&
          options.BatchSize is >= 1 and <= 100 &&
          options.MaxAttempts is >= 1 and <= 20 &&

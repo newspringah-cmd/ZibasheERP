@@ -1,5 +1,19 @@
 ﻿namespace ZibasheERP.Domain.Entities;
 
+public enum OrderItemFulfillmentStatus
+{
+    WaitingForListCompletion = 1,
+    ListCompleted = 2,
+    AwaitingPurchase = 3,
+    Purchased = 4,
+    Invoiced = 5,
+    WaitingForArrivalInIran = 6,
+    ArrivedInIran = 7,
+    DecantQueue = 8,
+    DecantedReadyToShip = 9,
+    Shipped = 10
+}
+
 public class OrderItem : BaseEntity
 {
     public Guid OrderId { get; set; }
@@ -51,6 +65,16 @@ public class OrderItem : BaseEntity
 
     // ترتیب ثبت داخل لیست (بعداً برای گزارش‌ها مفید است)
     public int RowNumber { get; set; }
+
+    public OrderItemFulfillmentStatus FulfillmentStatus { get; set; }
+        = OrderItemFulfillmentStatus.WaitingForListCompletion;
+
+    public DateTime? ArrivedInIranAt { get; set; }
+    public DateTime? EnteredDecantQueueAt { get; set; }
+    public DateTime? DecantedAt { get; set; }
+    public DateTime? ShippedAt { get; set; }
+    public Guid? ShippingRequestId { get; set; }
+    public DateTime? ShippingRequestedAt { get; set; }
 
     public string? Notes { get; set; }
 }

@@ -81,6 +81,31 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("decantphoto:list:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["decantphoto:list:".Length..], "N", out var decantListId))
+        {
+            var list = await _db.SalesLists.AsNoTracking().FirstOrDefaultAsync(value =>
+                value.Id == decantListId && !value.IsDeleted, ct);
+            if (list is null)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "لیست پیدا نشد.", ct, true);
+                return true;
+            }
+            _decantPhotoDrafts.Set(new TelegramDecantPhotoDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id,
+                SalesListId = list.Id,
+                PublicCode = list.PublicCode,
+                SalesListName = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName,
+                Stage = TelegramDecantPhotoStage.AwaitingPhoto
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                $"📸 عکس دکانت «{(string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)}» را ارسال کنید.", ct);
+            return true;
+        }
+
         if (callback.Data == "decantphoto:cancel")
         {
             _decantPhotoDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
@@ -136,12 +161,15 @@ public sealed partial class TelegramWebhookController
             }
 
             draft.PhotoFileId = photo.FileId;
-            draft.Stage = TelegramDecantPhotoStage.AwaitingSalesList;
-            _decantPhotoDrafts.Set(draft);
-            await ReplyAsync(
-                message.Chat.Id,
-                "عکس دریافت شد ✅\nحالا پیام لیست دکانت را فوروارد کنید یا کد لیست را بفرستید؛ مثال: 16716",
-                ct);
+            if (draft.SalesListId != Guid.Empty)
+                await PrepareDecantPhotoConfirmationAsync(message.Chat.Id, draft, ct);
+            else
+            {
+                draft.Stage = TelegramDecantPhotoStage.AwaitingSalesList;
+                _decantPhotoDrafts.Set(draft);
+                await ReplyAsync(message.Chat.Id,
+                    "عکس دریافت شد ✅\nحالا پیام لیست دکانت را فوروارد کنید یا کد لیست را بفرستید؛ مثال: 16716", ct);
+            }
             return true;
         }
 
@@ -213,6 +241,29 @@ public sealed partial class TelegramWebhookController
         return true;
     }
 
+    private async Task PrepareDecantPhotoConfirmationAsync(
+        long chatId, TelegramDecantPhotoDraft draft, CancellationToken ct)
+    {
+        var targets = await ResolveDecantTargetsAsync(draft.SalesListId, ct);
+        if (targets.Count == 0)
+        {
+            await ReplyAsync(chatId, "این لیست گیرندهٔ قابل استخراج ندارد.", ct);
+            return;
+        }
+        draft.Stage = TelegramDecantPhotoStage.AwaitingConfirmation;
+        _decantPhotoDrafts.Set(draft);
+        var matched = targets.Count(value => value.CustomerId.HasValue);
+        var ready = targets.Count(value => value.ActiveGroupChatId is not null);
+        await _sender.SendPhotoWithKeyboardAsync(chatId.ToString(), draft.PhotoFileId,
+            $"پیش‌نمایش ارسال عکس دکانت\n{draft.SalesListName}\n\nگیرندگان یکتا: {targets.Count}\n" +
+            $"آماده ارسال: {ready}\nدر انتظار گروه: {matched - ready}\nپیدا نشده: {targets.Count - matched}",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("✅ تأیید و پایان دکانت", "decantphoto:confirm") },
+                new[] { new TelegramInlineButton("❌ لغو", "decantphoto:cancel") }
+            }, ct);
+    }
+
     private async Task<bool> IsAuthorizedDecantPhotoAdminAsync(
         long chatId,
         long userId,
@@ -220,7 +271,9 @@ public sealed partial class TelegramWebhookController
     {
         if (await IsAuthorizedInvoiceAdminAsync(chatId, userId, ct))
             return true;
-        if (!long.TryParse(DecantFailureChatId(), out var failureChatId) || chatId != failureChatId)
+        var isDecantChat = string.Equals(chatId.ToString(), _options.DecantChatId.Trim(), StringComparison.Ordinal);
+        var isFailureChat = long.TryParse(DecantFailureChatId(), out var failureChatId) && chatId == failureChatId;
+        if (!isDecantChat && !isFailureChat)
             return false;
         if (IsPrimaryOwner(userId))
             return true;
@@ -239,7 +292,8 @@ public sealed partial class TelegramWebhookController
         var waiting = 0;
         var unmatched = 0;
         var now = DateTime.UtcNow;
-        var caption = $"📸 عکس دکانت\n{draft.SalesListName}";
+        var caption = $"📸 عکس دکانت\n{draft.SalesListName}\n\n" +
+                      "مبارکتون باشه 🌸\nاین عطر آماده ارسال می‌باشد.";
 
         foreach (var target in targets)
         {
@@ -303,6 +357,17 @@ public sealed partial class TelegramWebhookController
         }
 
         await _db.SaveChangesAsync(ct);
+        if (draft.SalesListId != Guid.Empty)
+        {
+            var completedAt = DateTime.UtcNow;
+            await _db.OrderItems.Where(value => !value.IsDeleted &&
+                    value.SalesListId == draft.SalesListId &&
+                    value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(value => value.FulfillmentStatus, OrderItemFulfillmentStatus.DecantedReadyToShip)
+                    .SetProperty(value => value.DecantedAt, completedAt)
+                    .SetProperty(value => value.UpdatedAt, completedAt), ct);
+        }
         return new DecantQueueResult(ready, waiting, unmatched);
     }
 

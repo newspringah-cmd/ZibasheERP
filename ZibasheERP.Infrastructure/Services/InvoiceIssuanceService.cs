@@ -197,6 +197,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     PerfumeAmount = perfumeAmount, IsBottleOwner = request.IsBottleOwner,
                     BottleId = request.BottleId, BottlePrice = bottleAmount,
                     LineTotal = perfumeAmount + bottleAmount, RowNumber = row,
+                    FulfillmentStatus = OrderItemFulfillmentStatus.WaitingForArrivalInIran,
                     Notes = $"کد لیست {list.PublicCode}"
                 });
                 request.Status = SalesListRequestStatus.Invoiced;
@@ -566,7 +567,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 ManualDescription = line.Description.Trim(), RequestedVolumeMl = line.Quantity,
                 Quantity = 1, PerfumePricePerMl = line.UnitAmount,
                 PerfumeAmount = perfumeAmount, BottlePrice = line.BottleAmount,
-                LineTotal = perfumeAmount + line.BottleAmount, RowNumber = row
+                LineTotal = perfumeAmount + line.BottleAmount, RowNumber = row,
+                FulfillmentStatus = OrderItemFulfillmentStatus.WaitingForArrivalInIran
             });
         }
         order.PerfumeTotal = order.Items.Sum(item => item.PerfumeAmount);

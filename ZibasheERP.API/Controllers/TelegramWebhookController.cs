@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
@@ -66,6 +67,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramInvoiceStickerDraftStore _invoiceStickerDrafts;
     private readonly TelegramInvoiceInventoryDraftStore _invoiceInventoryDrafts;
     private readonly TelegramDecantPhotoDraftStore _decantPhotoDrafts;
+    private readonly TelegramOrderFlowDraftStore _orderFlowDrafts;
     private readonly TelegramSalesListRebuildWorker _salesListRebuildWorker;
     private readonly IInvoiceInventoryService _invoiceInventoryService;
     private readonly AppDbContext _db;
@@ -96,6 +98,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramInvoiceStickerDraftStore invoiceStickerDrafts,
         TelegramInvoiceInventoryDraftStore invoiceInventoryDrafts,
         TelegramDecantPhotoDraftStore decantPhotoDrafts,
+        TelegramOrderFlowDraftStore orderFlowDrafts,
         TelegramSalesListRebuildWorker salesListRebuildWorker,
         IInvoiceInventoryService invoiceInventoryService,
         AppDbContext db,
@@ -126,6 +129,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _invoiceStickerDrafts = invoiceStickerDrafts;
         _invoiceInventoryDrafts = invoiceInventoryDrafts;
         _decantPhotoDrafts = decantPhotoDrafts;
+        _orderFlowDrafts = orderFlowDrafts;
         _salesListRebuildWorker = salesListRebuildWorker;
         _invoiceInventoryService = invoiceInventoryService;
         _db = db;
@@ -407,6 +411,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleShippingRequestCallbackAsync(callback, cancellationToken))
+            return;
+
         if (await TryHandleChannelSalesListCallbackAsync(callback, cancellationToken))
             return;
 
@@ -1013,11 +1020,18 @@ public sealed partial class TelegramWebhookController : ControllerBase
                 new TelegramInlineButton(
                     $"جزئیات {order.OrderNumber}",
                     $"order:{TelegramCallbackParser.EncodeGuid(order.Id)}")
-            }).ToArray();
+            }).ToList();
+        var hasReadyItems = await _db.OrderItems.AsNoTracking().AnyAsync(item => !item.IsDeleted &&
+            item.Order != null && item.Order.Customer != null &&
+            item.Order.Customer.TelegramId == telegramId &&
+            item.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
+            item.ShippingRequestId == null, cancellationToken);
+        if (hasReadyItems)
+            rows.Add(new[] { new TelegramInlineButton("📮 درخواست ارسال اقلام آماده", "shipping:request") });
         var result = await _sender.SendInlineKeyboardAsync(
             chatId.ToString(),
             "آخرین سفارش‌های شما:\n\n" + string.Join("\n", lines),
-            rows,
+            rows.ToArray(),
             cancellationToken);
         if (!result.IsSuccessful)
             _logger.LogWarning("Telegram orders keyboard failed: {Error}", result.Error);
