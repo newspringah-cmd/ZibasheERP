@@ -917,7 +917,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     {
         var next = list.Requests
             .Where(request => request.Kind == SalesListRequestKind.NextBottle)
-            .OrderBy(request => request.CreatedAt)
+            .OrderBy(request => request.ConfirmedAt).ThenBy(request => request.CreatedAt).ThenBy(request => request.Id)
             .Select(ProductionIdentity)
             .ToArray();
         return next.Length == 0

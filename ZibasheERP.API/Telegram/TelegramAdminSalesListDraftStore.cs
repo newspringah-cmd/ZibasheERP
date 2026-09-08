@@ -176,7 +176,7 @@ public enum TelegramAdminRequestKind
     OmitRequestIdentityOnLabel,
     SetRequestLabelIdentityText
 }
-public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingLabelIdentityText, AwaitingConfirmation }
+public enum TelegramAdminRequestStage { AwaitingListSearch, AwaitingIdentity, AwaitingGiftRecipient, AwaitingVolume, AwaitingBottleType, AwaitingEditValue, AwaitingEditPhoto, AwaitingQueueVolume, AwaitingQueueIdentity, AwaitingQueueOrder, AwaitingLabelIdentityText, AwaitingConfirmation }
 
 public sealed class TelegramAdminRequestDraft
 {
@@ -200,6 +200,7 @@ public sealed class TelegramAdminRequestDraft
     public int OriginalVolumeMl { get; set; }
     public HashSet<Guid> AvailableRequestIds { get; } = [];
     public HashSet<Guid> SelectedRequestIds { get; } = [];
+    public List<Guid> QueueRequestIds { get; } = [];
     public int MultipleRemovalPage { get; set; }
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 }
