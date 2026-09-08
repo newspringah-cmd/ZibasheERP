@@ -100,6 +100,16 @@ public sealed partial class TelegramWebhookController
     private async Task StartChannelReservationAsync(
         TelegramCallbackQuery callback, Guid salesListId, int volume, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(callback.From.Username))
+        {
+            await _sender.AnswerCallbackAsync(
+                callback.Id,
+                "جهت ثبت ایتم لطفا یوزرنیم خود رو در تنظیمات تلگرام ثبت کنید در صورت نیاز به راهنمایی به ادمین پیام بدید",
+                cancellationToken,
+                true);
+            return;
+        }
+
         var initialList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
             ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
         var membershipChatId = initialList.TelegramChannelId ?? _options.SalesChannelId;

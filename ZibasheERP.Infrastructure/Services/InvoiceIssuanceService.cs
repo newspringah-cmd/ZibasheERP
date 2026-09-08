@@ -270,11 +270,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         for (var index = 0; index < rows.Length; index++)
         {
             var row = rows[index];
-            var giver = !string.IsNullOrWhiteSpace(row.TelegramUsername)
-                ? $"@{row.TelegramUsername.Trim().TrimStart('@')}"
+            var giverUsername = NormalizeCustomerUsername(row.TelegramUsername);
+            var giver = !string.IsNullOrWhiteSpace(giverUsername)
+                ? $"@{giverUsername}"
                 : row.TelegramUserId;
-            var recipient = !string.IsNullOrWhiteSpace(row.GiftRecipientTelegramUsername)
-                ? $"@{row.GiftRecipientTelegramUsername.Trim().TrimStart('@')}"
+            var recipientUsername = NormalizeCustomerUsername(row.GiftRecipientTelegramUsername);
+            var recipient = !string.IsNullOrWhiteSpace(recipientUsername)
+                ? $"@{recipientUsername}"
                 : row.GiftRecipientTelegramUserId;
             var identity = row.IsGift
                 ? $"{giver} ← هدیه به {recipient ?? "نامشخص"}"
@@ -308,13 +310,15 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             {
                 var listRows = group.Select((row, index) =>
                 {
-                    var giver = !string.IsNullOrWhiteSpace(row.TelegramUsername)
-                        ? $"@{row.TelegramUsername.Trim().TrimStart('@')}"
+                    var giverUsername = NormalizeCustomerUsername(row.TelegramUsername);
+                    var giver = !string.IsNullOrWhiteSpace(giverUsername)
+                        ? $"@{giverUsername}"
                         : row.TelegramUserId;
                     if (!row.IsGift)
                         return $"{index + 1}. {giver} — {row.VolumeMl} میل";
-                    var recipient = !string.IsNullOrWhiteSpace(row.GiftRecipientTelegramUsername)
-                        ? $"@{row.GiftRecipientTelegramUsername.Trim().TrimStart('@')}"
+                    var recipientUsername = NormalizeCustomerUsername(row.GiftRecipientTelegramUsername);
+                    var recipient = !string.IsNullOrWhiteSpace(recipientUsername)
+                        ? $"@{recipientUsername}"
                         : row.GiftRecipientTelegramUserId ?? "گیرنده نامشخص";
                     return $"{index + 1}. {giver} برای {recipient} — {row.VolumeMl} میل 🎁";
                 });
@@ -423,7 +427,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 {
                     InvoiceNumber = invoiceNumber,
                     IssuedAt = now,
-                    GiverUsername = request.TelegramUsername,
+                    GiverUsername = NormalizeCustomerUsername(request.TelegramUsername),
                     GiverTelegramId = request.TelegramUserId,
                     PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
                     PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
@@ -449,7 +453,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     },
                     PaymentDeadlineHours = 0,
                     GiftDeliveryRole = "Recipient",
-                    GiverUsername = request.TelegramUsername,
+                    GiverUsername = NormalizeCustomerUsername(request.TelegramUsername),
                     GiverTelegramId = request.TelegramUserId,
                     PaymentAccounts = Array.Empty<object>(),
                     Items = new[]
@@ -771,8 +775,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     private async Task<Customer> ResolveCustomerAsync(SalesListRequest request, CancellationToken cancellationToken)
     {
         var telegramId = request.TelegramUserId.Trim();
-        var username = request.TelegramUsername?.Trim().TrimStart('@');
-        var normalizedUsername = NormalizeCustomerUsername(username);
+        var normalizedUsername = NormalizeCustomerUsername(request.TelegramUsername);
 
         // A batch can contain legacy requests for the same username with different
         // TelegramUserId values. Include newly tracked customers in the lookup so a
@@ -794,8 +797,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         customer = new Customer
         {
             Id = customerId, CreatedAt = DateTime.UtcNow,
-            TelegramId = telegramId, Username = username,
-            FullName = string.IsNullOrWhiteSpace(username) ? $"مشتری تلگرام {telegramId}" : $"@{username}",
+            TelegramId = telegramId, Username = normalizedUsername,
+            FullName = string.IsNullOrWhiteSpace(normalizedUsername) ? $"مشتری تلگرام {telegramId}" : $"@{normalizedUsername}",
             // Imported/admin identities can share a long common prefix (for example
             // "admin-username:"). Truncating that identity produced duplicate mobile
             // values. Use the entity id so every placeholder remains unique.
@@ -839,10 +842,23 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             : $"telegram:{request.TelegramUserId.Trim()}";
     }
 
-    private static string? NormalizeCustomerUsername(string? value) =>
-        string.IsNullOrWhiteSpace(value)
-            ? null
-            : value.Trim().TrimStart('@').ToLowerInvariant();
+    private static string? NormalizeCustomerUsername(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var trimmed = value.Trim().TrimStart('@');
+        var candidate = new string(trimmed.TakeWhile(character =>
+            character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_').ToArray());
+
+        // Telegram usernames are 5–32 ASCII letters, digits or underscores. Imported
+        // labels such as "F red" and "B Id" can follow the username; never include
+        // those labels in invoice/customer identity. Non-Telegram external labels are
+        // kept intact so they continue to route to manual review.
+        return candidate.Length is >= 5 and <= 32
+            ? candidate.ToLowerInvariant()
+            : trimmed.ToLowerInvariant();
+    }
 
     private static SalesListProductionCopy CreateProductionCopy(SalesList list)
     {
@@ -911,13 +927,15 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
     private static string ProductionIdentity(SalesListRequest request)
     {
-        var identity = string.IsNullOrWhiteSpace(request.TelegramUsername)
+        var username = NormalizeCustomerUsername(request.TelegramUsername);
+        var identity = string.IsNullOrWhiteSpace(username)
             ? $"کاربر {request.TelegramUserId}"
-            : $"@{request.TelegramUsername.TrimStart('@')}";
+            : $"@{username}";
         if (request.IsGift)
         {
-            var recipient = !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
-                ? $"@{request.GiftRecipientTelegramUsername.TrimStart('@')}"
+            var recipientUsername = NormalizeCustomerUsername(request.GiftRecipientTelegramUsername);
+            var recipient = !string.IsNullOrWhiteSpace(recipientUsername)
+                ? $"@{recipientUsername}"
                 : request.GiftRecipientTelegramUserId ?? "گیرنده نامشخص";
             identity += $" for {recipient}";
         }
@@ -984,23 +1002,22 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             string.Equals(gift.GiftRecipientTelegramUserId.Trim(), recipient.TelegramUserId.Trim(),
                 StringComparison.OrdinalIgnoreCase))
             return true;
-        return !string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUsername) &&
-               !string.IsNullOrWhiteSpace(recipient.TelegramUsername) &&
-               string.Equals(
-                   gift.GiftRecipientTelegramUsername.Trim().TrimStart('@'),
-                   recipient.TelegramUsername.Trim().TrimStart('@'),
-                   StringComparison.OrdinalIgnoreCase);
+        var giftRecipientUsername = NormalizeCustomerUsername(gift.GiftRecipientTelegramUsername);
+        var recipientUsername = NormalizeCustomerUsername(recipient.TelegramUsername);
+        return !string.IsNullOrWhiteSpace(giftRecipientUsername) &&
+               !string.IsNullOrWhiteSpace(recipientUsername) &&
+               string.Equals(giftRecipientUsername, recipientUsername, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GiftRecipientIdentity(SalesListRequest request) =>
-        !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
-            ? $"@{request.GiftRecipientTelegramUsername.Trim().TrimStart('@')}"
+        !string.IsNullOrWhiteSpace(NormalizeCustomerUsername(request.GiftRecipientTelegramUsername))
+            ? $"@{NormalizeCustomerUsername(request.GiftRecipientTelegramUsername)}"
             : !string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUserId)
                 ? $"کاربر {request.GiftRecipientTelegramUserId.Trim()}"
                 : "گیرنده نامشخص";
 
     private static string BaseIdentity(SalesListRequest request) =>
-        string.IsNullOrWhiteSpace(request.TelegramUsername)
+        string.IsNullOrWhiteSpace(NormalizeCustomerUsername(request.TelegramUsername))
             ? $"کاربر {request.TelegramUserId}"
-            : $"@{request.TelegramUsername.TrimStart('@')}";
+            : $"@{NormalizeCustomerUsername(request.TelegramUsername)}";
 }
