@@ -536,6 +536,15 @@ public sealed partial class TelegramWebhookController
             }
             if (resend is null || !resend.IsSuccessful || !resend.MessageId.HasValue)
             {
+                if (await QueueInvoicePdfRegenerationAsync(invoice, destination, ct))
+                {
+                    _invoiceResendDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
+                    await _sender.AnswerCallbackAsync(callback.Id,
+                        "PDF برای ساخت و ارسال مجدد در صف قرار گرفت ✅", ct, true);
+                    await ReplyAsync(callback.Message.Chat.Id,
+                        $"فاکتور {invoice.InvoiceNumber} از نو ساخته می‌شود و تا لحظاتی دیگر به گروه مشتری می‌رسد ✅", ct);
+                    return true;
+                }
                 await _sender.AnswerCallbackAsync(callback.Id,
                     $"ارسال مجدد انجام نشد: {resend?.Error ?? "پیام PDF پیدا نشد."}", ct, true);
                 return true;
@@ -1887,6 +1896,68 @@ public sealed partial class TelegramWebhookController
         }).ToArray();
         await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
             "یکی از حداکثر سه فاکتور آخر را برای ارسال مجدد انتخاب کنید:", buttons, ct);
+        return true;
+    }
+
+    private async Task<bool> QueueInvoicePdfRegenerationAsync(
+        Invoice invoice,
+        CustomerTelegramGroup destination,
+        CancellationToken ct)
+    {
+        var alreadyQueued = await _db.NotificationOutbox.AsNoTracking().AnyAsync(value =>
+            !value.IsDeleted && value.OrderId == invoice.OrderId &&
+            value.Channel == "N8n" && value.EventType == "InvoiceIssued" &&
+            (value.Status == NotificationOutboxStatus.Pending ||
+             value.Status == NotificationOutboxStatus.Processing), ct);
+        if (alreadyQueued)
+            return true;
+
+        var originalPayload = await _db.NotificationOutbox.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.OrderId == invoice.OrderId &&
+                value.Channel == "N8n" && value.EventType == "InvoiceIssued")
+            .OrderByDescending(value => value.CreatedAt)
+            .Select(value => value.Payload)
+            .FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(originalPayload))
+            return false;
+
+        JsonObject payload;
+        try
+        {
+            payload = JsonNode.Parse(originalPayload)?.AsObject() ?? new JsonObject();
+        }
+        catch (JsonException exception)
+        {
+            _logger.LogWarning(exception,
+                "Stored invoice payload could not be parsed for invoice {InvoiceId}.", invoice.Id);
+            return false;
+        }
+
+        payload["Delivery"] = JsonSerializer.SerializeToNode(new
+        {
+            Channel = "TelegramGroup",
+            ChatId = destination.ChatId.Trim(),
+            destination.Title,
+            destination.Username
+        });
+        var now = DateTime.UtcNow;
+        _db.NotificationOutbox.Add(new NotificationOutbox
+        {
+            Id = Guid.NewGuid(),
+            CreatedAt = now,
+            CustomerId = invoice.Order!.CustomerId,
+            OrderId = invoice.OrderId,
+            Channel = "N8n",
+            EventType = "InvoiceIssued",
+            Recipient = "n8n",
+            Payload = payload.ToJsonString(),
+            Status = NotificationOutboxStatus.Pending
+        });
+        invoice.DeliveryStatus = InvoiceDeliveryStatus.RetryScheduled;
+        invoice.DeliveryStatusChangedAt = now;
+        invoice.DeliveryStatusNote = "بازسازی PDF قدیمی برای ارسال مجدد در صف قرار گرفت.";
+        invoice.UpdatedAt = now;
+        await _db.SaveChangesAsync(ct);
         return true;
     }
 
