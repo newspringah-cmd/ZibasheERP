@@ -457,7 +457,8 @@ public sealed class TelegramGroupMembershipTracker(
                 Payload = "{}"
             });
             foreach (var photo in order.Items
-                         .Where(item => !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
+                         .Where(item => item.SourceSalesListRequest?.IsGift != true &&
+                                        !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
                          .Select(item => new
                          {
                              FileId = item.SalesList!.TelegramPhotoFileId!,

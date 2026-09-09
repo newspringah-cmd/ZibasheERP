@@ -603,6 +603,59 @@ public sealed partial class TelegramWebhookController
                 }, ct);
             return true;
         }
+        if (callback.Data == "invoiceadmin:last-batch-delivery-report")
+        {
+            var batch = await _db.InvoiceIssuanceBatches.AsNoTracking()
+                .Where(value => !value.IsDeleted && value.Status == InvoiceIssuanceBatchStatus.Issued)
+                .OrderByDescending(value => value.IssuedAt ?? value.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (batch is null)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "سری فاکتوری پیدا نشد.", ct, true);
+                return true;
+            }
+            var invoices = await _db.Invoices.AsNoTracking()
+                .Include(value => value.Order).ThenInclude(value => value!.Customer)
+                .Where(value => !value.IsDeleted && value.Order != null &&
+                    value.Order.InvoiceIssuanceBatchId == batch.Id)
+                .OrderBy(value => value.IssuedAt)
+                .ToArrayAsync(ct);
+            var succeeded = invoices.Count(value => value.DeliveryStatus is
+                InvoiceDeliveryStatus.Delivered or InvoiceDeliveryStatus.ManuallySent);
+            var remaining = invoices.Where(value => value.DeliveryStatus is not
+                (InvoiceDeliveryStatus.Delivered or InvoiceDeliveryStatus.ManuallySent)).ToArray();
+            var lines = new List<string>
+            {
+                "📊 گزارش ارسال تجمیعی سری آخر", string.Empty,
+                $"کل: {invoices.Length}",
+                $"✅ موفق: {succeeded}",
+                $"⚠️ جامانده یا ناموفق: {remaining.Length}"
+            };
+            if (remaining.Length > 0)
+            {
+                lines.Add(string.Empty);
+                lines.Add("نیازمند پیگیری:");
+                lines.AddRange(remaining.Select(value =>
+                {
+                    var username = value.Order?.Customer?.Username?.Trim().TrimStart('@');
+                    var identity = string.IsNullOrWhiteSpace(username)
+                        ? value.Order?.Customer?.TelegramId ?? value.InvoiceNumber
+                        : $"@{username}";
+                    return $"• {identity} — {TranslateInvoiceDeliveryStatus(value.DeliveryStatus.ToString())}" +
+                           (string.IsNullOrWhiteSpace(value.DeliveryStatusNote)
+                               ? string.Empty : $" — {value.DeliveryStatusNote}");
+                }));
+            }
+            else
+            {
+                lines.Add(string.Empty);
+                lines.Add("همهٔ فاکتورها با موفقیت ارسال شده‌اند ✅");
+            }
+            await _sender.AnswerCallbackAsync(callback.Id, "گزارش آماده شد.", ct);
+            foreach (var part in SplitTelegramMessage(string.Join("\n", lines)))
+                await ReplyAsync(callback.Message.Chat.Id, part, ct);
+            return true;
+        }
         if (callback.Data == "invoiceadmin:inventory-manual")
         {
             _manualInvoiceDrafts.Set(new TelegramManualInvoiceDraft
@@ -1499,6 +1552,11 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual"),
                     new TelegramInlineButton("🔴 فاکتور موجودی", "invoiceadmin:inventory-manual")
+                });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("📊 گزارش ارسال تجمیعی سری آخر",
+                        "invoiceadmin:last-batch-delivery-report")
                 });
                 buttons.Add(new[]
                 {
