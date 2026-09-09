@@ -63,13 +63,16 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
     {
         try
         {
-            var parseFromCombinedText =
-                string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal) ||
+            var isRawAccountantAddress =
+                string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal);
+            var parseFromCombinedText = isRawAccountantAddress ||
                 string.IsNullOrWhiteSpace(address.ReceiverName) ||
                 string.IsNullOrWhiteSpace(address.Mobile) ||
                 string.IsNullOrWhiteSpace(address.City);
             var parsed = parseFromCombinedText
-                ? await ParseRawAddressAsync(BuildRawAddress(address), cancellationToken)
+                ? await ParseRawAddressAsync(
+                    isRawAccountantAddress ? address.FullAddress : BuildRawAddress(address),
+                    cancellationToken)
                 : new ParsedPostalAddress(
                     address.ReceiverName.Trim(), address.FullAddress.Trim(), address.Mobile.Trim(),
                     address.PostalCode.Trim(), address.City.Trim());
@@ -79,6 +82,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                 return new AddressLabelResult(false, Error:
                     $"اطلاعات {string.Join("، ", missing)} در متن آدرس پیدا نشد؛ آدرس را کامل‌تر ثبت کنید.");
 
+            parsed = parsed with { PostalCode = NormalizePostalCode(parsed.PostalCode) };
             var document = BuildDocument(parsed);
             var pdf = document.GeneratePdf();
             var preview = document.GenerateImages(new ImageGenerationSettings
@@ -119,7 +123,18 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                 model = _options.OpenAiModel,
                 input = new object[]
                 {
-                    new { role = "system", content = "متن نشانی پستی ایران را فقط استخراج کن. هیچ مقدار مفقودی را حدس نزن. ارقام را حفظ کن و نشانی کامل را بدون نام، تلفن و کدپستی برگردان. اگر کدپستی در متن نبود postalCode را رشته خالی برگردان." },
+                    new
+                    {
+                        role = "system",
+                        content = """
+                            اجزای یک نشانی پستی ایران را از کل متن استخراج کن. ترتیب خطوط هیچ معنایی ندارد و نام گیرنده ممکن است ابتدا، وسط یا انتهای متن، با یا بدون برچسب «گیرنده» یا «نام»، نوشته شده باشد. همه خطوط را بررسی کن.
+                            receiverName فقط نام شخص گیرنده است. ممکن است نام و نام خانوادگی کامل، فقط نام کوچک، یا فقط یک نام خانوادگی تک‌کلمه‌ای مانند «احمدی» باشد؛ تک‌کلمه‌ای بودن را نقص تلقی نکن. @username، شناسه مشتری، نام استان، شهر، محله یا فرستنده را به‌عنوان گیرنده انتخاب نکن.
+                            mobile همه شماره‌های تماس موجود در متن است: هم موبایل‌های ۱۱ رقمی که با 09 یا ۰۹ شروع می‌شوند و هم تلفن‌های ثابت، ترجیحاً همراه کد شهر. شماره‌ای که صریحاً با برچسب «تلفن»، «تلفن ثابت»، «تماس» یا «موبایل» آمده را حفظ کن. اگر بیش از یک شماره وجود دارد همه شماره‌های متمایز را به همان ترتیب متن و با «،» در یک رشته برگردان و هیچ‌کدام را حذف نکن. postalCode فقط کدپستی دقیقاً ۱۰ رقمی است؛ آن را با هیچ شماره تماسی اشتباه نگیر و مقدار بدون قرینه کدپستی را postalCode تلقی نکن.
+                            city مقصد کامل پستی را نگه دارد. اگر استان در متن آمده، آن را نیز اضافه کن. اگر متن شهرستان/شهر اصلی و شهر کوچک‌تر، بخش یا مقصد محلی را هم گفته است، همه سطوح موجود را به ترتیب کلی به جزئی و با «،» برگردان؛ مثال: «فارس، داراب، دولت‌آباد». هیچ سطح صریحی را حذف نکن و این حالت را به یک نام کاهش نده.
+                            fullAddress فقط ادامه نشانی قابل تحویل را نگه دارد و نام گیرنده، موبایل، کدپستی و تمام نام‌های استان/شهرستان/شهر/بخشی را که در city قرار داده‌ای از آن حذف کند تا مقصد دوباره داخل آدرس تکرار نشود. محله، خیابان، کوچه، پلاک و واحد را حفظ کن؛ مگر اینکه عیناً بخشی از city باشند.
+                            هیچ مقدار مفقودی را حدس نزن و ارقام را حفظ کن. اگر کدپستی موجود نبود postalCode را رشته خالی برگردان؛ برای سایر مقدارهای پیدا نشده نیز رشته خالی برگردان تا سامانه درخواست اصلاح کند.
+                            """
+                    },
                     new { role = "user", content = rawAddress }
                 },
                 text = new
@@ -134,11 +149,11 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                             type = "object",
                             properties = new
                             {
-                                receiverName = new { type = "string" },
-                                fullAddress = new { type = "string" },
-                                mobile = new { type = "string" },
-                                postalCode = new { type = "string" },
-                                city = new { type = "string" }
+                                receiverName = new { type = "string", description = "نام شخص گیرنده، حتی اگر فقط یک نام خانوادگی تک‌کلمه‌ای باشد، مستقل از محل قرارگیری آن در متن" },
+                                fullAddress = new { type = "string", description = "ادامه نشانی بدون نام گیرنده، تلفن، کدپستی و نام‌های درج‌شده در شهر مقصد" },
+                                mobile = new { type = "string", description = "همه شماره‌های تماس متمایز شامل موبایل و تلفن ثابت، با ویرگول فارسی از هم جداشده" },
+                                postalCode = new { type = "string", description = "فقط کدپستی دقیقاً ده‌رقمی یا رشته خالی در صورت نبودن" },
+                                city = new { type = "string", description = "مقصد کامل پستی شامل همه سطوح موجود به ترتیب استان، شهرستان یا شهر اصلی، شهر یا بخش محلی؛ مانند فارس، داراب، دولت‌آباد" }
                             },
                             required = new[] { "receiverName", "fullAddress", "mobile", "postalCode", "city" },
                             additionalProperties = false
@@ -173,6 +188,20 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
         if (string.IsNullOrWhiteSpace(value.City)) fields.Add("شهر مقصد");
         return fields.ToArray();
     }
+
+    private static string NormalizePostalCode(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var digits = new string(value.Select(ToLatinDigit).Where(char.IsAsciiDigit).ToArray());
+        return digits.Length == 10 ? value.Trim() : string.Empty;
+    }
+
+    private static char ToLatinDigit(char value) => value switch
+    {
+        >= '\u06F0' and <= '\u06F9' => (char)('0' + value - '\u06F0'),
+        >= '\u0660' and <= '\u0669' => (char)('0' + value - '\u0660'),
+        _ => value
+    };
 
     private static IDocument BuildDocument(ParsedPostalAddress value)
     {

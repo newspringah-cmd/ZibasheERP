@@ -31,6 +31,7 @@ public sealed class TelegramOrderFlowDraftStore
     private readonly ConcurrentDictionary<(long ChatId, long UserId), HashSet<Guid>> _arrivalSelections = new();
     private readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramShippingPreparationDraft> _shippingPreparations = new();
     private readonly ConcurrentDictionary<(long ChatId, long UserId), HashSet<Guid>> _shippingSelections = new();
+    private readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramShippingTrackingPhotoDraft> _shippingTrackingPhotos = new();
 
     public void Set(TelegramOrderShippingDraft draft)
     {
@@ -72,12 +73,28 @@ public sealed class TelegramOrderFlowDraftStore
     public HashSet<Guid> GetShippingSelection(long chatId, long userId) =>
         _shippingSelections.GetOrAdd((chatId, userId), _ => []);
 
+    public void SetShippingTrackingPhoto(TelegramShippingTrackingPhotoDraft draft) =>
+        _shippingTrackingPhotos[(draft.ChatId, draft.UserId)] = draft;
+
+    public bool TryGetShippingTrackingPhoto(long chatId, long userId, out TelegramShippingTrackingPhotoDraft draft) =>
+        _shippingTrackingPhotos.TryGetValue((chatId, userId), out draft!);
+
+    public void ClearShippingTrackingPhoto(long chatId, long userId) =>
+        _shippingTrackingPhotos.TryRemove((chatId, userId), out _);
+
     private void RemoveExpired()
     {
         var threshold = DateTime.UtcNow - Lifetime;
         foreach (var item in _drafts.Where(item => item.Value.UpdatedAt < threshold))
             _drafts.TryRemove(item.Key, out _);
     }
+}
+
+public sealed class TelegramShippingTrackingPhotoDraft
+{
+    public required long ChatId { get; init; }
+    public required long UserId { get; init; }
+    public required Guid CustomerId { get; init; }
 }
 
 public enum TelegramShippingPreparationStage { AwaitingIdentity, AwaitingAddressChoice, AwaitingNewAddress, Ready }

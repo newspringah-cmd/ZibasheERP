@@ -157,6 +157,33 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("shipping:tracking:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["shipping:tracking:".Length..], "N", out var trackingCustomerId))
+        {
+            if (!await IsAuthorizedShippingAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مسئول ارسال ندارید.", ct, true);
+                return true;
+            }
+            var customerExists = await _db.Customers.AsNoTracking().AnyAsync(value =>
+                value.Id == trackingCustomerId && !value.IsDeleted, ct);
+            if (!customerExists)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "مشتری این درخواست پیدا نشد.", ct, true);
+                return true;
+            }
+            _orderFlowDrafts.SetShippingTrackingPhoto(new TelegramShippingTrackingPhotoDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id,
+                CustomerId = trackingCustomerId
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, "عکس کد رهگیری را ارسال کنید.", ct, true);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "📸 عکس کد رهگیری همین مشتری را ارسال کنید. برای لغو، پیام /cancel را بفرستید.", ct);
+            return true;
+        }
+
         if (!callback.Data.StartsWith("shipping:sent:", StringComparison.Ordinal) ||
             !Guid.TryParseExact(callback.Data["shipping:sent:".Length..], "N", out var requestId))
         {
@@ -271,7 +298,11 @@ public sealed partial class TelegramWebhookController
         var sent = await _sender.SendInlineKeyboardAsync(_options.ShippingChatId.Trim(), message,
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
-                new[] { new TelegramInlineButton("🚚 ارسال شد", $"shipping:sent:{requestId:N}") }
+                new[]
+                {
+                    new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
+                    new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{customer.Id:N}")
+                }
             }, ct);
         if (!sent.IsSuccessful)
         {
@@ -285,8 +316,8 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, $"ارسال درخواست به مسئول ارسال ناموفق بود: {sent.Error}", ct, true);
             return;
         }
-        await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message!.Chat.Id, ct);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست ارسال ثبت شد ✅", ct, true);
+        await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message!.Chat.Id, ct);
         await ReplyAsync(callback.Message!.Chat.Id,
             $"درخواست ارسال {items.Length} آیتم آماده برای مسئول ارسال ثبت شد ✅", ct);
     }
@@ -467,15 +498,26 @@ public sealed partial class TelegramWebhookController
         await _db.SaveChangesAsync(ct);
         var identity = OrderCustomerLabel(customer);
         var shippingMessage = $"📦 درخواست ارسال جدید\n\nآیدی: {identity}\n\n{FormatAddressForDisplay(address)}";
-        var sent = items.Length == 0
-            ? await _sender.SendAsync(_options.ShippingChatId.Trim(), shippingMessage, ct)
-            : await _sender.SendInlineKeyboardAsync(_options.ShippingChatId.Trim(), shippingMessage,
-                new IReadOnlyCollection<TelegramInlineButton>[]
-                {
-                    new[] { new TelegramInlineButton("☑️ انتخاب برای گزارش کلی", $"shipping:select:{requestId:N}") },
-                    new[] { new TelegramInlineButton("📊 گزارش کلی انتخاب‌ها", "shipping:batchreport") },
-                    new[] { new TelegramInlineButton("🚚 ارسال شد", $"shipping:sent:{requestId:N}") }
-                }, ct);
+        var shippingButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (items.Length > 0)
+        {
+            shippingButtons.Add(new[] { new TelegramInlineButton("☑️ انتخاب برای گزارش کلی", $"shipping:select:{requestId:N}") });
+            shippingButtons.Add(new[] { new TelegramInlineButton("📊 گزارش کلی انتخاب‌ها", "shipping:batchreport") });
+            shippingButtons.Add(new[]
+            {
+                new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
+                new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{customer.Id:N}")
+            });
+        }
+        else
+        {
+            shippingButtons.Add(new[]
+            {
+                new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{customer.Id:N}")
+            });
+        }
+        var sent = await _sender.SendInlineKeyboardAsync(
+            _options.ShippingChatId.Trim(), shippingMessage, shippingButtons, ct);
         if (!sent.IsSuccessful)
         {
             foreach (var item in items) { item.ShippingRequestId = null; item.ShippingRequestedAt = null; }
@@ -483,9 +525,10 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, $"ارسال ناموفق بود: {sent.Error}", ct, true);
             return;
         }
-        await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
         _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, callback.From.Id);
-        await _sender.AnswerCallbackAsync(callback.Id, "برای گروه پست ارسال شد ✅", ct, true);
+        await _sender.AnswerCallbackAsync(callback.Id,
+            "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.", ct, true);
+        await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
     }
 
     private async Task SendSelectedShippingReportAsync(TelegramCallbackQuery callback, CancellationToken ct)
@@ -519,6 +562,60 @@ public sealed partial class TelegramWebhookController
         await SendShippingTextChunksAsync(callback.Message.Chat.Id, "تفکیک عطرها:", groups, ct);
     }
 
+    private async Task<bool> TryHandleShippingTrackingPhotoMessageAsync(
+        TelegramMessage message, CancellationToken ct)
+    {
+        if (message.From is null ||
+            !_orderFlowDrafts.TryGetShippingTrackingPhoto(message.Chat.Id, message.From.Id, out var draft))
+            return false;
+        if (!await IsAuthorizedShippingAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
+            return true;
+        }
+        if (string.Equals(message.Text?.Trim(), "/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "ارسال کد رهگیری لغو شد.", ct);
+            return true;
+        }
+        var photo = message.Photo?.OrderByDescending(value => value.FileSize ?? 0).FirstOrDefault();
+        if (photo is null)
+        {
+            await ReplyAsync(message.Chat.Id, "لطفاً کد رهگیری را به‌صورت عکس ارسال کنید یا /cancel را بفرستید.", ct);
+            return true;
+        }
+        var customer = await _db.Customers.AsNoTracking().FirstOrDefaultAsync(value =>
+            value.Id == draft.CustomerId && !value.IsDeleted, ct);
+        var recipients = await _db.CustomerTelegramGroups.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive && value.CustomerId == draft.CustomerId)
+            .Select(value => value.ChatId).Distinct().ToArrayAsync(ct);
+        if (customer is null || recipients.Length == 0)
+        {
+            _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id,
+                $"⚠️ گروه فعالی برای مشتری {(customer is null ? draft.CustomerId.ToString("N") : OrderCustomerLabel(customer))} پیدا نشد.", ct);
+            return true;
+        }
+        var failures = new List<string>();
+        foreach (var recipient in recipients)
+        {
+            var result = await _sender.SendPhotoAsync(recipient, photo.FileId,
+                "📦 تصویر کد رهگیری مرسوله شما", ct);
+            if (!result.IsSuccessful) failures.Add($"{recipient}: {result.Error}");
+        }
+        _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
+        if (failures.Count > 0)
+        {
+            await ReplyAsync(message.Chat.Id,
+                $"⚠️ ارسال عکس کد رهگیری برای {OrderCustomerLabel(customer)} کامل نشد:\n{string.Join("\n", failures)}", ct);
+            return true;
+        }
+        await ReplyAsync(message.Chat.Id,
+            $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد.", ct);
+        return true;
+    }
+
     private IQueryable<OrderItem> ReadyShippingItems(Guid customerId) =>
         _db.OrderItems.Include(value => value.Order).ThenInclude(value => value!.Customer)
             .Include(value => value.SalesList).Include(value => value.Perfume)
@@ -544,26 +641,46 @@ public sealed partial class TelegramWebhookController
             var label = await _addressLabelService.CreateAsync(address, ct);
             if (!label.IsSuccessful || label.Pdf is null || label.Preview is null)
             {
-                await ReplyAsync(warningChatId,
-                    $"⚠️ درخواست پست ثبت شد اما لیبل ساخته نشد: {label.Error}", ct);
+                await ReportAddressLabelFailureAsync(requestId, customer, warningChatId,
+                    $"لیبل ساخته نشد: {label.Error}", ct);
                 return;
             }
+
+            var registeredAddress = string.Equals(
+                    address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)
+                ? address.FullAddress
+                : string.Join("\n", new[]
+                {
+                    $"نام گیرنده: {address.ReceiverName}",
+                    $"تلفن: {address.Mobile}",
+                    string.IsNullOrWhiteSpace(address.PostalCode) ? null : $"کدپستی: {address.PostalCode}",
+                    string.IsNullOrWhiteSpace(address.Province) ? null : $"استان: {address.Province}",
+                    string.IsNullOrWhiteSpace(address.City) ? null : $"شهر: {address.City}",
+                    $"نشانی: {address.FullAddress}"
+                }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            var reviewResult = await _sender.SendAsync(
+                _options.AddressLabelPrintChatId.Trim(),
+                $"📝 آدرس اصلی ثبت‌شده برای مقایسه\n" +
+                $"آیدی مشتری: {OrderCustomerLabel(customer)}\n\n{registeredAddress}", ct);
+            if (!reviewResult.IsSuccessful)
+                await ReportAddressLabelFailureAsync(requestId, customer, warningChatId,
+                    $"متن آدرس اصلی برای مقایسه ارسال نشد: {reviewResult.Error}", ct);
 
             var previewResult = await _sender.SendPhotoBytesWithKeyboardAsync(
                 _options.AddressLabelPrintChatId.Trim(), label.Preview,
                 $"address-label-{requestId:N}.jpg", $"👁 پیش‌نمایش لیبل {OrderCustomerLabel(customer)}",
                 Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
             if (!previewResult.IsSuccessful)
-                await ReplyAsync(warningChatId,
-                    $"⚠️ PDF لیبل ساخته شد اما پیش‌نمایش آن ارسال نشد: {previewResult.Error}", ct);
+                await ReportAddressLabelFailureAsync(requestId, customer, warningChatId,
+                    $"PDF لیبل ساخته شد اما پیش‌نمایش آن ارسال نشد: {previewResult.Error}", ct);
 
             var pdfResult = await _sender.SendDocumentWithKeyboardAsync(
                 _options.AddressLabelPrintChatId.Trim(), label.Pdf,
                 $"address-label-{requestId:N}.pdf", $"🏷 لیبل آدرس {OrderCustomerLabel(customer)}",
                 Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
             if (!pdfResult.IsSuccessful)
-                await ReplyAsync(warningChatId,
-                    $"⚠️ درخواست پست ثبت شد اما PDF لیبل ارسال نشد: {pdfResult.Error}", ct);
+                await ReportAddressLabelFailureAsync(requestId, customer, warningChatId,
+                    $"PDF لیبل ارسال نشد: {pdfResult.Error}", ct);
             return;
         }
         var identity = OrderCustomerLabel(customer);
@@ -586,8 +703,22 @@ public sealed partial class TelegramWebhookController
             "Status: READY_FOR_LABEL";
         var result = await _sender.SendAsync(_options.AddressLabelPrintChatId.Trim(), payload, ct);
         if (!result.IsSuccessful)
-            await ReplyAsync(warningChatId,
-                $"⚠️ درخواست پست ثبت شد اما نسخه چاپ لیبل آدرس ارسال نشد: {result.Error}", ct);
+            await ReportAddressLabelFailureAsync(requestId, customer, warningChatId,
+                $"نسخه چاپ لیبل آدرس ارسال نشد: {result.Error}", ct);
+    }
+
+    private async Task ReportAddressLabelFailureAsync(
+        Guid requestId, Customer customer, long warningChatId, string error, CancellationToken ct)
+    {
+        var message =
+            "⚠️ خطای لیبل آدرس\n" +
+            $"آیدی مشتری: {OrderCustomerLabel(customer)}\n" +
+            $"شناسه درخواست: {requestId:N}\n" +
+            error;
+        await ReplyAsync(warningChatId, message, ct);
+        if (!string.IsNullOrWhiteSpace(_options.ShippingChatId) &&
+            !string.Equals(_options.ShippingChatId.Trim(), warningChatId.ToString(), StringComparison.Ordinal))
+            await _sender.SendAsync(_options.ShippingChatId.Trim(), message, ct);
     }
 
     private async Task SendShippingTextChunksAsync(
