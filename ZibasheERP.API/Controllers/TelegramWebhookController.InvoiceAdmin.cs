@@ -1420,6 +1420,10 @@ public sealed partial class TelegramWebhookController
             {
                 new TelegramInlineButton("📦 وضعیت سفارش‌ها", "orderflow:dashboard"),
                 new TelegramInlineButton("📮 ارسال برای پست", "shipping:prepare")
+            },
+            new[]
+            {
+                new TelegramInlineButton("📍 ثبت دستی آدرس", "shipping:manualaddress")
             }
         };
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);

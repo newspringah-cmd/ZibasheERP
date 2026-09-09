@@ -37,6 +37,26 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data == "shipping:manualaddress")
+        {
+            if (!IsAuthorizedShippingOperator(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای مدیر و حسابدار فعال است.", ct, true);
+                return true;
+            }
+            _orderFlowDrafts.SetShippingPreparation(new TelegramShippingPreparationDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id,
+                Stage = TelegramShippingPreparationStage.AwaitingIdentity,
+                RegistrationOnly = true
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "آیدی مشتری را به‌صورت @username یا Telegram ID ارسال کنید.", ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("shipping:preparecustomer:", StringComparison.Ordinal) &&
             Guid.TryParseExact(callback.Data["shipping:preparecustomer:".Length..], "N", out var preparedCustomerId))
         {
@@ -260,7 +280,10 @@ public sealed partial class TelegramWebhookController
         if (message.From is null ||
             !_orderFlowDrafts.TryGetShippingPreparation(message.Chat.Id, message.From.Id, out var draft))
             return false;
-        if (!await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct))
+        var authorized = draft.RegistrationOnly
+            ? IsAuthorizedShippingOperator(message.From.Id)
+            : await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct);
+        if (!authorized)
         {
             _orderFlowDrafts.ClearShippingPreparation(message.Chat.Id, message.From.Id);
             return true;
@@ -280,9 +303,15 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             draft.CustomerId = customer.Id;
-            draft.Stage = TelegramShippingPreparationStage.AwaitingAddressChoice;
+            draft.Stage = draft.RegistrationOnly
+                ? TelegramShippingPreparationStage.AwaitingNewAddress
+                : TelegramShippingPreparationStage.AwaitingAddressChoice;
             _orderFlowDrafts.SetShippingPreparation(draft);
-            await SendShippingAddressChoicesAsync(draft, ct);
+            if (draft.RegistrationOnly)
+                await ReplyAsync(message.Chat.Id,
+                    $"مشتری: {OrderCustomerLabel(customer)}\n\nکل متن آدرس را در یک پیام ارسال کنید. نام گیرنده، موبایل و شهر مقصد الزامی است؛ کدپستی اختیاری است.", ct);
+            else
+                await SendShippingAddressChoicesAsync(draft, ct);
             return true;
         }
         if (draft.Stage == TelegramShippingPreparationStage.AwaitingNewAddress)
@@ -305,6 +334,13 @@ public sealed partial class TelegramWebhookController
             };
             _db.Addresses.Add(address);
             await _db.SaveChangesAsync(ct);
+            if (draft.RegistrationOnly)
+            {
+                _orderFlowDrafts.ClearShippingPreparation(message.Chat.Id, message.From.Id);
+                await ReplyAsync(message.Chat.Id,
+                    $"✅ آدرس برای {OrderCustomerLabel(customer)} ثبت شد.", ct);
+                return true;
+            }
             draft.AddressId = address.Id;
             draft.Stage = TelegramShippingPreparationStage.Ready;
             _orderFlowDrafts.SetShippingPreparation(draft);
@@ -490,12 +526,20 @@ public sealed partial class TelegramWebhookController
         if (_addressLabelService.IsEnabled)
         {
             var label = await _addressLabelService.CreateAsync(address, ct);
-            if (!label.IsSuccessful || label.Pdf is null)
+            if (!label.IsSuccessful || label.Pdf is null || label.Preview is null)
             {
                 await ReplyAsync(warningChatId,
                     $"⚠️ درخواست پست ثبت شد اما لیبل ساخته نشد: {label.Error}", ct);
                 return;
             }
+
+            var previewResult = await _sender.SendPhotoBytesWithKeyboardAsync(
+                _options.AddressLabelPrintChatId.Trim(), label.Preview,
+                $"address-label-{requestId:N}.jpg", $"👁 پیش‌نمایش لیبل {OrderCustomerLabel(customer)}",
+                Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
+            if (!previewResult.IsSuccessful)
+                await ReplyAsync(warningChatId,
+                    $"⚠️ PDF لیبل ساخته شد اما پیش‌نمایش آن ارسال نشد: {previewResult.Error}", ct);
 
             var pdfResult = await _sender.SendDocumentWithKeyboardAsync(
                 _options.AddressLabelPrintChatId.Trim(), label.Pdf,

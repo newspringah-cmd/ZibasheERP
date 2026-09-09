@@ -89,4 +89,5 @@ public sealed class TelegramShippingPreparationDraft
     public Guid CustomerId { get; set; }
     public Guid? AddressId { get; set; }
     public TelegramShippingPreparationStage Stage { get; set; }
+    public bool RegistrationOnly { get; set; }
 }

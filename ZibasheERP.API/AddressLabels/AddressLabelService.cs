@@ -20,6 +20,7 @@ public sealed record ParsedPostalAddress(
 public sealed record AddressLabelResult(
     bool IsSuccessful,
     byte[]? Pdf = null,
+    byte[]? Preview = null,
     string? Error = null);
 
 public interface IAddressLabelService
@@ -73,7 +74,15 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                 return new AddressLabelResult(false, Error:
                     $"اطلاعات {string.Join("، ", missing)} در متن آدرس پیدا نشد؛ آدرس را کامل‌تر ثبت کنید.");
 
-            return new AddressLabelResult(true, BuildPdf(parsed));
+            var document = BuildDocument(parsed);
+            var pdf = document.GeneratePdf();
+            var preview = document.GenerateImages(new ImageGenerationSettings
+            {
+                ImageFormat = ImageFormat.Jpeg,
+                ImageCompressionQuality = ImageCompressionQuality.VeryHigh,
+                RasterDpi = 200
+            }).Single();
+            return new AddressLabelResult(true, pdf, preview);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -95,7 +104,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                 model = _options.OpenAiModel,
                 input = new object[]
                 {
-                    new { role = "system", content = "متن نشانی پستی ایران را فقط استخراج کن. هیچ مقدار مفقودی را حدس نزن. ارقام را حفظ کن و نشانی کامل را بدون نام، تلفن و کدپستی برگردان." },
+                    new { role = "system", content = "متن نشانی پستی ایران را فقط استخراج کن. هیچ مقدار مفقودی را حدس نزن. ارقام را حفظ کن و نشانی کامل را بدون نام، تلفن و کدپستی برگردان. اگر کدپستی در متن نبود postalCode را رشته خالی برگردان." },
                     new { role = "user", content = rawAddress }
                 },
                 text = new
@@ -150,7 +159,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
         return fields.ToArray();
     }
 
-    private static byte[] BuildPdf(ParsedPostalAddress value)
+    private static IDocument BuildDocument(ParsedPostalAddress value)
     {
         var addressFontSize = value.FullAddress.Length switch
         {
@@ -175,7 +184,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                     column.Item().Text($"کدپستی: {value.PostalCode}").Bold();
                 column.Item().Text($"شهر مقصد: {value.City}").Bold().FontSize(12);
             });
-        })).GeneratePdf();
+        }));
     }
 
     public void Dispose() => _httpClient.Dispose();
