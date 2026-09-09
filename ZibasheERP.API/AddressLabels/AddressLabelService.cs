@@ -146,7 +146,6 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
         if (string.IsNullOrWhiteSpace(value.ReceiverName)) fields.Add("نام گیرنده");
         if (string.IsNullOrWhiteSpace(value.FullAddress)) fields.Add("نشانی");
         if (string.IsNullOrWhiteSpace(value.Mobile)) fields.Add("تلفن");
-        if (string.IsNullOrWhiteSpace(value.PostalCode)) fields.Add("کدپستی");
         if (string.IsNullOrWhiteSpace(value.City)) fields.Add("شهر مقصد");
         return fields.ToArray();
     }
@@ -172,7 +171,8 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                 column.Item().LineHorizontal(0.6f).LineColor(Colors.Grey.Darken1);
                 column.Item().Text(value.FullAddress).FontSize(addressFontSize).LineHeight(1.15f);
                 column.Item().Text($"تلفن: {value.Mobile}").Bold();
-                column.Item().Text($"کدپستی: {value.PostalCode}").Bold();
+                if (!string.IsNullOrWhiteSpace(value.PostalCode))
+                    column.Item().Text($"کدپستی: {value.PostalCode}").Bold();
                 column.Item().Text($"شهر مقصد: {value.City}").Bold().FontSize(12);
             });
         })).GeneratePdf();
