@@ -208,10 +208,12 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             customer.CurrentDebt += order.FinalAmount;
             customer.LastOrderAt = now;
             customer.UpdatedAt = now;
+            // Attach each order immediately. The next generated number must see orders
+            // created earlier in this same batch through DbSet.Local.
+            _db.Orders.Add(order);
             orders.Add(order);
         }
 
-        _db.Orders.AddRange(orders);
         await _db.SaveChangesAsync(cancellationToken);
         var invoiceNumbers = new List<string>();
         var queuedGiftRecipientPhotos = new HashSet<string>(StringComparer.Ordinal);
