@@ -87,6 +87,13 @@ if (!result.json.telegramCaption.includes('مبلغ قابل پرداخت') ||
   throw new Error('Invoice renderer did not prepare the combined Telegram document message.');
 }
 
+const inventoryEvent = structuredClone(event);
+inventoryEvent.data.IsInventory = true;
+const [inventoryResult] = run({ first: () => ({ json: inventoryEvent }) });
+if (!inventoryResult.json.telegramCaption.startsWith('🔴🔴موجودی🔴🔴\n')) {
+  throw new Error('Inventory invoice caption did not start with its inventory marker.');
+}
+
 const giftGiverEvent = structuredClone(event);
 giftGiverEvent.data.Items[0].IsGift = true;
 giftGiverEvent.data.Items[0].GiftRecipientUsername = '@MB_Sama';

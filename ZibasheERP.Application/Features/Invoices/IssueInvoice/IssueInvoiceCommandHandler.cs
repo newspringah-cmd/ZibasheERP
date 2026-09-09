@@ -232,6 +232,7 @@ public sealed class IssueInvoiceCommandHandler
                     ,order.Customer.Username
                 },
                 PaymentDeadlineHours = 24,
+                request.IsInventory,
                 GiftDeliveryRole = request.IsGift ? "Giver" : null,
                 request.GiftRecipientUsername,
                 request.GiftRecipientTelegramId,

@@ -104,6 +104,13 @@ public interface ITelegramMessageSender
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendDocumentWithKeyboardAsync(
+        string chatId,
+        string document,
+        string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> CopyMessageWithKeyboardAsync(
         string chatId,
         string fromChatId,
@@ -539,6 +546,23 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             return new TelegramSendResult(false, exception.Message);
         }
     }
+
+    public async Task<TelegramSendResult> SendDocumentWithKeyboardAsync(
+        string chatId,
+        string document,
+        string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync("sendDocument", new
+        {
+            chat_id = chatId,
+            document,
+            caption,
+            reply_markup = new
+            {
+                inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+            }
+        }, cancellationToken);
 
     public async Task<TelegramSendResult> CopyMessageWithKeyboardAsync(
         string chatId,

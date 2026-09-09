@@ -97,6 +97,7 @@ public interface IInvoiceIssuanceService
         IReadOnlyCollection<string> productPhotoFileIds,
         string issuedByTelegramUserId,
         string? giftRecipientIdentity = null,
+        bool isInventory = false,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<InvoicePaymentTrackingReport>> GetPaymentTrackingReportsAsync(

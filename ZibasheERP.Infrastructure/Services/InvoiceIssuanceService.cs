@@ -519,6 +519,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         IReadOnlyCollection<string> productPhotoFileIds,
         string issuedByTelegramUserId,
         string? giftRecipientIdentity = null,
+        bool isInventory = false,
         CancellationToken cancellationToken = default)
     {
         var identity = customerIdentity.Trim().TrimStart('@');
@@ -587,7 +588,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 validPhotoFileIds,
                 giftRecipient is not null,
                 giftRecipient?.Username,
-                giftRecipient?.TelegramId),
+                giftRecipient?.TelegramId,
+                isInventory),
             cancellationToken);
         if (giftRecipient is not null)
             await QueueManualGiftRecipientNotificationsAsync(order, invoice, giftRecipient, validPhotoFileIds, cancellationToken);

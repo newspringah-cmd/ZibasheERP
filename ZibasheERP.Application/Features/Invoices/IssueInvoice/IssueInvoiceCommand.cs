@@ -7,4 +7,5 @@ public sealed record IssueInvoiceCommand(
     IReadOnlyCollection<string>? ManualProductPhotoFileIds = null,
     bool IsGift = false,
     string? GiftRecipientUsername = null,
-    string? GiftRecipientTelegramId = null) : IRequest<InvoiceResponse>;
+    string? GiftRecipientTelegramId = null,
+    bool IsInventory = false) : IRequest<InvoiceResponse>;

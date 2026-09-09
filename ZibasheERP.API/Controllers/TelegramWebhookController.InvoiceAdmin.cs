@@ -481,10 +481,9 @@ public sealed partial class TelegramWebhookController
                 .ThenInclude(value => value!.TelegramGroup)
                 .FirstOrDefaultAsync(value => value.Id == resendInvoiceId && !value.IsDeleted, ct);
             var destination = invoice?.Order?.Customer?.TelegramGroup;
-            if (invoice is null || string.IsNullOrWhiteSpace(invoice.TelegramInvoiceChatId) ||
-                !invoice.TelegramInvoiceMessageId.HasValue)
+            if (invoice is null)
             {
-                await _sender.AnswerCallbackAsync(callback.Id, "PDF قبلی این فاکتور در دسترس نیست.", ct, true);
+                await _sender.AnswerCallbackAsync(callback.Id, "فاکتور پیدا نشد.", ct, true);
                 return true;
             }
             if (destination is null || destination.IsDeleted || !destination.IsActive ||
@@ -507,13 +506,38 @@ public sealed partial class TelegramWebhookController
                 {
                     new($"📋 کپی شماره کارت {account.BankName}".Trim(), CopyText: account.CardNumber)
                 });
-            var resend = await _sender.CopyMessageWithKeyboardAsync(
-                destination.ChatId.Trim(), invoice.TelegramInvoiceChatId,
-                invoice.TelegramInvoiceMessageId.Value, rows, ct);
-            if (!resend.IsSuccessful || !resend.MessageId.HasValue)
+            TelegramSendResult? resend = null;
+            if (!string.IsNullOrWhiteSpace(invoice.TelegramInvoiceChatId) &&
+                invoice.TelegramInvoiceMessageId.HasValue)
+            {
+                resend = await _sender.CopyMessageWithKeyboardAsync(
+                    destination.ChatId.Trim(), invoice.TelegramInvoiceChatId,
+                    invoice.TelegramInvoiceMessageId.Value, rows, ct);
+            }
+
+            if (resend is null || !resend.IsSuccessful || !resend.MessageId.HasValue)
+            {
+                var invoicePdfFileId = await _db.OrderArtifacts.AsNoTracking()
+                    .Where(value => !value.IsDeleted && value.OrderId == invoice.OrderId &&
+                        value.Type == OrderArtifactType.InvoicePdf &&
+                        value.ExternalFileId != null && value.ExternalFileId != "")
+                    .OrderByDescending(value => value.DeliveredAt)
+                    .ThenByDescending(value => value.CreatedAt)
+                    .Select(value => value.ExternalFileId)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.IsNullOrWhiteSpace(invoicePdfFileId))
+                {
+                    var username = invoice.Order?.Customer?.Username?.Trim().TrimStart('@');
+                    var customer = string.IsNullOrWhiteSpace(username) ? "مشتری زیباشی" : $"@{username}";
+                    resend = await _sender.SendDocumentWithKeyboardAsync(
+                        destination.ChatId.Trim(), invoicePdfFileId,
+                        $"🧾 فاکتور عطر {customer}", rows, ct);
+                }
+            }
+            if (resend is null || !resend.IsSuccessful || !resend.MessageId.HasValue)
             {
                 await _sender.AnswerCallbackAsync(callback.Id,
-                    $"ارسال مجدد انجام نشد: {resend.Error ?? "پیام PDF پیدا نشد."}", ct, true);
+                    $"ارسال مجدد انجام نشد: {resend?.Error ?? "پیام PDF پیدا نشد."}", ct, true);
                 return true;
             }
             invoice.TelegramInvoiceChatId = destination.ChatId.Trim();
@@ -568,6 +592,20 @@ public sealed partial class TelegramWebhookController
                     new[] { new TelegramInlineButton("خیر", "invoicebatch:manualgift:no") },
                     new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
                 }, ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:inventory-manual")
+        {
+            _manualInvoiceDrafts.Set(new TelegramManualInvoiceDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id,
+                IsInventory = true,
+                Stage = TelegramManualInvoiceStage.AwaitingCustomer
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "🔴🔴 موجودی 🔴🔴\n\nشناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
             return true;
         }
         if (callback.Data == "invoiceadmin:pricing")
@@ -1448,7 +1486,11 @@ public sealed partial class TelegramWebhookController
             case "invoices":
                 message = "🧾 مدیریت فاکتورها";
                 buttons.Add(new[] { new TelegramInlineButton("صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch") });
-                buttons.Add(new[] { new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual") });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("✍️ صدور فاکتور دستی", "invoiceadmin:manual"),
+                    new TelegramInlineButton("🔴 فاکتور موجودی", "invoiceadmin:inventory-manual")
+                });
                 buttons.Add(new[]
                 {
                     new TelegramInlineButton("📦 مخزن انتظار", "invoiceadmin:waiting"),
@@ -1805,6 +1847,14 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id, "برای این آیدی فاکتوری پیدا نشد.", ct);
             return true;
         }
+        var orderIdsWithInvoicePdf = await _db.OrderArtifacts.AsNoTracking()
+            .Where(value => !value.IsDeleted &&
+                invoices.Select(invoice => invoice.OrderId).Contains(value.OrderId) &&
+                value.Type == OrderArtifactType.InvoicePdf &&
+                value.ExternalFileId != null && value.ExternalFileId != "")
+            .Select(value => value.OrderId)
+            .Distinct()
+            .ToHashSetAsync(ct);
         var buttons = invoices.Select(invoice =>
         {
             var perfumeNames = string.Join("، ", invoice.Order!.Items
@@ -1824,7 +1874,8 @@ public sealed partial class TelegramWebhookController
                 ? invoice.InvoiceNumber
                 : invoice.InvoiceNumber[^4..];
             var canResend = invoice.TelegramInvoiceChatId != null &&
-                            invoice.TelegramInvoiceMessageId != null;
+                            invoice.TelegramInvoiceMessageId != null ||
+                            orderIdsWithInvoicePdf.Contains(invoice.OrderId);
 
             return (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
@@ -2022,7 +2073,8 @@ public sealed partial class TelegramWebhookController
                 var result = await _invoiceIssuanceService.IssueManualAsync(
                     manualDraft.CustomerIdentity, manualDraft.Lines,
                     manualDraft.ProductPhotoFileIds, userId.ToString(),
-                    manualDraft.IsGift ? manualDraft.GiftRecipientIdentity : null, ct);
+                    manualDraft.IsGift ? manualDraft.GiftRecipientIdentity : null,
+                    manualDraft.IsInventory, ct);
                 _manualInvoiceDrafts.Remove(chatId, userId);
                 var paymentTrackingStatus = await SendManualPaymentTrackingReportAsync(
                     result.InvoiceNumbers.Single(), ct);
@@ -2522,6 +2574,7 @@ public sealed partial class TelegramWebhookController
             _manualInvoiceDrafts.Set(draft);
             var total = draft.Lines.Sum(line => line.Quantity * line.UnitAmount + line.BottleAmount);
             await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+                (draft.IsInventory ? "🔴🔴 موجودی 🔴🔴\n" : string.Empty) +
                 $"پیش‌نمایش فاکتور دستی\n" +
                 (draft.IsGift
                     ? $"هدیه‌دهنده: {draft.CustomerIdentity}\nهدیه‌گیرنده: {draft.GiftRecipientIdentity}\n"

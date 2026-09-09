@@ -88,6 +88,7 @@ const renderRows = (pageItems) => pageItems.map((item) => {
 }).join('');
 
 const captionLines = [
+  ...(invoice.IsInventory === true ? ['🔴🔴موجودی🔴🔴'] : []),
   `🧾 فاکتور عطر ${customerName}`,
   ...(giftDeliveryRole === 'Recipient' && giftGiver
     ? [`🎁 هدیه از طرف ${giftGiver}`]

@@ -123,6 +123,7 @@ public sealed class TelegramManualInvoiceDraft
     public TelegramManualInvoiceStage Stage { get; set; } = TelegramManualInvoiceStage.AwaitingGiftDecision;
     public string CustomerIdentity { get; set; } = string.Empty;
     public bool IsGift { get; set; }
+    public bool IsInventory { get; set; }
     public string GiftRecipientIdentity { get; set; } = string.Empty;
     public List<string> ProductPhotoFileIds { get; } = [];
     public string PendingLineDescription { get; set; } = string.Empty;
