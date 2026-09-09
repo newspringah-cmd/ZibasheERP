@@ -207,26 +207,26 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
     {
         var addressFontSize = value.FullAddress.Length switch
         {
-            > 180 => 9.5f,
-            > 125 => 10.5f,
-            _ => 12.5f
+            > 180 => 11.5f,
+            > 125 => 12.5f,
+            _ => 14.5f
         };
         return Document.Create(container => container.Page(page =>
         {
             page.Size(new PageSize(80, 50, Unit.Millimetre));
             page.Margin(3, Unit.Millimetre);
-            page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(12.5f).Bold());
+            page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(14.5f).Bold());
             page.ContentFromRightToLeft();
             page.Content().ScaleToFit().Column(column =>
             {
                 column.Spacing(1.5f);
-                column.Item().Text(value.ReceiverName).Bold().FontSize(16);
+                column.Item().Text(value.ReceiverName).Bold().FontSize(18);
                 column.Item().LineHorizontal(0.6f).LineColor(Colors.Grey.Darken1);
                 column.Item().Text(value.FullAddress).FontSize(addressFontSize).LineHeight(1.15f);
                 column.Item().Text($"تلفن: {value.Mobile}").Bold();
                 if (!string.IsNullOrWhiteSpace(value.PostalCode))
                     column.Item().Text($"کدپستی: {value.PostalCode}").Bold();
-                column.Item().Text($"شهر مقصد: {value.City}").Bold().FontSize(14);
+                column.Item().Text($"شهر مقصد: {value.City}").Bold().FontSize(16);
             });
         }));
     }

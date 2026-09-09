@@ -107,9 +107,7 @@ public sealed partial class TelegramWebhookController
             draft.Stage = TelegramShippingPreparationStage.AwaitingNewAddress;
             _orderFlowDrafts.SetShippingPreparation(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ReplyAsync(callback.Message.Chat.Id,
-                "کل متن آدرس مشتری را بدون تغییر در یک پیام کپی و ارسال کنید.\n" +
-                "نام گیرنده، موبایل، کدپستی و نشانی کامل می‌تواند داخل همان متن باشد؛ بعداً سرویس پردازش آدرس اجزای آن را تشخیص می‌دهد.", ct);
+            await ReplyAsync(callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct);
             return true;
         }
 
