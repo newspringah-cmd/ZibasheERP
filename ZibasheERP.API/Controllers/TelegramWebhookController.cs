@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.API.AddressLabels;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
@@ -71,6 +72,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramSalesListRebuildWorker _salesListRebuildWorker;
     private readonly IInvoiceInventoryService _invoiceInventoryService;
     private readonly AppDbContext _db;
+    private readonly IAddressLabelService _addressLabelService;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -101,6 +103,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramOrderFlowDraftStore orderFlowDrafts,
         TelegramSalesListRebuildWorker salesListRebuildWorker,
         IInvoiceInventoryService invoiceInventoryService,
+        IAddressLabelService addressLabelService,
         AppDbContext db,
         ILogger<TelegramWebhookController> logger)
     {
@@ -132,6 +135,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _orderFlowDrafts = orderFlowDrafts;
         _salesListRebuildWorker = salesListRebuildWorker;
         _invoiceInventoryService = invoiceInventoryService;
+        _addressLabelService = addressLabelService;
         _db = db;
         _logger = logger;
     }

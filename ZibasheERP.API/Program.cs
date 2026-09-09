@@ -11,6 +11,7 @@ using ZibasheERP.API.Telegram;
 using ZibasheERP.API.Health;
 using ZibasheERP.API.Diagnostics;
 using ZibasheERP.API.N8n;
+using ZibasheERP.API.AddressLabels;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -131,6 +132,14 @@ builder.Services.AddOptions<N8nOptions>()
          options.MaxAttempts is >= 1 and <= 20),
         "Enabled n8n integration has invalid or missing settings.")
     .ValidateOnStart();
+builder.Services.AddOptions<AddressLabelOptions>()
+    .Bind(builder.Configuration.GetSection(AddressLabelOptions.SectionName))
+    .Validate(options => !options.Enabled ||
+        (!string.IsNullOrWhiteSpace(options.OpenAiApiKey) &&
+         !string.IsNullOrWhiteSpace(options.OpenAiModel)),
+        "Enabled address-label generation requires an OpenAI API key and model.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<IAddressLabelService, AddressLabelService>();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();

@@ -400,6 +400,12 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct, true);
             return;
         }
+        if (string.IsNullOrWhiteSpace(_options.ShippingChatId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id,
+                "گروه مسئول پست تنظیم نشده است؛ ابتدا Telegram__ShippingChatId را تنظیم کنید.", ct, true);
+            return;
+        }
         var customer = await _db.Customers.AsNoTracking().FirstAsync(value => value.Id == draft.CustomerId, ct);
         var address = await _db.Addresses.AsNoTracking().FirstAsync(value => value.Id == draft.AddressId, ct);
         var items = await ReadyShippingItems(draft.CustomerId).ToArrayAsync(ct);
@@ -481,6 +487,25 @@ public sealed partial class TelegramWebhookController
         Guid requestId, Customer customer, Address address, long warningChatId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_options.AddressLabelPrintChatId)) return;
+        if (_addressLabelService.IsEnabled)
+        {
+            var label = await _addressLabelService.CreateAsync(address, ct);
+            if (!label.IsSuccessful || label.Pdf is null)
+            {
+                await ReplyAsync(warningChatId,
+                    $"⚠️ درخواست پست ثبت شد اما لیبل ساخته نشد: {label.Error}", ct);
+                return;
+            }
+
+            var pdfResult = await _sender.SendDocumentWithKeyboardAsync(
+                _options.AddressLabelPrintChatId.Trim(), label.Pdf,
+                $"address-label-{requestId:N}.pdf", $"🏷 لیبل آدرس {OrderCustomerLabel(customer)}",
+                Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
+            if (!pdfResult.IsSuccessful)
+                await ReplyAsync(warningChatId,
+                    $"⚠️ درخواست پست ثبت شد اما PDF لیبل ارسال نشد: {pdfResult.Error}", ct);
+            return;
+        }
         var identity = OrderCustomerLabel(customer);
         var rawAddress = string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)
             ? address.FullAddress

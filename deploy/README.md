@@ -179,6 +179,18 @@ CONFIRM_TELEGRAM_GROUP_IMPORT=YES ./import-telegram-groups.sh \
 
 ## نگهداری
 
+### PDF لیبل آدرس
+
+برای تبدیل آدرس خام حسابدار به لیبل چاپ، این مقادیر فقط در `.env.production` سرور تنظیم می‌شوند:
+
+```dotenv
+AddressLabel__Enabled=true
+AddressLabel__OpenAiApiKey=REPLACE_WITH_OPENAI_API_KEY
+AddressLabel__OpenAiModel=gpt-5-mini
+```
+
+کلید OpenAI نباید در Git یا لاگ‌ها ثبت شود. خروجی یک PDF تک‌صفحه‌ای افقی با اندازه دقیق ۸۰ در ۵۰ میلی‌متر و فونت B Nazanin جاسازی‌شده است. اگر نام گیرنده، نشانی، تلفن، کدپستی یا شهر از متن خام قابل استخراج نباشد، PDF ساخته نمی‌شود و پیام اصلاح اطلاعات برای حسابدار ارسال می‌شود.
+
 - زمان داخل سرویس‌ها و دیتابیس UTC است؛ نمایش برای مدیر با منطقه زمانی تهران انجام می‌شود.
 - logها نباید شامل Bot Token، API Key، Webhook Secret یا اطلاعات ورود دیتابیس باشند.
 - backup دیتابیس باید رمزگذاری، زمان‌بندی و با آزمون بازیابی دوره‌ای کنترل شود.
