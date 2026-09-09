@@ -155,26 +155,39 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
-        if (callback.Data.StartsWith("shipping:tracking:", StringComparison.Ordinal) &&
-            Guid.TryParseExact(callback.Data["shipping:tracking:".Length..], "N", out var trackingCustomerId))
+        if (callback.Data == "shipping:trackingdone")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "کد رهگیری قبلاً ارسال شده است ✅", ct, true);
+            return true;
+        }
+
+        var isBatchTracking = callback.Data.StartsWith("shipping:trackingbatch:", StringComparison.Ordinal);
+        var trackingPrefix = isBatchTracking ? "shipping:trackingbatch:" : "shipping:tracking:";
+        if (callback.Data.StartsWith(trackingPrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[trackingPrefix.Length..], "N", out var trackingRequestId))
         {
             if (!await IsAuthorizedShippingAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
             {
                 await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مسئول ارسال ندارید.", ct, true);
                 return true;
             }
-            var customerExists = await _db.Customers.AsNoTracking().AnyAsync(value =>
-                value.Id == trackingCustomerId && !value.IsDeleted, ct);
-            if (!customerExists)
+            var trackingItem = await _db.OrderItems.AsNoTracking()
+                .Include(value => value.Order)
+                .FirstOrDefaultAsync(value => !value.IsDeleted &&
+                    value.ShippingRequestId == trackingRequestId && value.Order != null, ct);
+            if (trackingItem?.Order is null)
             {
-                await _sender.AnswerCallbackAsync(callback.Id, "مشتری این درخواست پیدا نشد.", ct, true);
+                await _sender.AnswerCallbackAsync(callback.Id, "اطلاعات مشتری این درخواست پیدا نشد.", ct, true);
                 return true;
             }
             _orderFlowDrafts.SetShippingTrackingPhoto(new TelegramShippingTrackingPhotoDraft
             {
                 ChatId = callback.Message.Chat.Id,
                 UserId = callback.From.Id,
-                CustomerId = trackingCustomerId
+                CustomerId = trackingItem.Order.CustomerId,
+                ShippingRequestId = trackingRequestId,
+                SourceMessageId = callback.Message.MessageId,
+                HasBatchControls = isBatchTracking
             });
             await _sender.AnswerCallbackAsync(callback.Id, "عکس کد رهگیری را ارسال کنید.", ct, true);
             await ReplyAsync(callback.Message.Chat.Id,
@@ -299,7 +312,7 @@ public sealed partial class TelegramWebhookController
                 new[]
                 {
                     new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
-                    new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{customer.Id:N}")
+                    new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{requestId:N}")
                 }
             }, ct);
         if (!sent.IsSuccessful)
@@ -504,15 +517,12 @@ public sealed partial class TelegramWebhookController
             shippingButtons.Add(new[]
             {
                 new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
-                new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{customer.Id:N}")
+                new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:trackingbatch:{requestId:N}")
             });
         }
         else
         {
-            shippingButtons.Add(new[]
-            {
-                new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{customer.Id:N}")
-            });
+            // Legacy address-only requests have no persisted shipment items to attach tracking to.
         }
         var sent = await _sender.SendInlineKeyboardAsync(
             _options.ShippingChatId.Trim(), shippingMessage, shippingButtons, ct);
@@ -609,6 +619,28 @@ public sealed partial class TelegramWebhookController
                 $"⚠️ ارسال عکس کد رهگیری برای {OrderCustomerLabel(customer)} کامل نشد:\n{string.Join("\n", failures)}", ct);
             return true;
         }
+        var updatedButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (draft.HasBatchControls)
+        {
+            updatedButtons.Add(new[]
+            {
+                new TelegramInlineButton("☑️ انتخاب برای گزارش کلی", $"shipping:select:{draft.ShippingRequestId:N}")
+            });
+            updatedButtons.Add(new[]
+            {
+                new TelegramInlineButton("📊 گزارش کلی انتخاب‌ها", "shipping:batchreport")
+            });
+        }
+        updatedButtons.Add(new[]
+        {
+            new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{draft.ShippingRequestId:N}"),
+            new TelegramInlineButton("✅ کد ارسال شد", "shipping:trackingdone")
+        });
+        var markupResult = await _sender.EditReplyMarkupAsync(
+            message.Chat.Id.ToString(), draft.SourceMessageId, updatedButtons, ct);
+        if (!markupResult.IsSuccessful)
+            await ReplyAsync(message.Chat.Id,
+                $"⚠️ عکس کد رهگیری ارسال شد اما وضعیت دکمه بروزرسانی نشد: {markupResult.Error}", ct);
         await ReplyAsync(message.Chat.Id,
             $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد.", ct);
         return true;

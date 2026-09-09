@@ -95,6 +95,9 @@ public sealed class TelegramShippingTrackingPhotoDraft
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
     public required Guid CustomerId { get; init; }
+    public required Guid ShippingRequestId { get; init; }
+    public required long SourceMessageId { get; init; }
+    public bool HasBatchControls { get; init; }
 }
 
 public enum TelegramShippingPreparationStage { AwaitingIdentity, AwaitingAddressChoice, AwaitingNewAddress, Ready }
