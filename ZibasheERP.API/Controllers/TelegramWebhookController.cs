@@ -167,6 +167,26 @@ public sealed partial class TelegramWebhookController : ControllerBase
         }
 
         var message = update.Message;
+        if (message?.MigrateToChatId is long migratedChatId)
+        {
+            await _groupMembershipTracker.TrackMigrationAsync(
+                message.Chat.Id,
+                new TelegramChat(
+                    migratedChatId,
+                    "supergroup",
+                    message.Chat.Title,
+                    message.Chat.Username),
+                cancellationToken);
+            return Ok();
+        }
+        if (message?.MigrateFromChatId is long previousChatId)
+        {
+            await _groupMembershipTracker.TrackMigrationAsync(
+                previousChatId,
+                message.Chat,
+                cancellationToken);
+            return Ok();
+        }
         if (message?.From is null)
             return Ok();
 

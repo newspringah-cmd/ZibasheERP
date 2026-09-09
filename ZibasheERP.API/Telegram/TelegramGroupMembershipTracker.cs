@@ -10,6 +10,7 @@ namespace ZibasheERP.API.Telegram;
 public interface ITelegramGroupMembershipTracker
 {
     Task TrackAsync(TelegramChatMemberUpdated update, CancellationToken cancellationToken);
+    Task TrackMigrationAsync(long oldChatId, TelegramChat newChat, CancellationToken cancellationToken);
     Task MarkUnavailableAsync(string chatId, CancellationToken cancellationToken);
     Task<TelegramGroupLinkResult> LinkByInvoiceAsync(
         TelegramChat chat,
@@ -41,6 +42,80 @@ public sealed class TelegramGroupMembershipTracker(
     AppDbContext context,
     ILogger<TelegramGroupMembershipTracker> logger) : ITelegramGroupMembershipTracker
 {
+    public async Task TrackMigrationAsync(
+        long oldChatId,
+        TelegramChat newChat,
+        CancellationToken cancellationToken)
+    {
+        var oldId = oldChatId.ToString();
+        var newId = newChat.Id.ToString();
+        if (oldId == newId || !IsGroup(newChat.Type))
+            return;
+
+        var groups = await context.CustomerTelegramGroups
+            .Where(value => value.ChatId == oldId && !value.IsDeleted)
+            .ToArrayAsync(cancellationToken);
+        if (groups.Length == 0)
+        {
+            logger.LogWarning(
+                "Telegram group migration from {OldChatId} to {NewChatId} had no stored mapping.",
+                oldId, newId);
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var group in groups)
+        {
+            group.ChatId = newId;
+            group.Title = string.IsNullOrWhiteSpace(newChat.Title) ? group.Title : newChat.Title.Trim();
+            group.Username = NormalizeUsername(newChat.Username);
+            group.IsActive = true;
+            group.LastSeenAt = now;
+            group.UpdatedAt = now;
+        }
+
+        var invoiceMessages = await context.Invoices
+            .Where(value => !value.IsDeleted && value.TelegramInvoiceChatId == oldId)
+            .ToArrayAsync(cancellationToken);
+        foreach (var invoice in invoiceMessages)
+        {
+            invoice.TelegramInvoiceChatId = newId;
+            invoice.UpdatedAt = now;
+        }
+
+        var telegramNotifications = await context.NotificationOutbox
+            .Where(value => !value.IsDeleted && value.Channel == "Telegram" && value.Recipient == oldId &&
+                (value.Status == NotificationOutboxStatus.Pending ||
+                 value.Status == NotificationOutboxStatus.Processing ||
+                 value.Status == NotificationOutboxStatus.Failed))
+            .ToArrayAsync(cancellationToken);
+        foreach (var notification in telegramNotifications)
+        {
+            notification.Recipient = newId;
+            if (notification.Status == NotificationOutboxStatus.Failed)
+            {
+                notification.Status = NotificationOutboxStatus.Pending;
+                notification.Attempts = 0;
+                notification.LastError = null;
+                notification.LockedUntil = null;
+                notification.NextAttemptAt = now;
+            }
+            notification.UpdatedAt = now;
+        }
+
+        await context.SaveChangesAsync(cancellationToken);
+        var queuedInvoices = 0;
+        var queuedPhotos = 0;
+        foreach (var customerId in groups.Select(value => value.CustomerId).Distinct())
+        {
+            queuedInvoices += await QueueUndeliveredInvoicesAsync(customerId, newId, cancellationToken);
+            queuedPhotos += await QueueUndeliveredDecantPhotosAsync(customerId, newId, cancellationToken);
+        }
+        logger.LogInformation(
+            "Telegram group migrated from {OldChatId} to {NewChatId}; mappings={MappingCount}, invoices={InvoiceCount}, photos={PhotoCount}.",
+            oldId, newId, groups.Length, queuedInvoices, queuedPhotos);
+    }
+
     public async Task TrackAsync(
         TelegramChatMemberUpdated update,
         CancellationToken cancellationToken)
@@ -251,6 +326,12 @@ public sealed class TelegramGroupMembershipTracker(
         var chatId = chat.Id.ToString();
         var group = await context.CustomerTelegramGroups.FirstOrDefaultAsync(
             value => value.CustomerId == customer.Id && !value.IsDeleted, cancellationToken);
+        if (group is not null && group.ChatId != chatId &&
+            IsLikelySupergroupMigration(group, chat))
+        {
+            var oldChatId = long.Parse(group.ChatId, System.Globalization.CultureInfo.InvariantCulture);
+            await TrackMigrationAsync(oldChatId, chat, cancellationToken);
+        }
         if (group is not null && group.ChatId != chatId)
             return new TelegramGroupLinkResult(TelegramGroupLinkStatus.CustomerLinkedToAnotherGroup);
         var alreadyLinked = group is not null && group.IsActive;
@@ -451,6 +532,16 @@ public sealed class TelegramGroupMembershipTracker(
     private static bool IsGroup(string chatType) =>
         string.Equals(chatType, "group", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(chatType, "supergroup", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLikelySupergroupMigration(CustomerTelegramGroup group, TelegramChat chat) =>
+        string.Equals(chat.Type, "supergroup", StringComparison.OrdinalIgnoreCase) &&
+        chat.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            .StartsWith("-100", StringComparison.Ordinal) &&
+        long.TryParse(group.ChatId, out var oldChatId) &&
+        !oldChatId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            .StartsWith("-100", StringComparison.Ordinal) &&
+        !string.IsNullOrWhiteSpace(chat.Title) &&
+        string.Equals(group.Title.Trim(), chat.Title.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static string? NormalizeUsername(string? username)
     {

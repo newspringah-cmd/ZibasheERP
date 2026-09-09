@@ -17,7 +17,9 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("sticker")] TelegramSticker? Sticker = null,
     [property: JsonPropertyName("caption")] string? Caption = null,
     [property: JsonPropertyName("message_id")] long MessageId = 0,
-    [property: JsonPropertyName("reply_to_message")] TelegramMessage? ReplyToMessage = null);
+    [property: JsonPropertyName("reply_to_message")] TelegramMessage? ReplyToMessage = null,
+    [property: JsonPropertyName("migrate_to_chat_id")] long? MigrateToChatId = null,
+    [property: JsonPropertyName("migrate_from_chat_id")] long? MigrateFromChatId = null);
 
 public sealed record TelegramPhotoSize(
     [property: JsonPropertyName("file_id")] string FileId,
