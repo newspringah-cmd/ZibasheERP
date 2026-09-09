@@ -334,6 +334,9 @@ public sealed class TelegramGroupMembershipTracker(
             .Include(value => value.Order)
                 .ThenInclude(value => value!.Items)
                     .ThenInclude(value => value.SalesList)
+            .Include(value => value.Order)
+                .ThenInclude(value => value!.Items)
+                    .ThenInclude(value => value.SourceSalesListRequest)
             .Where(value => !value.IsDeleted && value.Order != null && !value.Order.IsDeleted &&
                 value.Order.CustomerId == customerId &&
                 (value.DeliveryStatus == InvoiceDeliveryStatus.NeedsManualAction ||
@@ -424,6 +427,9 @@ public sealed class TelegramGroupMembershipTracker(
                         item.PerfumePricePerMl,
                         item.PerfumeAmount,
                         item.IsBottleOwner,
+                        IsGift = item.SourceSalesListRequest?.IsGift == true,
+                        GiftRecipientUsername = item.SourceSalesListRequest?.GiftRecipientTelegramUsername,
+                        GiftRecipientTelegramId = item.SourceSalesListRequest?.GiftRecipientTelegramUserId,
                         BottleName = item.Bottle?.Name,
                         item.BottlePrice,
                         item.LineTotal

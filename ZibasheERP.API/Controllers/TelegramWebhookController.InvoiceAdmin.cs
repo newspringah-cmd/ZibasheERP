@@ -13,6 +13,7 @@ namespace ZibasheERP.API.Controllers;
 public sealed partial class TelegramWebhookController
 {
     private static readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramSalesListImportEditDraft> ImportEditDrafts = new();
+    private static readonly ConcurrentDictionary<(long ChatId, long UserId), DateTime> CompletedListResendDrafts = new();
 
     private async Task<bool> TryHandleAdminCommandAsync(TelegramMessage message, CancellationToken ct)
     {
@@ -414,6 +415,15 @@ public sealed partial class TelegramWebhookController
             if (queued)
                 await ReplyAsync(callback.Message.Chat.Id,
                     "بازسازی همه پست‌های فعال کانال در پس‌زمینه شروع می‌شود. پس از پایان، گزارش ارسال خواهد شد.", ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:resend-completed-list")
+        {
+            ClearAdminWorkflowDrafts(callback.Message.Chat.Id, callback.From.Id);
+            CompletedListResendDrafts[(callback.Message.Chat.Id, callback.From.Id)] = DateTime.UtcNow;
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "کد لیست تکمیل‌شده را وارد کنید؛ مثال: 7139\n\nپیام قبلی حذف نمی‌شود. برای لغو، /cancel را بفرستید.", ct);
             return true;
         }
         if (callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal))
@@ -1455,6 +1465,7 @@ public sealed partial class TelegramWebhookController
                 buttons.Add(new[] { new TelegramInlineButton("➕ لیست فروش جدید", "adminlist:new") });
                 buttons.Add(new[] { new TelegramInlineButton("✏️ ویرایش لیست فروش", "adminrequest:start:edit") });
                 buttons.Add(new[] { new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup") });
+                buttons.Add(new[] { new TelegramInlineButton("📤 ارسال مجدد لیست تکمیل‌شده", "invoiceadmin:resend-completed-list") });
                 if (IsPrimaryOwner(userId))
                     buttons.Add(new[] { new TelegramInlineButton("🔄 بازسازی همه پست‌های لیست", "invoiceadmin:rebuild-sales-lists") });
                 break;
@@ -1649,6 +1660,92 @@ public sealed partial class TelegramWebhookController
         await _db.SaveChangesAsync(ct);
         _invoiceCaptionEditDrafts.Remove(message.Chat.Id, message.From.Id);
         await ReplyAsync(message.Chat.Id, $"کپشن PDF فاکتور {targetInvoice.InvoiceNumber} ویرایش شد ✅", ct);
+        return true;
+    }
+
+    private async Task<bool> TryHandleCompletedListResendMessageAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null ||
+            !CompletedListResendDrafts.TryGetValue((message.Chat.Id, message.From.Id), out var startedAt))
+            return false;
+        if (startedAt <= DateTime.UtcNow.AddMinutes(-10))
+        {
+            CompletedListResendDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            return false;
+        }
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            CompletedListResendDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "دسترسی مدیریت ندارید.", ct);
+            return true;
+        }
+
+        var text = message.Text?.Trim();
+        if (string.Equals(text, "/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            CompletedListResendDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "ارسال مجدد لیست تکمیل‌شده لغو شد.", ct);
+            return true;
+        }
+        if (!int.TryParse(text, out var publicCode))
+        {
+            await ReplyAsync(message.Chat.Id, "کد عددی لیست را وارد کنید؛ مثال: 7139", ct);
+            return true;
+        }
+
+        var list = await _db.SalesLists.AsNoTracking()
+            .Include(value => value.Perfume)
+            .FirstOrDefaultAsync(value => !value.IsDeleted && value.PublicCode == publicCode, ct);
+        if (list is null)
+        {
+            await ReplyAsync(message.Chat.Id, "لیستی با این کد پیدا نشد.", ct);
+            return true;
+        }
+        if (list.Status == SalesListStatus.Open)
+        {
+            await ReplyAsync(message.Chat.Id, "این لیست هنوز باز است و نمی‌توان آن را به‌عنوان لیست تکمیل‌شده ارسال کرد.", ct);
+            return true;
+        }
+
+        var requests = await _db.SalesListRequests.AsNoTracking()
+            .Include(value => value.Bottle)
+            .Where(value => !value.IsDeleted && value.SalesListId == list.Id &&
+                value.Status != SalesListRequestStatus.Cancelled &&
+                value.Status != SalesListRequestStatus.Expired)
+            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
+            .ToArrayAsync(ct);
+        if (requests.Length == 0)
+        {
+            await ReplyAsync(message.Chat.Id, "برای این لیست آیتم فعالی پیدا نشد.", ct);
+            return true;
+        }
+
+        var destination = string.IsNullOrWhiteSpace(_options.CompletedSalesListsChatId)
+            ? _options.AdminChatId
+            : _options.CompletedSalesListsChatId;
+        if (string.IsNullOrWhiteSpace(destination))
+        {
+            await ReplyAsync(message.Chat.Id, "گروه لیست‌های تکمیل‌شده تنظیم نشده است.", ct);
+            return true;
+        }
+
+        var caption = "✅ لیست فروش تکمیل شد — نسخه اصلاح‌شده\n\n" +
+                      FormatChannelSalesList(list, requests);
+        var result = !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
+            ? await _sender.SendPhotoHtmlAsync(destination.Trim(), list.TelegramPhotoFileId, caption, ct)
+            : await _sender.SendHtmlAsync(destination.Trim(), caption, ct);
+        if (!result.IsSuccessful)
+        {
+            await ReplyAsync(message.Chat.Id,
+                $"ارسال نسخه اصلاح‌شده ناموفق بود: {result.Error ?? "خطای نامشخص"}", ct);
+            return true;
+        }
+
+        CompletedListResendDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+        await ReplyAsync(message.Chat.Id,
+            $"نسخه اصلاح‌شده لیست {publicCode} به گروه لیست‌های تکمیل‌شده ارسال شد ✅\nپیام قبلی حذف نشد.", ct);
         return true;
     }
 
@@ -3369,10 +3466,12 @@ public sealed partial class TelegramWebhookController
         _adminRequestDrafts.Remove(chatId, userId);
         _invoiceIssuanceDrafts.Remove(chatId, userId);
         _invoiceCaptionEditDrafts.Remove(chatId, userId);
+        _invoiceResendDrafts.Remove(chatId, userId);
         _manualInvoiceDrafts.Remove(chatId, userId);
         _invoiceStickerDrafts.Remove(chatId, userId);
         _invoiceInventoryDrafts.Remove(chatId, userId);
         _decantPhotoDrafts.Remove(chatId, userId);
+        CompletedListResendDrafts.TryRemove((chatId, userId), out _);
         ImportEditDrafts.TryRemove((chatId, userId), out _);
     }
 

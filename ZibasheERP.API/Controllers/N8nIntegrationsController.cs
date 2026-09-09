@@ -110,10 +110,14 @@ public sealed class N8nIntegrationsController : ControllerBase
             data.TryGetProperty("InvoiceNumber", out var invoiceNumberElement) &&
             !string.IsNullOrWhiteSpace(invoiceNumberElement.GetString()))
         {
+            var invoiceNumber = invoiceNumberElement.GetString()!.Trim();
+            var giftRecipient = ReadGiftRecipientIdentity(data);
             rows.Add(new TelegramInlineButton[]
             {
-                new("📋 کپی فرمان اتصال گروه",
-                    CopyText: $"/connect {invoiceNumberElement.GetString()!.Trim()}")
+                string.IsNullOrWhiteSpace(giftRecipient)
+                    ? new("📋 کپی فرمان اتصال گروه", CopyText: $"/connect {invoiceNumber}")
+                    : new("📋 کپی فرمان اتصال هدیه‌گیرنده",
+                        CopyText: $"/connectgift {invoiceNumber} {giftRecipient.TrimStart('@')}")
             });
         }
 
@@ -216,6 +220,43 @@ public sealed class N8nIntegrationsController : ControllerBase
             ? $"{caption}\n{giftLine}"
             : $"{caption[..firstLineEnd]}\n{giftLine}{caption[firstLineEnd..]}";
         return updatedCaption[..Math.Min(updatedCaption.Length, 1024)];
+    }
+
+    private static string? ReadGiftRecipientIdentity(JsonElement data)
+    {
+        var role = data.TryGetProperty("GiftDeliveryRole", out var roleElement)
+            ? roleElement.GetString()
+            : null;
+        if (!string.Equals(role, "Recipient", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var username = data.TryGetProperty("GiftRecipientUsername", out var usernameElement)
+            ? usernameElement.GetString()?.Trim().TrimStart('@')
+            : null;
+        var telegramId = data.TryGetProperty("GiftRecipientTelegramId", out var telegramIdElement)
+            ? telegramIdElement.GetString()?.Trim()
+            : null;
+        if (!string.IsNullOrWhiteSpace(username))
+            return $"@{username}";
+        if (!string.IsNullOrWhiteSpace(telegramId))
+            return telegramId;
+
+        if (!data.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array)
+            return null;
+        foreach (var item in items.EnumerateArray())
+        {
+            username = item.TryGetProperty("GiftRecipientUsername", out usernameElement)
+                ? usernameElement.GetString()?.Trim().TrimStart('@')
+                : null;
+            telegramId = item.TryGetProperty("GiftRecipientTelegramId", out telegramIdElement)
+                ? telegramIdElement.GetString()?.Trim()
+                : null;
+            if (!string.IsNullOrWhiteSpace(username))
+                return $"@{username}";
+            if (!string.IsNullOrWhiteSpace(telegramId))
+                return telegramId;
+        }
+        return null;
     }
 
     [HttpPost("order-artifacts")]
