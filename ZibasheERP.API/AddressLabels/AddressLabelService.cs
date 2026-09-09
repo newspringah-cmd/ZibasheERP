@@ -63,8 +63,13 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
     {
         try
         {
-            var parsed = string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)
-                ? await ParseRawAddressAsync(address.FullAddress, cancellationToken)
+            var parseFromCombinedText =
+                string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(address.ReceiverName) ||
+                string.IsNullOrWhiteSpace(address.Mobile) ||
+                string.IsNullOrWhiteSpace(address.City);
+            var parsed = parseFromCombinedText
+                ? await ParseRawAddressAsync(BuildRawAddress(address), cancellationToken)
                 : new ParsedPostalAddress(
                     address.ReceiverName.Trim(), address.FullAddress.Trim(), address.Mobile.Trim(),
                     address.PostalCode.Trim(), address.City.Trim());
@@ -94,6 +99,16 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
             return new AddressLabelResult(false, Error: "ساخت لیبل با خطا روبه‌رو شد؛ جزئیات در لاگ ثبت شد.");
         }
     }
+
+    private static string BuildRawAddress(Address address) => string.Join("\n", new[]
+    {
+        string.IsNullOrWhiteSpace(address.ReceiverName) ? null : $"نام گیرنده: {address.ReceiverName}",
+        string.IsNullOrWhiteSpace(address.Mobile) ? null : $"موبایل: {address.Mobile}",
+        string.IsNullOrWhiteSpace(address.PostalCode) ? null : $"کدپستی: {address.PostalCode}",
+        string.IsNullOrWhiteSpace(address.Province) ? null : $"استان: {address.Province}",
+        string.IsNullOrWhiteSpace(address.City) ? null : $"شهر: {address.City}",
+        address.FullAddress
+    }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
     private async Task<ParsedPostalAddress> ParseRawAddressAsync(string rawAddress, CancellationToken ct)
     {
@@ -163,26 +178,26 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
     {
         var addressFontSize = value.FullAddress.Length switch
         {
-            > 180 => 8.5f,
-            > 125 => 9.5f,
-            _ => 10.5f
+            > 180 => 9.5f,
+            > 125 => 10.5f,
+            _ => 12.5f
         };
         return Document.Create(container => container.Page(page =>
         {
             page.Size(new PageSize(80, 50, Unit.Millimetre));
             page.Margin(3, Unit.Millimetre);
-            page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(10.5f).Bold());
+            page.DefaultTextStyle(style => style.FontFamily(FontFamily).FontSize(12.5f).Bold());
             page.ContentFromRightToLeft();
             page.Content().ScaleToFit().Column(column =>
             {
                 column.Spacing(1.5f);
-                column.Item().Text(value.ReceiverName).Bold().FontSize(14);
+                column.Item().Text(value.ReceiverName).Bold().FontSize(16);
                 column.Item().LineHorizontal(0.6f).LineColor(Colors.Grey.Darken1);
                 column.Item().Text(value.FullAddress).FontSize(addressFontSize).LineHeight(1.15f);
                 column.Item().Text($"تلفن: {value.Mobile}").Bold();
                 if (!string.IsNullOrWhiteSpace(value.PostalCode))
                     column.Item().Text($"کدپستی: {value.PostalCode}").Bold();
-                column.Item().Text($"شهر مقصد: {value.City}").Bold().FontSize(12);
+                column.Item().Text($"شهر مقصد: {value.City}").Bold().FontSize(14);
             });
         }));
     }
