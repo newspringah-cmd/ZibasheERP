@@ -2743,6 +2743,15 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id, $"⚠️ صدور فاکتور انجام نشد:\n{exception.Message}", ct);
             await SendInvoiceBatchSelectionAsync(message.Chat.Id, message.From.Id, ct);
         }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception,
+                "Completed sales-list invoice issuance failed after bottle-price resolution for Telegram user {TelegramUserId} and {SalesListCount} selected lists.",
+                message.From.Id,
+                draft.SelectedSalesListIds.Count);
+            await ReplyAsync(message.Chat.Id,
+                "⚠️ صدور فاکتور انجام نشد و تراکنش برگشت خورد؛ هیچ فاکتور قطعی از این تلاش ثبت نشد. جزئیات خطا برای بررسی ثبت شد.", ct);
+        }
         return true;
     }
 

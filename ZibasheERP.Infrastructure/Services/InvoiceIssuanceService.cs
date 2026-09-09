@@ -830,7 +830,11 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         for (var attempt = 0; attempt < 20; attempt++)
         {
             var number = $"ORD-{now:yyMMdd}-{Random.Shared.Next(1000, 10000)}";
-            if (!await _db.Orders.AnyAsync(order => order.OrderNumber == number, cancellationToken))
+            // AnyAsync only checks persisted rows. During batch issuance several new orders
+            // exist in the change tracker before SaveChanges, so they must participate in
+            // uniqueness checks as well.
+            if (!_db.Orders.Local.Any(order => order.OrderNumber == number) &&
+                !await _db.Orders.AnyAsync(order => order.OrderNumber == number, cancellationToken))
                 return number;
         }
         throw new InvalidOperationException("تولید شماره سفارش یکتا ناموفق بود.");
