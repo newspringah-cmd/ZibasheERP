@@ -27,13 +27,28 @@ public sealed partial class TelegramWebhookController
 
         if (callback.Data == "shipping:prepare")
         {
-            if (!await IsAuthorizedAccountingShippingAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
+            if (!IsAuthorizedShippingOperator(callback.From.Id))
             {
-                await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای حسابدار در گروه حسابداری فعال است.", ct, true);
+                await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای مدیر و حسابدار فعال است.", ct, true);
                 return true;
             }
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await StartShippingPreparationAsync(callback.Message.Chat.Id, callback.From.Id, ct);
+            var isLinkedCustomerGroup = await _db.CustomerTelegramGroups.AsNoTracking().AnyAsync(value =>
+                !value.IsDeleted && value.IsActive && value.ChatId == callback.Message.Chat.Id.ToString(), ct);
+            if (isLinkedCustomerGroup)
+            {
+                await StartShippingPreparationAsync(callback.Message.Chat.Id, callback.From.Id, ct);
+                return true;
+            }
+            _orderFlowDrafts.SetShippingPreparation(new TelegramShippingPreparationDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id,
+                Stage = TelegramShippingPreparationStage.AwaitingIdentity,
+                AllowUnlinkedChat = true
+            });
+            await ReplyAsync(callback.Message.Chat.Id,
+                "آیدی مشتری را به‌صورت @username یا Telegram ID ارسال کنید.", ct);
             return true;
         }
 
@@ -49,7 +64,8 @@ public sealed partial class TelegramWebhookController
                 ChatId = callback.Message.Chat.Id,
                 UserId = callback.From.Id,
                 Stage = TelegramShippingPreparationStage.AwaitingIdentity,
-                RegistrationOnly = true
+                RegistrationOnly = true,
+                AllowUnlinkedChat = true
             });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await ReplyAsync(callback.Message.Chat.Id,
@@ -280,7 +296,7 @@ public sealed partial class TelegramWebhookController
         if (message.From is null ||
             !_orderFlowDrafts.TryGetShippingPreparation(message.Chat.Id, message.From.Id, out var draft))
             return false;
-        var authorized = draft.RegistrationOnly
+        var authorized = draft.AllowUnlinkedChat
             ? IsAuthorizedShippingOperator(message.From.Id)
             : await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct);
         if (!authorized)
