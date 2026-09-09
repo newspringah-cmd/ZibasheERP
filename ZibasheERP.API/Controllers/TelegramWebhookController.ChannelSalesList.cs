@@ -523,7 +523,8 @@ public sealed partial class TelegramWebhookController
     private async Task CompleteAndRollSalesListAsync(
         SalesList completed, IReadOnlyCollection<SalesListRequest> requests, CancellationToken ct)
     {
-        var finalCaption = "✅ لیست فروش تکمیل شد\n\n" + FormatChannelSalesList(completed, requests);
+        var completedPages = FormatChannelSalesListPages(completed, requests);
+        var finalCaption = "✅ لیست فروش تکمیل شد\n\n" + completedPages.Main;
         var completedListsChatId = string.IsNullOrWhiteSpace(_options.CompletedSalesListsChatId)
             ? _options.AdminChatId : _options.CompletedSalesListsChatId;
         if (!string.IsNullOrWhiteSpace(completed.TelegramPhotoFileId))
@@ -531,6 +532,11 @@ public sealed partial class TelegramWebhookController
                 completedListsChatId, completed.TelegramPhotoFileId, finalCaption, ct);
         else
             await _sender.SendHtmlAsync(completedListsChatId, finalCaption, ct);
+        if (!string.IsNullOrWhiteSpace(completedPages.Continuation))
+            await _sender.SendHtmlAsync(
+                completedListsChatId,
+                $"✅ ادامه لیست تکمیل‌شده {completed.PublicCode}\n\n{completedPages.Continuation}",
+                ct);
 
         completed.Status = SalesListStatus.Closed;
         completed.ClosedDate = DateTime.UtcNow;

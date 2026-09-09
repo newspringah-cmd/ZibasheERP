@@ -1731,8 +1731,8 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
-        var caption = "✅ لیست فروش تکمیل شد — نسخه اصلاح‌شده\n\n" +
-                      FormatChannelSalesList(list, requests);
+        var pages = FormatChannelSalesListPages(list, requests);
+        var caption = "✅ لیست فروش تکمیل شد — نسخه اصلاح‌شده\n\n" + pages.Main;
         var result = !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
             ? await _sender.SendPhotoHtmlAsync(destination.Trim(), list.TelegramPhotoFileId, caption, ct)
             : await _sender.SendHtmlAsync(destination.Trim(), caption, ct);
@@ -1741,6 +1741,19 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id,
                 $"ارسال نسخه اصلاح‌شده ناموفق بود: {result.Error ?? "خطای نامشخص"}", ct);
             return true;
+        }
+        if (!string.IsNullOrWhiteSpace(pages.Continuation))
+        {
+            var continuation = await _sender.SendHtmlAsync(
+                destination.Trim(),
+                $"✅ ادامه نسخه اصلاح‌شده لیست {publicCode}\n\n{pages.Continuation}",
+                ct);
+            if (!continuation.IsSuccessful)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    $"بخش اول ارسال شد اما ادامه فهرست ناموفق بود: {continuation.Error ?? "خطای نامشخص"}", ct);
+                return true;
+            }
         }
 
         CompletedListResendDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
