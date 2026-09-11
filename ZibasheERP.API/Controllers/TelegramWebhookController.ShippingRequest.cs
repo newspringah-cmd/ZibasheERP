@@ -365,6 +365,13 @@ public sealed partial class TelegramWebhookController
                 await ReplyAsync(message.Chat.Id, "مشتری با این آیدی پیدا نشد.", ct);
                 return true;
             }
+            if (draft.LinkGroupOnIdentity &&
+                !await TryLinkShippingGroupAsync(message.Chat, customer, ct))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "این مشتری یا گروه قبلاً اتصال متفاوتی دارد؛ اتصال خودکار انجام نشد.", ct);
+                return true;
+            }
             draft.CustomerId = customer.Id;
             draft.Stage = draft.RegistrationOnly
                 ? TelegramShippingPreparationStage.AwaitingNewAddress
@@ -429,8 +436,33 @@ public sealed partial class TelegramWebhookController
         }
         if (!await EnsureActiveCustomerGroupLinkAsync(message.Chat, ct))
         {
-            await ReplyAsync(message.Chat.Id,
-                "این گروه به مشتری متصل نیست. ابتدا دستور اتصال گروه را دوباره داخل همین گروه ارسال کنید.", ct);
+            var titleUsername = System.Text.RegularExpressions.Regex.Match(
+                message.Chat.Title ?? string.Empty, @"@(?<username>[A-Za-z0-9_]{5,})");
+            Customer? titleCustomer = null;
+            if (titleUsername.Success)
+            {
+                var username = titleUsername.Groups["username"].Value;
+                titleCustomer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
+                    value.Username != null && (value.Username == username || value.Username == "@" + username), ct);
+            }
+            if (titleCustomer is not null &&
+                await TryLinkShippingGroupAsync(message.Chat, titleCustomer, ct))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    $"✅ گروه به {OrderCustomerLabel(titleCustomer)} متصل شد.", ct);
+                await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
+                return true;
+            }
+            _orderFlowDrafts.SetShippingPreparation(new TelegramShippingPreparationDraft
+            {
+                ChatId = message.Chat.Id,
+                UserId = message.From.Id,
+                Stage = TelegramShippingPreparationStage.AwaitingIdentity,
+                AllowUnlinkedChat = true,
+                LinkGroupOnIdentity = true
+            });
+            await _sender.SendForceReplyAsync(message.Chat.Id.ToString(),
+                "این گروه هنوز متصل نیست؛ آیدی مشتری را به‌صورت @username وارد کنید.", ct);
             return true;
         }
         await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
@@ -480,6 +512,38 @@ public sealed partial class TelegramWebhookController
             }
         }
         return false;
+    }
+
+    private async Task<bool> TryLinkShippingGroupAsync(
+        TelegramChat chat, Customer customer, CancellationToken ct)
+    {
+        var chatId = chat.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var conflictingChat = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
+            !value.IsDeleted && value.ChatId == chatId && value.CustomerId != customer.Id, ct);
+        if (conflictingChat is not null) return false;
+        var customerGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
+            !value.IsDeleted && value.CustomerId == customer.Id, ct);
+        if (customerGroup is not null && customerGroup.ChatId != chatId) return false;
+        var now = DateTime.UtcNow;
+        if (customerGroup is null)
+        {
+            customerGroup = new CustomerTelegramGroup
+            {
+                Id = Guid.NewGuid(), CustomerId = customer.Id, ChatId = chatId,
+                Title = string.IsNullOrWhiteSpace(chat.Title) ? chatId : chat.Title.Trim(),
+                Username = chat.Username?.Trim().TrimStart('@'), IsActive = true,
+                LinkedAt = now, LastSeenAt = now, CreatedAt = now
+            };
+            _db.CustomerTelegramGroups.Add(customerGroup);
+        }
+        else
+        {
+            customerGroup.IsActive = true;
+            customerGroup.LastSeenAt = now;
+            customerGroup.UpdatedAt = now;
+        }
+        await _db.SaveChangesAsync(ct);
+        return true;
     }
 
     private async Task StartShippingPreparationAsync(long chatId, long userId, CancellationToken ct)

@@ -127,5 +127,6 @@ public sealed class TelegramShippingPreparationDraft
     public TelegramShippingPreparationStage Stage { get; set; }
     public bool RegistrationOnly { get; set; }
     public bool AllowUnlinkedChat { get; set; }
+    public bool LinkGroupOnIdentity { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
