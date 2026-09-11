@@ -117,25 +117,30 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         // تنها fallback امن، شیشهٔ نرمالِ پیش‌فرضِ همان حجم است؛ شیشهٔ فانتزی هرگز حدسی نرمال نمی‌شود.
         var missingBottleVolumes = requests
             .Select(value => value.Request)
-            .Where(request => !request.IsBottleOwner && !request.BottleId.HasValue)
+            .Where(request => !request.IsBottleOwner && !request.IsComplimentaryBottle &&
+                !request.BottleId.HasValue)
             .Select(request => request.VolumeMl)
             .Distinct()
             .ToArray();
         if (missingBottleVolumes.Length > 0)
         {
-            var defaultNormalBottles = await _db.Bottles
+            var defaultNormalBottleCandidates = await _db.Bottles
                 .Where(bottle => !bottle.IsDeleted && bottle.IsActive && bottle.IsDefault &&
                     bottle.Type == BottleType.Normal && missingBottleVolumes.Contains(bottle.VolumeMl))
-                .ToDictionaryAsync(bottle => bottle.VolumeMl, cancellationToken);
+                .ToArrayAsync(cancellationToken);
+            var defaultNormalBottles = defaultNormalBottleCandidates
+                .GroupBy(bottle => bottle.VolumeMl)
+                .Where(group => group.Count() == 1)
+                .ToDictionary(group => group.Key, group => group.Single());
             foreach (var request in requests.Select(value => value.Request)
-                         .Where(request => !request.IsBottleOwner && !request.BottleId.HasValue))
+                         .Where(request => !request.IsBottleOwner && !request.IsComplimentaryBottle &&
+                             !request.BottleId.HasValue))
             {
                 if (!defaultNormalBottles.TryGetValue(request.VolumeMl, out var bottle))
                     continue;
                 request.BottleId = bottle.Id;
                 request.Bottle = bottle;
-                if (request.BottlePrice <= 0)
-                    request.BottlePrice = bottle.SalePrice;
+                request.BottlePrice = bottle.SalePrice;
                 request.UpdatedAt = DateTime.UtcNow;
             }
         }
@@ -337,16 +342,16 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         if (request.IsBottleOwner || request.IsComplimentaryBottle)
             return 0m;
 
-        if (request.BottlePrice > 0)
-            return request.BottlePrice;
-
         if (request.Bottle?.SalePrice is > 0)
         {
-            // Imported legacy requests may have a selected bottle but no saved price.
-            // Snapshot the current bottle price so future retries produce the same invoice amount.
+            // Until issuance, the bottle catalog is authoritative. Refresh the snapshot
+            // here as a final safeguard against an older price saved on the request.
             request.BottlePrice = request.Bottle.SalePrice;
             return request.BottlePrice;
         }
+
+        if (!request.BottleId.HasValue && request.BottlePrice > 0)
+            return request.BottlePrice;
 
         throw new BottlePriceResolutionRequiredException(
             request.Id, publicCode, RequestIdentity(request), request.Bottle?.Name ?? "شیشه نامشخص");
