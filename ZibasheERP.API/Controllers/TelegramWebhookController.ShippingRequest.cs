@@ -338,12 +338,15 @@ public sealed partial class TelegramWebhookController
 
     private async Task<bool> TryHandleShippingPreparationMessageAsync(TelegramMessage message, CancellationToken ct)
     {
-        if (message.From is null ||
-            !_orderFlowDrafts.TryGetShippingPreparation(message.Chat.Id, message.From.Id, out var draft))
+        var senderUserId = message.From?.Id ?? 0;
+        if (!_orderFlowDrafts.TryGetShippingPreparation(message.Chat.Id, senderUserId, out var draft))
             return false;
-        var authorized = draft.AllowUnlinkedChat
-            ? IsAuthorizedShippingOperator(message.From.Id)
-            : await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct);
+        var isAnonymousAdminReply = draft.Stage == TelegramShippingPreparationStage.AwaitingNewAddress &&
+            message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
+        var authorized = isAnonymousAdminReply || (message.From is not null &&
+            (draft.AllowUnlinkedChat
+                ? IsAuthorizedShippingOperator(message.From.Id)
+                : await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct)));
         if (!authorized)
         {
             return true;
