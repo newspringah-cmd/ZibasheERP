@@ -498,17 +498,46 @@ public sealed partial class TelegramWebhookController
                  value.Status == SalesListRequestStatus.Invoiced))
             .Select(value => new
             {
-                Username = value.IsGift
-                    ? value.GiftRecipientTelegramUsername
-                    : value.TelegramUsername,
-                TelegramId = value.IsGift
-                    ? value.GiftRecipientTelegramUserId
-                    : value.TelegramUserId
+                value.IsGift,
+                value.TelegramUsername,
+                value.TelegramUserId,
+                value.GiftRecipientTelegramUsername,
+                value.GiftRecipientTelegramUserId,
+                value.LabelIdentityText
             })
             .ToArrayAsync(ct);
         return await ResolveDecantTargetsAsync(
-            requests.Select(value => new DecantIdentity(value.Username, value.TelegramId)),
+            requests.Select(value => ResolveDecantIdentity(
+                value.IsGift,
+                value.TelegramUsername,
+                value.TelegramUserId,
+                value.GiftRecipientTelegramUsername,
+                value.GiftRecipientTelegramUserId,
+                value.LabelIdentityText)),
             ct);
+    }
+
+    private static DecantIdentity ResolveDecantIdentity(
+        bool isGift,
+        string? giverUsername,
+        string? giverTelegramId,
+        string? recipientUsername,
+        string? recipientTelegramId,
+        string? labelIdentity)
+    {
+        var labelMatch = Regex.Match(labelIdentity ?? string.Empty,
+            @"(?i)\bfor\s+@?(?<recipient>[A-Za-z0-9_]{5,})\b");
+        var labelGift = labelMatch.Success;
+        var hasRecipient = !string.IsNullOrWhiteSpace(recipientUsername) ||
+            !string.IsNullOrWhiteSpace(recipientTelegramId);
+        if (isGift || hasRecipient || labelGift)
+        {
+            var username = NormalizeDecantUsername(recipientUsername);
+            if (username is null && labelGift)
+                username = NormalizeDecantUsername(labelMatch.Groups["recipient"].Value);
+            return new DecantIdentity(username, NormalizeDecantTelegramId(recipientTelegramId));
+        }
+        return new DecantIdentity(giverUsername, giverTelegramId);
     }
 
     private async Task<IReadOnlyList<DecantTarget>> ResolveDecantTargetsAsync(
