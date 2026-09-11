@@ -1932,7 +1932,7 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             if (list.Status is SalesListStatus.Open or SalesListStatus.QueuedForInvoice or
-                SalesListStatus.Invoiced or SalesListStatus.Closed or SalesListStatus.Cancelled)
+                SalesListStatus.Invoiced or SalesListStatus.Cancelled)
             {
                 await ReplyAsync(message.Chat.Id,
                     "فقط لیست تکمیل‌شده‌ای که هنوز وارد صف صدور فاکتور نشده قابل ویرایش است.", ct);
@@ -1989,7 +1989,7 @@ public sealed partial class TelegramWebhookController
             value.Id == draft.SalesListId && !value.IsDeleted, ct);
         if (listForEdit is null || listForEdit.Status is SalesListStatus.Open or
             SalesListStatus.QueuedForInvoice or SalesListStatus.Invoiced or
-            SalesListStatus.Closed or SalesListStatus.Cancelled)
+            SalesListStatus.Cancelled)
         {
             CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
             await ReplyAsync(message.Chat.Id, "وضعیت لیست تغییر کرده و دیگر قابل ویرایش نیست.", ct);
