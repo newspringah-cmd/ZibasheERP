@@ -276,7 +276,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             {
                 chat_id = chatId,
                 text = message,
-                reply_markup = new { force_reply = true, selective = true }
+                reply_markup = new { force_reply = true, selective = false }
             },
             cancellationToken);
 

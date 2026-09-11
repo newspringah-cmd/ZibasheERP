@@ -109,7 +109,7 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await _sender.SendForceReplyAsync(
                 callback.Message.Chat.Id.ToString(),
-                "آدرس کامل را وارد کنید",
+                "آدرس کامل را در همین کادر پاسخ وارد کنید",
                 ct);
             return true;
         }
@@ -373,7 +373,7 @@ public sealed partial class TelegramWebhookController
             if (draft.RegistrationOnly)
                 await _sender.SendForceReplyAsync(
                     message.Chat.Id.ToString(),
-                    "آدرس کامل را وارد کنید",
+                    "آدرس کامل را در همین کادر پاسخ وارد کنید",
                     ct);
             else
                 await SendShippingAddressChoicesAsync(draft, ct);
