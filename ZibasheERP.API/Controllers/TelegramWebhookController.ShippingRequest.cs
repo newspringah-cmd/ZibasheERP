@@ -107,7 +107,10 @@ public sealed partial class TelegramWebhookController
             draft.Stage = TelegramShippingPreparationStage.AwaitingNewAddress;
             _orderFlowDrafts.SetShippingPreparation(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ReplyAsync(callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct);
+            await _sender.SendForceReplyAsync(
+                callback.Message.Chat.Id.ToString(),
+                "آدرس کامل را وارد کنید",
+                ct);
             return true;
         }
 
@@ -366,8 +369,10 @@ public sealed partial class TelegramWebhookController
                 : TelegramShippingPreparationStage.AwaitingAddressChoice;
             _orderFlowDrafts.SetShippingPreparation(draft);
             if (draft.RegistrationOnly)
-                await ReplyAsync(message.Chat.Id,
-                    $"مشتری: {OrderCustomerLabel(customer)}\n\nکل متن آدرس را در یک پیام ارسال کنید. نام گیرنده، موبایل و شهر مقصد الزامی است؛ کدپستی اختیاری است.", ct);
+                await _sender.SendForceReplyAsync(
+                    message.Chat.Id.ToString(),
+                    "آدرس کامل را وارد کنید",
+                    ct);
             else
                 await SendShippingAddressChoicesAsync(draft, ct);
             return true;
