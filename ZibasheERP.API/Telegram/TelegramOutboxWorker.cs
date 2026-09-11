@@ -336,8 +336,9 @@ public sealed class TelegramOutboxWorker : BackgroundService
         {
             using var giftDocument = JsonDocument.Parse(payload);
             var giftRoot = giftDocument.RootElement;
-            var invoiceNumber = giftRoot.TryGetProperty("InvoiceNumber", out var invoiceValue)
-                ? invoiceValue.GetString()?.Trim() : null;
+            var hasInvoiceNumber = giftRoot.TryGetProperty("InvoiceNumber", out var invoiceValue) ||
+                giftRoot.TryGetProperty("invoiceNumber", out invoiceValue);
+            var invoiceNumber = hasInvoiceNumber ? invoiceValue.GetString()?.Trim() : null;
             var recipient = giftRoot.TryGetProperty("RecipientUsername", out var recipientValue)
                 ? recipientValue.GetString()?.Trim().TrimStart('@') : null;
             if (string.IsNullOrWhiteSpace(recipient) &&

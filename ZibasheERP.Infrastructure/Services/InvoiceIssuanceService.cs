@@ -410,7 +410,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     Recipient = "admin",
                     Payload = System.Text.Json.JsonSerializer.Serialize(new
                     {
-                        invoiceNumber,
+                        InvoiceNumber = invoiceNumber,
                         RecipientUsername = recipientUsername,
                         RecipientTelegramId = recipientTelegramId,
                         GiverUsername = request.TelegramUsername,

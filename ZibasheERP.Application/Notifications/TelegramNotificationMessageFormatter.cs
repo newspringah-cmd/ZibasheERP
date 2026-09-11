@@ -194,10 +194,17 @@ public static class TelegramNotificationMessageFormatter
         return $"سفارش {orderNumber} با {company} ارسال شد. کد رهگیری: {trackingCode}";
     }
 
-    private static string? ReadString(JsonElement root, string propertyName) =>
-        root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
+    private static string? ReadString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value) && root.ValueKind == JsonValueKind.Object)
+        {
+            value = root.EnumerateObject()
+                .FirstOrDefault(property => string.Equals(
+                    property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                .Value;
+        }
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    }
 
     private static decimal ReadDecimal(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var value) && value.TryGetDecimal(out var result)
