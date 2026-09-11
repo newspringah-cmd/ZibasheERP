@@ -25,13 +25,10 @@ function formatCard(value) {
 
 if (event.eventType !== 'InvoiceIssued' || !event.data) throw new Error('Expected an InvoiceIssued event.');
 const customerChatId = String(event.data.Delivery?.ChatId ?? '').trim();
-const manualReviewChatId = typeof $env === 'undefined'
-  ? ''
-  : String($env.N8N_INVOICE_FAILURE_CHAT_ID ?? '').trim();
 const isManualReview = !customerChatId;
-const invoiceDeliveryChatId = customerChatId || manualReviewChatId;
-if (!/^-\d+$/.test(invoiceDeliveryChatId)) {
-  throw new Error('Invoice has no customer group and N8N_INVOICE_FAILURE_CHAT_ID is not configured.');
+const invoiceDeliveryChatId = customerChatId;
+if (!isManualReview && !/^-\d+$/.test(invoiceDeliveryChatId)) {
+  throw new Error('Invoice customer group id is invalid.');
 }
 const invoice = event.data;
 const customer = invoice.Customer ?? {};

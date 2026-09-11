@@ -131,11 +131,9 @@ if (result.json.firstCardCopyText !== '6280231544451379' ||
 
 const manualReviewEvent = structuredClone(event);
 manualReviewEvent.data.Delivery = null;
-const [manualReviewResult] = run(
-  { first: () => ({ json: manualReviewEvent }) },
-  { N8N_INVOICE_FAILURE_CHAT_ID: '-1004380686148' });
+const [manualReviewResult] = run({ first: () => ({ json: manualReviewEvent }) });
 if (!manualReviewResult.json.isManualReview ||
-    manualReviewResult.json.invoiceDeliveryChatId !== '-1004380686148' ||
+    manualReviewResult.json.invoiceDeliveryChatId !== '' ||
     !manualReviewResult.json.telegramCaption.includes('بررسی دستی')) {
   throw new Error('Invoice renderer did not prepare the manual-review delivery package.');
 }

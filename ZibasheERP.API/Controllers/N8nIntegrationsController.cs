@@ -68,6 +68,11 @@ public sealed class N8nIntegrationsController : ControllerBase
             string.Equals(chatId, _telegramOptions.InvoiceFailureChatId.Trim(), StringComparison.Ordinal);
         if (!isCustomerDelivery && !isManualReviewDelivery)
             return Conflict(new { Message = "مقصد فاکتور با گروه تأییدشده یکسان نیست." });
+        if (isManualReviewDelivery)
+            return Conflict(new
+            {
+                Message = "PDF فاکتور بدون گروه متصل ارسال نمی‌شود؛ هشدار اتصال جداگانه برای حسابدار ارسال شده است."
+            });
 
         using var payload = JsonDocument.Parse(sourceEvent.Payload);
         var data = payload.RootElement;
@@ -106,21 +111,6 @@ public sealed class N8nIntegrationsController : ControllerBase
                 });
             }
         }
-        if (isManualReviewDelivery &&
-            data.TryGetProperty("InvoiceNumber", out var invoiceNumberElement) &&
-            !string.IsNullOrWhiteSpace(invoiceNumberElement.GetString()))
-        {
-            var invoiceNumber = invoiceNumberElement.GetString()!.Trim();
-            var giftRecipient = ReadGiftRecipientIdentity(data);
-            rows.Add(new TelegramInlineButton[]
-            {
-                string.IsNullOrWhiteSpace(giftRecipient)
-                    ? new("📋 کپی فرمان اتصال گروه", CopyText: $"/connect {invoiceNumber}")
-                    : new("📋 کپی فرمان اتصال هدیه‌گیرنده",
-                        CopyText: $"/connectgift {invoiceNumber} {giftRecipient.TrimStart('@')}")
-            });
-        }
-
         await using var stream = document.OpenReadStream();
         using var buffer = new MemoryStream();
         await stream.CopyToAsync(buffer, cancellationToken);
