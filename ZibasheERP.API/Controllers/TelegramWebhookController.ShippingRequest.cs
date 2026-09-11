@@ -436,23 +436,6 @@ public sealed partial class TelegramWebhookController
         }
         if (!await EnsureActiveCustomerGroupLinkAsync(message.Chat, ct))
         {
-            var titleUsername = System.Text.RegularExpressions.Regex.Match(
-                message.Chat.Title ?? string.Empty, @"@(?<username>[A-Za-z0-9_]{5,})");
-            Customer? titleCustomer = null;
-            if (titleUsername.Success)
-            {
-                var username = titleUsername.Groups["username"].Value;
-                titleCustomer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-                    value.Username != null && (value.Username == username || value.Username == "@" + username), ct);
-            }
-            if (titleCustomer is not null &&
-                await TryLinkShippingGroupAsync(message.Chat, titleCustomer, ct))
-            {
-                await ReplyAsync(message.Chat.Id,
-                    $"✅ گروه به {OrderCustomerLabel(titleCustomer)} متصل شد.", ct);
-                await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
-                return true;
-            }
             _orderFlowDrafts.SetShippingPreparation(new TelegramShippingPreparationDraft
             {
                 ChatId = message.Chat.Id,
@@ -462,7 +445,7 @@ public sealed partial class TelegramWebhookController
                 LinkGroupOnIdentity = true
             });
             await _sender.SendForceReplyAsync(message.Chat.Id.ToString(),
-                "این گروه هنوز متصل نیست؛ آیدی مشتری را به‌صورت @username وارد کنید.", ct);
+                "یوزرنیم مشتری را به‌صورت @username وارد کنید. پس از ثبت، این گروه به‌صورت دائمی به مشتری متصل می‌شود.", ct);
             return true;
         }
         await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
