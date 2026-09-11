@@ -32,11 +32,22 @@ public sealed class TelegramBottlePriceSyncWorker : BackgroundService
                 .Where(bottle => !bottle.IsDeleted && bottle.IsActive)
                 .ToArrayAsync(stoppingToken);
             var bottlesById = bottles.ToDictionary(bottle => bottle.Id);
-            var defaultNormalBottles = bottles
-                .Where(bottle => bottle.IsDefault && bottle.Type == BottleType.Normal)
+            var normalBottlesByVolume = bottles
+                .Where(bottle => bottle.Type == BottleType.Normal)
                 .GroupBy(bottle => bottle.VolumeMl)
-                .Where(group => group.Count() == 1)
-                .ToDictionary(group => group.Key, group => group.Single());
+                .Select(group => new
+                {
+                    VolumeMl = group.Key,
+                    Defaults = group.Where(bottle => bottle.IsDefault).ToArray(),
+                    Bottles = group.ToArray()
+                })
+                .Where(group => group.Defaults.Length == 1 ||
+                    (group.Defaults.Length == 0 && group.Bottles.Length == 1))
+                .ToDictionary(
+                    group => group.VolumeMl,
+                    group => group.Defaults.Length == 1
+                        ? group.Defaults[0]
+                        : group.Bottles[0]);
 
             var requests = await db.SalesListRequests
                 .Where(request => !request.IsDeleted &&
@@ -72,7 +83,7 @@ public sealed class TelegramBottlePriceSyncWorker : BackgroundService
                 {
                     bottlesById.TryGetValue(request.BottleId.Value, out bottle);
                 }
-                else if (defaultNormalBottles.TryGetValue(request.VolumeMl, out bottle))
+                else if (normalBottlesByVolume.TryGetValue(request.VolumeMl, out bottle))
                 {
                     request.BottleId = bottle.Id;
                     request.UpdatedAt = now;

@@ -114,7 +114,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             throw new InvalidOperationException("برای لیست‌های انتخاب‌شده درخواست تأییدشده‌ای وجود ندارد.");
 
         // درخواست‌های قدیمیِ واردشده پیش از ثبت نوع شیشه ممکن است BottleId نداشته باشند.
-        // تنها fallback امن، شیشهٔ نرمالِ پیش‌فرضِ همان حجم است؛ شیشهٔ فانتزی هرگز حدسی نرمال نمی‌شود.
+        // تنها fallback امن، شیشهٔ نرمالِ پیش‌فرض یا نرمالِ یکتای همان حجم است؛
+        // شیشهٔ فانتزی هرگز به‌صورت حدسی انتخاب نمی‌شود.
         var missingBottleVolumes = requests
             .Select(value => value.Request)
             .Where(request => !request.IsBottleOwner && !request.IsComplimentaryBottle &&
@@ -124,14 +125,25 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .ToArray();
         if (missingBottleVolumes.Length > 0)
         {
-            var defaultNormalBottleCandidates = await _db.Bottles
-                .Where(bottle => !bottle.IsDeleted && bottle.IsActive && bottle.IsDefault &&
+            var normalBottleCandidates = await _db.Bottles
+                .Where(bottle => !bottle.IsDeleted && bottle.IsActive &&
                     bottle.Type == BottleType.Normal && missingBottleVolumes.Contains(bottle.VolumeMl))
                 .ToArrayAsync(cancellationToken);
-            var defaultNormalBottles = defaultNormalBottleCandidates
+            var defaultNormalBottles = normalBottleCandidates
                 .GroupBy(bottle => bottle.VolumeMl)
-                .Where(group => group.Count() == 1)
-                .ToDictionary(group => group.Key, group => group.Single());
+                .Select(group => new
+                {
+                    VolumeMl = group.Key,
+                    Defaults = group.Where(bottle => bottle.IsDefault).ToArray(),
+                    Bottles = group.ToArray()
+                })
+                .Where(group => group.Defaults.Length == 1 ||
+                    (group.Defaults.Length == 0 && group.Bottles.Length == 1))
+                .ToDictionary(
+                    group => group.VolumeMl,
+                    group => group.Defaults.Length == 1
+                        ? group.Defaults[0]
+                        : group.Bottles[0]);
             foreach (var request in requests.Select(value => value.Request)
                          .Where(request => !request.IsBottleOwner && !request.IsComplimentaryBottle &&
                              !request.BottleId.HasValue))
