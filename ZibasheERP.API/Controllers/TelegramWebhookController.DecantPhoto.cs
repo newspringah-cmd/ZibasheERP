@@ -395,49 +395,61 @@ public sealed partial class TelegramWebhookController
         var customer = await _db.Customers
             .Include(value => value.TelegramGroup)
             .FirstOrDefaultAsync(value => !value.IsDeleted && value.Username != null &&
-                value.Username.ToLower() == username.ToLower(), ct);
-        if (customer is not null)
+                (value.Username == username || value.Username == "@" + username), ct);
+        if (customer is null)
         {
-            var conflictingGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
-                value.ChatId == message.Chat.Id.ToString() && !value.IsDeleted &&
-                value.CustomerId != customer.Id, ct);
-            if (conflictingGroup is not null)
+            var customerId = Guid.NewGuid();
+            customer = new Customer
             {
-                await ReplyAsync(message.Chat.Id,
-                    "این گروه قبلاً به مشتری دیگری متصل شده است؛ اتصال تغییر نکرد.", ct);
-                return true;
-            }
-            if (customer.TelegramGroup is not null &&
-                !string.Equals(customer.TelegramGroup.ChatId, message.Chat.Id.ToString(), StringComparison.Ordinal))
+                Id = customerId,
+                CreatedAt = DateTime.UtcNow,
+                FullName = $"مشتری @{username}",
+                Mobile = $"TGDECANT{customerId:N}"[..20],
+                Username = username,
+                Notes = "مشتری به‌صورت خودکار از اتصال دائمی عکس دکانت ایجاد شد."
+            };
+            _db.Customers.Add(customer);
+        }
+
+        var conflictingGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
+            value.ChatId == message.Chat.Id.ToString() && !value.IsDeleted &&
+            value.CustomerId != customer.Id, ct);
+        if (conflictingGroup is not null)
+        {
+            await ReplyAsync(message.Chat.Id,
+                "این گروه قبلاً به مشتری دیگری متصل شده است؛ اتصال تغییر نکرد.", ct);
+            return true;
+        }
+        if (customer.TelegramGroup is not null &&
+            !string.Equals(customer.TelegramGroup.ChatId, message.Chat.Id.ToString(), StringComparison.Ordinal))
+        {
+            await ReplyAsync(message.Chat.Id,
+                "این مشتری قبلاً گروه دیگری دارد؛ اتصال تغییر نکرد.", ct);
+            return true;
+        }
+        if (customer.TelegramGroup is null)
+        {
+            customer.TelegramGroup = new CustomerTelegramGroup
             {
-                await ReplyAsync(message.Chat.Id,
-                    "این مشتری قبلاً گروه دیگری دارد؛ اتصال تغییر نکرد.", ct);
-                return true;
-            }
-            if (customer.TelegramGroup is null)
-            {
-                customer.TelegramGroup = new CustomerTelegramGroup
-                {
-                    Id = Guid.NewGuid(),
-                    CustomerId = customer.Id,
-                    ChatId = message.Chat.Id.ToString(),
-                    Title = string.IsNullOrWhiteSpace(message.Chat.Title)
-                        ? message.Chat.Id.ToString()
-                        : message.Chat.Title.Trim(),
-                    Username = NormalizeDecantUsername(message.Chat.Username),
-                    IsActive = true,
-                    LinkedAt = DateTime.UtcNow,
-                    LastSeenAt = DateTime.UtcNow,
-                    CreatedAt = DateTime.UtcNow
-                };
-                _db.CustomerTelegramGroups.Add(customer.TelegramGroup);
-            }
-            else
-            {
-                customer.TelegramGroup.IsActive = true;
-                customer.TelegramGroup.LastSeenAt = DateTime.UtcNow;
-                customer.TelegramGroup.UpdatedAt = DateTime.UtcNow;
-            }
+                Id = Guid.NewGuid(),
+                CustomerId = customer.Id,
+                ChatId = message.Chat.Id.ToString(),
+                Title = string.IsNullOrWhiteSpace(message.Chat.Title)
+                    ? message.Chat.Id.ToString()
+                    : message.Chat.Title.Trim(),
+                Username = NormalizeDecantUsername(message.Chat.Username),
+                IsActive = true,
+                LinkedAt = DateTime.UtcNow,
+                LastSeenAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.CustomerTelegramGroups.Add(customer.TelegramGroup);
+        }
+        else
+        {
+            customer.TelegramGroup.IsActive = true;
+            customer.TelegramGroup.LastSeenAt = DateTime.UtcNow;
+            customer.TelegramGroup.UpdatedAt = DateTime.UtcNow;
         }
 
         var pending = await _db.NotificationOutbox
@@ -449,13 +461,16 @@ public sealed partial class TelegramWebhookController
         var matches = pending.Where(value => DecantNotificationTargetsUsername(value.Payload, username)).ToArray();
         if (matches.Length == 0)
         {
-            await ReplyAsync(message.Chat.Id, $"عکس دکانت معوقی برای @{username} پیدا نشد.", ct);
+            await _db.SaveChangesAsync(ct);
+            await ReplyAsync(message.Chat.Id,
+                $"✅ گروه برای ارسال دائمی عکس‌های @{username} متصل شد. عکس معوقی برای ارسال وجود نداشت.", ct);
             return true;
         }
 
         var now = DateTime.UtcNow;
         foreach (var notification in matches)
         {
+            notification.CustomerId = customer.Id;
             notification.Recipient = message.Chat.Id.ToString();
             notification.Status = NotificationOutboxStatus.Pending;
             notification.Attempts = 0;
@@ -466,7 +481,7 @@ public sealed partial class TelegramWebhookController
         }
         await _db.SaveChangesAsync(ct);
         await ReplyAsync(message.Chat.Id,
-            "✅ اتصال عکس دکانت به این گروه انجام شد.", ct);
+            $"✅ اتصال دائمی عکس دکانت انجام شد و {matches.Length} عکس معوق در صف ارسال قرار گرفت.", ct);
         return true;
     }
 
