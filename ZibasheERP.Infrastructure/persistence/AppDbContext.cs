@@ -547,7 +547,7 @@ public class AppDbContext : DbContext
             .HasMaxLength(100);
         modelBuilder.Entity<NotificationOutbox>()
             .Property(notification => notification.Payload)
-            .HasMaxLength(4000);
+            .HasColumnType("nvarchar(max)");
         modelBuilder.Entity<NotificationOutbox>()
             .Property(notification => notification.LastError)
             .HasMaxLength(1000);
