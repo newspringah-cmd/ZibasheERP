@@ -158,6 +158,13 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("shipping:idreport:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["shipping:idreport:".Length..], "N", out var reportRequestId))
+        {
+            await SendSingleCustomerShippingReportAsync(callback, reportRequestId, ct);
+            return true;
+        }
+
         if (callback.Data == "shipping:trackingdone")
         {
             await _sender.AnswerCallbackAsync(callback.Id, "کد رهگیری قبلاً ارسال شده است ✅", ct, true);
@@ -316,7 +323,8 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
                     new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{requestId:N}")
-                }
+                },
+                new[] { new TelegramInlineButton("📋 گزارش این آیدی", $"shipping:idreport:{requestId:N}") }
             }, ct);
         if (!sent.IsSuccessful)
         {
@@ -689,6 +697,10 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
                 new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:trackingbatch:{requestId:N}")
             });
+            shippingButtons.Add(new[]
+            {
+                new TelegramInlineButton("📋 گزارش این آیدی", $"shipping:idreport:{requestId:N}")
+            });
         }
         else
         {
@@ -707,6 +719,39 @@ public sealed partial class TelegramWebhookController
         await _sender.AnswerCallbackAsync(callback.Id,
             "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.", ct, true);
         await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
+    }
+
+    private async Task SendSingleCustomerShippingReportAsync(
+        TelegramCallbackQuery callback,
+        Guid requestId,
+        CancellationToken ct)
+    {
+        var message = callback.Message!;
+        if (!await IsAuthorizedShippingAdminAsync(message.Chat.Id, callback.From.Id, ct))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مسئول ارسال ندارید.", ct, true);
+            return;
+        }
+
+        var items = await _db.OrderItems.AsNoTracking()
+            .Include(value => value.Order).ThenInclude(value => value!.Customer)
+            .Include(value => value.SalesList)
+            .Include(value => value.Perfume)
+            .Where(value => !value.IsDeleted && value.ShippingRequestId == requestId)
+            .OrderBy(value => value.CreatedAt)
+            .ToArrayAsync(ct);
+        if (items.Length == 0 || items[0].Order?.Customer is null)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "عطری برای این درخواست پیدا نشد.", ct, true);
+            return;
+        }
+
+        var customer = items[0].Order!.Customer;
+        var lines = items.Select((item, index) =>
+            $"{index + 1}. {item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر"} — {item.RequestedVolumeMl} میل");
+        await _sender.AnswerCallbackAsync(callback.Id, "گزارش آماده شد ✅", ct);
+        await ReplyAsync(message.Chat.Id,
+            $"📋 گزارش {OrderCustomerLabel(customer)}\n\n{string.Join("\n", lines)}", ct);
     }
 
     private async Task SendSelectedShippingReportAsync(TelegramCallbackQuery callback, CancellationToken ct)
