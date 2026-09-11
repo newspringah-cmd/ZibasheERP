@@ -414,15 +414,65 @@ public sealed partial class TelegramWebhookController
         var command = message.Text?.Trim().Split((char[]?)null, 2,
             StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Split('@', 2)[0];
         if (!string.Equals(command, "/ad", StringComparison.OrdinalIgnoreCase)) return false;
-        if (message.From is null ||
-            !await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct))
+        if (message.From is null || !IsAuthorizedShippingOperator(message.From.Id))
         {
             await ReplyAsync(message.Chat.Id,
-                "دستور /ad فقط برای ادمین، داخل گروه اختصاصی متصل به مشتری فعال است.", ct);
+                "دستور /ad فقط برای مدیر و حسابدار مجاز فعال است.", ct);
+            return true;
+        }
+        if (!await EnsureActiveCustomerGroupLinkAsync(message.Chat, ct))
+        {
+            await ReplyAsync(message.Chat.Id,
+                "این گروه به مشتری متصل نیست. ابتدا دستور اتصال گروه را دوباره داخل همین گروه ارسال کنید.", ct);
             return true;
         }
         await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
         return true;
+    }
+
+    private async Task<bool> EnsureActiveCustomerGroupLinkAsync(TelegramChat chat, CancellationToken ct)
+    {
+        var chatId = chat.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var exactLinks = await _db.CustomerTelegramGroups
+            .Where(value => !value.IsDeleted && value.ChatId == chatId)
+            .ToArrayAsync(ct);
+        if (exactLinks.Length > 0)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var link in exactLinks)
+            {
+                link.IsActive = true;
+                link.LastSeenAt = now;
+                link.UpdatedAt = now;
+                if (!string.IsNullOrWhiteSpace(chat.Title)) link.Title = chat.Title.Trim();
+                if (!string.IsNullOrWhiteSpace(chat.Username)) link.Username = chat.Username.Trim().TrimStart('@');
+            }
+            await _db.SaveChangesAsync(ct);
+            return true;
+        }
+
+        // Telegram may omit the migration service message from the webhook history.
+        // Recover only an unambiguous basic-group -> supergroup mapping with the same title.
+        if (string.Equals(chat.Type, "supergroup", StringComparison.OrdinalIgnoreCase) &&
+            chatId.StartsWith("-100", StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(chat.Title))
+        {
+            var title = chat.Title.Trim();
+            var candidates = await _db.CustomerTelegramGroups.AsNoTracking()
+                .Where(value => !value.IsDeleted && value.Title == title &&
+                    !value.ChatId.StartsWith("-100"))
+                .Select(value => value.ChatId)
+                .Distinct()
+                .Take(2)
+                .ToArrayAsync(ct);
+            if (candidates.Length == 1 && long.TryParse(candidates[0], out var oldChatId))
+            {
+                await _groupMembershipTracker.TrackMigrationAsync(oldChatId, chat, ct);
+                return await _db.CustomerTelegramGroups.AsNoTracking().AnyAsync(value =>
+                    !value.IsDeleted && value.IsActive && value.ChatId == chatId, ct);
+            }
+        }
+        return false;
     }
 
     private async Task StartShippingPreparationAsync(long chatId, long userId, CancellationToken ct)

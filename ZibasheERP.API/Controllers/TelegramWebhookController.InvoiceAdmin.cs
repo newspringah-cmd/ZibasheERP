@@ -10,10 +10,19 @@ using System.Collections.Concurrent;
 
 namespace ZibasheERP.API.Controllers;
 
+internal sealed class CompletedListEditDraft
+{
+    public Guid SalesListId { get; set; }
+    public int PublicCode { get; set; }
+    public List<Guid> RequestIds { get; } = [];
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public sealed partial class TelegramWebhookController
 {
     private static readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramSalesListImportEditDraft> ImportEditDrafts = new();
     private static readonly ConcurrentDictionary<(long ChatId, long UserId), DateTime> CompletedListResendDrafts = new();
+    private static readonly ConcurrentDictionary<(long ChatId, long UserId), CompletedListEditDraft> CompletedListEditDrafts = new();
 
     private async Task<bool> TryHandleAdminCommandAsync(TelegramMessage message, CancellationToken ct)
     {
@@ -424,6 +433,14 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await ReplyAsync(callback.Message.Chat.Id,
                 "کد لیست تکمیل‌شده را وارد کنید؛ مثال: 7139\n\nپیام قبلی حذف نمی‌شود. برای لغو، /cancel را بفرستید.", ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:edit-completed-list")
+        {
+            CompletedListEditDrafts[(callback.Message.Chat.Id, callback.From.Id)] = new CompletedListEditDraft();
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "کد لیست تکمیل‌شده‌ای را که هنوز فاکتور نشده وارد کنید؛ مثال: 7139\n\nبرای لغو، /cancel را بفرستید.", ct);
             return true;
         }
         if (callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal))
@@ -1575,6 +1592,7 @@ public sealed partial class TelegramWebhookController
                 buttons.Add(new[] { new TelegramInlineButton("✏️ ویرایش لیست فروش", "adminrequest:start:edit") });
                 buttons.Add(new[] { new TelegramInlineButton("🧹 پاک‌سازی لیست تکمیل‌شده", "adminrequest:start:cleanup") });
                 buttons.Add(new[] { new TelegramInlineButton("📤 ارسال مجدد لیست تکمیل‌شده", "invoiceadmin:resend-completed-list") });
+                buttons.Add(new[] { new TelegramInlineButton("✏️ ویرایش آیتم‌های لیست تکمیل‌شده", "invoiceadmin:edit-completed-list") });
                 if (IsPrimaryOwner(userId))
                     buttons.Add(new[] { new TelegramInlineButton("🔄 بازسازی همه پست‌های لیست", "invoiceadmin:rebuild-sales-lists") });
                 break;
@@ -1868,6 +1886,250 @@ public sealed partial class TelegramWebhookController
         CompletedListResendDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
         await ReplyAsync(message.Chat.Id,
             $"نسخه اصلاح‌شده لیست {publicCode} به گروه لیست‌های تکمیل‌شده ارسال شد ✅\nپیام قبلی حذف نشد.", ct);
+        return true;
+    }
+
+    private async Task<bool> TryHandleCompletedListEditMessageAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null ||
+            !CompletedListEditDrafts.TryGetValue((message.Chat.Id, message.From.Id), out var draft))
+            return false;
+        if (draft.UpdatedAt <= DateTime.UtcNow.AddMinutes(-20))
+        {
+            CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            return false;
+        }
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "دسترسی مدیریت ندارید.", ct);
+            return true;
+        }
+        var input = message.Text?.Trim();
+        if (string.Equals(input, "/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "ویرایش لیست تکمیل‌شده لغو شد.", ct);
+            return true;
+        }
+        if (string.IsNullOrWhiteSpace(input))
+            return true;
+
+        if (draft.SalesListId == Guid.Empty)
+        {
+            if (!int.TryParse(NormalizeNumber(input), out var publicCode))
+            {
+                await ReplyAsync(message.Chat.Id, "کد عددی لیست را وارد کنید؛ مثال: 7139", ct);
+                return true;
+            }
+            var list = await _db.SalesLists.AsNoTracking().Include(value => value.Perfume)
+                .FirstOrDefaultAsync(value => !value.IsDeleted && value.PublicCode == publicCode, ct);
+            if (list is null)
+            {
+                await ReplyAsync(message.Chat.Id, "لیست پیدا نشد.", ct);
+                return true;
+            }
+            if (list.Status is SalesListStatus.Open or SalesListStatus.QueuedForInvoice or
+                SalesListStatus.Invoiced or SalesListStatus.Closed or SalesListStatus.Cancelled)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "فقط لیست تکمیل‌شده‌ای که هنوز وارد صف صدور فاکتور نشده قابل ویرایش است.", ct);
+                return true;
+            }
+            var requests = await _db.SalesListRequests.AsNoTracking().Include(value => value.Bottle)
+                .Where(value => !value.IsDeleted && value.SalesListId == list.Id &&
+                    value.Kind == SalesListRequestKind.CurrentBottle &&
+                    value.Status == SalesListRequestStatus.Confirmed)
+                .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
+                .ToArrayAsync(ct);
+            if (requests.Length == 0)
+            {
+                await ReplyAsync(message.Chat.Id, "این لیست آیتم تأییدشده‌ای ندارد.", ct);
+                return true;
+            }
+            draft.SalesListId = list.Id;
+            draft.PublicCode = list.PublicCode;
+            draft.RequestIds.AddRange(requests.Select(value => value.Id));
+            draft.UpdatedAt = DateTime.UtcNow;
+            var lines = requests.Select(value =>
+            {
+                var bottle = value.IsBottleOwner ? "صاحب باتل" :
+                    value.IsComplimentaryBottle ? "شیشه رایگان" : value.Bottle?.Name ?? "شیشه نامشخص";
+                return $"{QueueOrderIdentity(value)} | {value.VolumeMl} میل | {bottle}";
+            });
+            var editable = string.Join("\n", lines);
+            foreach (var part in SplitTelegramMessage(
+                         $"✏️ لیست {list.PublicCode} — {list.PersianName}\n\n{editable}"))
+                await ReplyAsync(message.Chat.Id, part, ct);
+            await ReplyAsync(message.Chat.Id,
+                "متن بالا را کپی و خط‌ها را حذف، اضافه یا جابه‌جا کنید؛ سپس کل متن آیتم‌ها را بدون عنوان بفرستید.\n" +
+                "فرمت: @username | 5 میل | نام شیشه\nهدیه: @giver for @recipient | 3 میل | شیشه رایگان", ct);
+            return true;
+        }
+
+        var submittedLines = input.Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var parsed = new List<(string Identity, int Volume, string Bottle)>(submittedLines.Length);
+        for (var index = 0; index < submittedLines.Length; index++)
+        {
+            var parts = submittedLines[index].Split('|', StringSplitOptions.TrimEntries);
+            if (parts.Length != 3 || string.IsNullOrWhiteSpace(parts[0]) ||
+                !TryParsePositiveInt(NormalizeNumber(parts[1]).Replace("میل", string.Empty).Trim(), out var volume) ||
+                string.IsNullOrWhiteSpace(parts[2]))
+            {
+                await ReplyAsync(message.Chat.Id,
+                    $"خط {index + 1} معتبر نیست. فرمت صحیح: @username | 5 میل | نام شیشه", ct);
+                return true;
+            }
+            parsed.Add((parts[0], volume, parts[2]));
+        }
+        var listForEdit = await _db.SalesLists.FirstOrDefaultAsync(value =>
+            value.Id == draft.SalesListId && !value.IsDeleted, ct);
+        if (listForEdit is null || listForEdit.Status is SalesListStatus.Open or
+            SalesListStatus.QueuedForInvoice or SalesListStatus.Invoiced or
+            SalesListStatus.Closed or SalesListStatus.Cancelled)
+        {
+            CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "وضعیت لیست تغییر کرده و دیگر قابل ویرایش نیست.", ct);
+            return true;
+        }
+        if (parsed.Sum(value => value.Volume) != listForEdit.TotalVolume)
+        {
+            await ReplyAsync(message.Chat.Id,
+                $"مجموع خطوط باید دقیقاً {listForEdit.TotalVolume} میل باشد؛ مجموع فعلی {parsed.Sum(value => value.Volume)} میل است.", ct);
+            return true;
+        }
+        if (parsed.Count(value => value.Bottle.Contains("صاحب باتل", StringComparison.OrdinalIgnoreCase)) > 1)
+        {
+            await ReplyAsync(message.Chat.Id, "در هر لیست فقط یک صاحب باتل مجاز است.", ct);
+            return true;
+        }
+
+        var current = await _db.SalesListRequests.Include(value => value.Bottle)
+            .Where(value => !value.IsDeleted && value.SalesListId == draft.SalesListId &&
+                value.Kind == SalesListRequestKind.CurrentBottle &&
+                value.Status == SalesListRequestStatus.Confirmed)
+            .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
+            .ToArrayAsync(ct);
+        if (current.Length != draft.RequestIds.Count || current.Select(value => value.Id).Except(draft.RequestIds).Any())
+        {
+            CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "لیست هم‌زمان تغییر کرده است؛ دوباره وارد ویرایش شوید.", ct);
+            return true;
+        }
+        var bottles = await _db.Bottles.Where(value => !value.IsDeleted && value.IsActive).ToArrayAsync(ct);
+        var remaining = current.ToList();
+        var ordered = new List<SalesListRequest>();
+        var now = DateTime.UtcNow;
+        for (var index = 0; index < parsed.Count; index++)
+        {
+            var line = parsed[index];
+            var identityParts = System.Text.RegularExpressions.Regex.Split(
+                line.Identity, @"\s+for\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (identityParts.Length is < 1 or > 2)
+            {
+                await ReplyAsync(message.Chat.Id, $"خط {index + 1}: آیدی یا ساختار هدیه معتبر نیست.", ct);
+                return true;
+            }
+            var canonical = CanonicalQueueIdentity(line.Identity);
+            var request = remaining.FirstOrDefault(value =>
+                CanonicalQueueIdentity(QueueOrderIdentity(value)) == canonical);
+            if (request is not null)
+                remaining.Remove(request);
+            else
+            {
+                var giverUsername = NormalizeAdminRequestUsername(identityParts[0]);
+                var giverId = giverUsername is null
+                    ? new string(identityParts[0].Where(char.IsDigit).ToArray())
+                    : $"admin-username:{giverUsername.ToLowerInvariant()}";
+                if (giverUsername is null && giverId.Length < 5)
+                {
+                    await ReplyAsync(message.Chat.Id, $"خط {index + 1}: آیدی مشتری معتبر نیست.", ct);
+                    return true;
+                }
+                var recipientUsername = identityParts.Length == 2
+                    ? NormalizeAdminRequestUsername(identityParts[1]) : null;
+                var recipientId = identityParts.Length == 2 && recipientUsername is null
+                    ? new string(identityParts[1].Where(char.IsDigit).ToArray()) : null;
+                if (identityParts.Length == 2 && recipientUsername is null && (recipientId?.Length ?? 0) < 5)
+                {
+                    await ReplyAsync(message.Chat.Id, $"خط {index + 1}: آیدی هدیه‌گیرنده معتبر نیست.", ct);
+                    return true;
+                }
+                request = new SalesListRequest
+                {
+                    Id = Guid.NewGuid(), CreatedAt = now, SalesListId = listForEdit.Id,
+                    TelegramUsername = giverUsername, TelegramUserId = giverId,
+                    IsGift = identityParts.Length == 2,
+                    GiftRecipientTelegramUsername = recipientUsername,
+                    GiftRecipientTelegramUserId = recipientUsername is null ? recipientId : $"imported:{recipientUsername.ToLowerInvariant()}",
+                    Kind = SalesListRequestKind.CurrentBottle, Status = SalesListRequestStatus.Confirmed,
+                    CreatedByAdmin = true, ExpiresAt = DateTime.MaxValue,
+                    ExternalReference = $"admin-completed-edit:{Guid.NewGuid():N}"
+                };
+            }
+            var owner = line.Bottle.Contains("صاحب باتل", StringComparison.OrdinalIgnoreCase);
+            var free = !owner && (line.Bottle.Contains("رایگان", StringComparison.OrdinalIgnoreCase));
+            Bottle? bottle = null;
+            if (!owner && !free)
+            {
+                bottle = bottles.FirstOrDefault(value => value.VolumeMl == line.Volume &&
+                    string.Equals(value.Name.Trim(), line.Bottle.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (bottle is null)
+                {
+                    await ReplyAsync(message.Chat.Id,
+                        $"خط {index + 1}: شیشه «{line.Bottle}» برای حجم {line.Volume} میل پیدا نشد.", ct);
+                    return true;
+                }
+            }
+            request.VolumeMl = line.Volume;
+            request.IsBottleOwner = owner;
+            request.IsComplimentaryBottle = free;
+            request.BottleId = bottle?.Id;
+            request.Bottle = bottle;
+            request.BottlePrice = owner || free ? 0 : bottle!.SalePrice;
+            request.PerfumePricePerMl = listForEdit.PricePerMl;
+            request.ConfirmedAt = now.AddTicks(index);
+            request.UpdatedAt = now;
+            ordered.Add(request);
+        }
+
+        var destination = string.IsNullOrWhiteSpace(_options.CompletedSalesListsChatId)
+            ? _options.AdminChatId : _options.CompletedSalesListsChatId;
+        if (string.IsNullOrWhiteSpace(destination))
+        {
+            await ReplyAsync(message.Chat.Id, "گروه لیست‌های تکمیل‌شده تنظیم نشده است.", ct);
+            return true;
+        }
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        foreach (var removed in remaining)
+        {
+            removed.Status = SalesListRequestStatus.Cancelled;
+            removed.IsDeleted = true;
+            removed.UpdatedAt = now;
+        }
+        foreach (var request in ordered.Where(value => _db.Entry(value).State == EntityState.Detached))
+            await _db.SalesListRequests.AddAsync(request, ct);
+        listForEdit.ReservedVolume = ordered.Sum(value => value.VolumeMl);
+        listForEdit.HasBottleOwner = ordered.Any(value => value.IsBottleOwner);
+        listForEdit.UpdatedAt = now;
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        var pages = FormatChannelSalesListPages(listForEdit, ordered);
+        var caption = "✅ لیست فروش تکمیل شد — نسخه نهایی ویرایش‌شده\n\n" + pages.Main;
+        var sent = !string.IsNullOrWhiteSpace(listForEdit.TelegramPhotoFileId)
+            ? await _sender.SendPhotoHtmlAsync(destination.Trim(), listForEdit.TelegramPhotoFileId, caption, ct)
+            : await _sender.SendHtmlAsync(destination.Trim(), caption, ct);
+        if (sent.IsSuccessful && !string.IsNullOrWhiteSpace(pages.Continuation))
+            await _sender.SendHtmlAsync(destination.Trim(),
+                $"✅ ادامه نسخه نهایی لیست {listForEdit.PublicCode}\n\n{pages.Continuation}", ct);
+        CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
+        await ReplyAsync(message.Chat.Id, sent.IsSuccessful
+            ? $"لیست {listForEdit.PublicCode} ویرایش و نسخه نهایی به گروه لیست‌های تکمیل‌شده ارسال شد ✅"
+            : $"ویرایش ذخیره شد اما ارسال نسخه نهایی ناموفق بود: {sent.Error}", ct);
         return true;
     }
 
