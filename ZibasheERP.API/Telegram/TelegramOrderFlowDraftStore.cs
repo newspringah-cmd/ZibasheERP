@@ -61,11 +61,27 @@ public sealed class TelegramOrderFlowDraftStore
     public void ClearArrivalSelection(long chatId, long userId) =>
         _arrivalSelections.TryRemove((chatId, userId), out _);
 
-    public void SetShippingPreparation(TelegramShippingPreparationDraft draft) =>
+    public void SetShippingPreparation(TelegramShippingPreparationDraft draft)
+    {
+        draft.UpdatedAt = DateTime.UtcNow;
         _shippingPreparations[(draft.ChatId, draft.UserId)] = draft;
+    }
 
-    public bool TryGetShippingPreparation(long chatId, long userId, out TelegramShippingPreparationDraft draft) =>
-        _shippingPreparations.TryGetValue((chatId, userId), out draft!);
+    public bool TryGetShippingPreparation(long chatId, long userId, out TelegramShippingPreparationDraft draft)
+    {
+        if (_shippingPreparations.TryGetValue((chatId, userId), out draft!))
+        {
+            draft.UpdatedAt = DateTime.UtcNow;
+            return true;
+        }
+        draft = _shippingPreparations.Values
+            .Where(value => value.ChatId == chatId && value.UpdatedAt >= DateTime.UtcNow - Lifetime)
+            .OrderByDescending(value => value.UpdatedAt)
+            .FirstOrDefault()!;
+        if (draft is null) return false;
+        draft.UpdatedAt = DateTime.UtcNow;
+        return true;
+    }
 
     public void ClearShippingPreparation(long chatId, long userId) =>
         _shippingPreparations.TryRemove((chatId, userId), out _);
@@ -111,4 +127,5 @@ public sealed class TelegramShippingPreparationDraft
     public TelegramShippingPreparationStage Stage { get; set; }
     public bool RegistrationOnly { get; set; }
     public bool AllowUnlinkedChat { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

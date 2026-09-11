@@ -346,7 +346,6 @@ public sealed partial class TelegramWebhookController
             : await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct);
         if (!authorized)
         {
-            _orderFlowDrafts.ClearShippingPreparation(message.Chat.Id, message.From.Id);
             return true;
         }
         var input = message.Text?.Trim();
@@ -399,7 +398,7 @@ public sealed partial class TelegramWebhookController
             await _db.SaveChangesAsync(ct);
             if (draft.RegistrationOnly)
             {
-                _orderFlowDrafts.ClearShippingPreparation(message.Chat.Id, message.From.Id);
+                _orderFlowDrafts.ClearShippingPreparation(message.Chat.Id, draft.UserId);
                 await ReplyAsync(message.Chat.Id,
                     $"✅ آدرس برای {OrderCustomerLabel(customer)} ثبت شد.", ct);
                 return true;
@@ -588,7 +587,7 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, $"ارسال ناموفق بود: {sent.Error}", ct, true);
             return;
         }
-        _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, callback.From.Id);
+        _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, draft.UserId);
         await _sender.AnswerCallbackAsync(callback.Id,
             "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.", ct, true);
         await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
