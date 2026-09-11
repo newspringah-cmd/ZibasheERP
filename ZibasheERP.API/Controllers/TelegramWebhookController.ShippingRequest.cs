@@ -355,11 +355,7 @@ public sealed partial class TelegramWebhookController
         if (string.IsNullOrWhiteSpace(input)) return true;
         if (draft.Stage == TelegramShippingPreparationStage.AwaitingIdentity)
         {
-            var username = input.TrimStart('@');
-            var customer = input.StartsWith('@')
-                ? await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-                    (value.Username == username || value.Username == "@" + username), ct)
-                : await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted && value.TelegramId == input, ct);
+            var customer = await ResolveShippingCustomerAsync(input, draft.LinkGroupOnIdentity, ct);
             if (customer is null)
             {
                 await ReplyAsync(message.Chat.Id, "مشتری با این آیدی پیدا نشد.", ct);
@@ -527,6 +523,68 @@ public sealed partial class TelegramWebhookController
         }
         await _db.SaveChangesAsync(ct);
         return true;
+    }
+
+    private async Task<Customer?> ResolveShippingCustomerAsync(
+        string identity, bool createLegacyCustomer, CancellationToken ct)
+    {
+        var normalized = identity.Trim().TrimStart('@');
+        if (string.IsNullOrWhiteSpace(normalized)) return null;
+        if (long.TryParse(normalized, out _))
+            return await _db.Customers.FirstOrDefaultAsync(value =>
+                !value.IsDeleted && value.TelegramId == normalized, ct);
+
+        var username = normalized.ToLowerInvariant();
+        var customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
+            value.Username != null &&
+            (value.Username.ToLower() == username || value.Username.ToLower() == "@" + username), ct);
+        if (customer is not null || !createLegacyCustomer) return customer;
+
+        var requestIdentity = await _db.SalesListRequests.AsNoTracking()
+            .Where(value => !value.IsDeleted &&
+                ((value.TelegramUsername != null &&
+                  (value.TelegramUsername.ToLower() == username || value.TelegramUsername.ToLower() == "@" + username)) ||
+                 (value.GiftRecipientTelegramUsername != null &&
+                  (value.GiftRecipientTelegramUsername.ToLower() == username ||
+                   value.GiftRecipientTelegramUsername.ToLower() == "@" + username))))
+            .OrderByDescending(value => value.ConfirmedAt ?? value.CreatedAt)
+            .Select(value => new
+            {
+                TelegramId = value.TelegramUsername != null &&
+                             (value.TelegramUsername.ToLower() == username ||
+                              value.TelegramUsername.ToLower() == "@" + username)
+                    ? value.TelegramUserId
+                    : value.GiftRecipientTelegramUserId
+            })
+            .FirstOrDefaultAsync(ct);
+        var telegramId = requestIdentity?.TelegramId?.Trim();
+        if (long.TryParse(telegramId, out _))
+        {
+            customer = await _db.Customers.FirstOrDefaultAsync(value =>
+                !value.IsDeleted && value.TelegramId == telegramId, ct);
+            if (customer is not null)
+            {
+                customer.Username = normalized;
+                customer.UpdatedAt = DateTime.UtcNow;
+                return customer;
+            }
+        }
+
+        var customerId = Guid.NewGuid();
+        customer = new Customer
+        {
+            Id = customerId,
+            CreatedAt = DateTime.UtcNow,
+            FullName = $"مشتری @{normalized}",
+            Mobile = $"TGADDRESS{customerId:N}"[..20],
+            TelegramId = long.TryParse(telegramId, out _) ? telegramId : null,
+            Username = normalized,
+            Notes = requestIdentity is null
+                ? "مشتری قدیمی هنگام اتصال گروه از طریق /ad ایجاد شد."
+                : "مشتری از سابقه آیتم‌های فروش هنگام اتصال گروه از طریق /ad بازیابی شد."
+        };
+        _db.Customers.Add(customer);
+        return customer;
     }
 
     private async Task StartShippingPreparationAsync(long chatId, long userId, CancellationToken ct)
