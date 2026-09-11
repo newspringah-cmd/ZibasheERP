@@ -789,6 +789,35 @@ public sealed partial class TelegramWebhookController
                 $"⚠️ ارسال عکس کد رهگیری برای {OrderCustomerLabel(customer)} کامل نشد:\n{string.Join("\n", failures)}", ct);
             return true;
         }
+
+        var shippedItems = await _db.OrderItems.Include(value => value.Order)
+            .Where(value => !value.IsDeleted &&
+                value.ShippingRequestId == draft.ShippingRequestId)
+            .ToArrayAsync(ct);
+        var shippedAt = DateTime.UtcNow;
+        foreach (var item in shippedItems.Where(value =>
+                     value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped))
+        {
+            item.FulfillmentStatus = OrderItemFulfillmentStatus.Shipped;
+            item.ShippedAt = shippedAt;
+            item.UpdatedAt = shippedAt;
+        }
+        foreach (var order in shippedItems.Select(value => value.Order)
+                     .Where(value => value is not null).Distinct()!)
+        {
+            var hasUnshipped = await _db.OrderItems.AnyAsync(value =>
+                !value.IsDeleted && value.OrderId == order!.Id &&
+                value.ShippingRequestId != draft.ShippingRequestId &&
+                value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped, ct);
+            if (!hasUnshipped)
+            {
+                order!.Status = OrderStatus.Shipped;
+                order.ShippedAt = shippedAt;
+                order.UpdatedAt = shippedAt;
+            }
+        }
+        await _db.SaveChangesAsync(ct);
+
         var updatedButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
         if (draft.HasBatchControls)
         {
@@ -803,7 +832,7 @@ public sealed partial class TelegramWebhookController
         }
         updatedButtons.Add(new[]
         {
-            new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{draft.ShippingRequestId:N}"),
+            new TelegramInlineButton("✅ ارسال شد", "shipping:trackingdone"),
             new TelegramInlineButton("✅ کد ارسال شد", "shipping:trackingdone")
         });
         var markupResult = await _sender.EditReplyMarkupAsync(
@@ -812,7 +841,7 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id,
                 $"⚠️ عکس کد رهگیری ارسال شد اما وضعیت دکمه بروزرسانی نشد: {markupResult.Error}", ct);
         await ReplyAsync(message.Chat.Id,
-            $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد.", ct);
+            $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد و {shippedItems.Length} دکانت به وضعیت ارسال‌شده تغییر کرد.", ct);
         return true;
     }
 
