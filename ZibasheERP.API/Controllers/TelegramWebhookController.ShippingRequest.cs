@@ -353,6 +353,14 @@ public sealed partial class TelegramWebhookController
         }
         var input = message.Text?.Trim();
         if (string.IsNullOrWhiteSpace(input)) return true;
+        var command = input.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault()?.Split('@', 2)[0];
+        if (string.Equals(command, "/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            _orderFlowDrafts.ClearShippingPreparation(message.Chat.Id, draft.UserId);
+            await ReplyAsync(message.Chat.Id, "عملیات ثبت آدرس و اتصال گروه لغو شد.", ct);
+            return true;
+        }
         if (draft.Stage == TelegramShippingPreparationStage.AwaitingIdentity)
         {
             var customer = await ResolveShippingCustomerAsync(input, draft.LinkGroupOnIdentity, ct);
