@@ -171,6 +171,37 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        const string customerTrackingPrefix = "shipping:trackingcustomer:";
+        if (callback.Data.StartsWith(customerTrackingPrefix, StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data[customerTrackingPrefix.Length..], "N", out var trackingCustomerId))
+        {
+            if (!await IsAuthorizedShippingAdminAsync(callback.Message.Chat.Id, callback.From.Id, ct))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مسئول ارسال ندارید.", ct, true);
+                return true;
+            }
+            var customerExists = await _db.Customers.AsNoTracking().AnyAsync(value =>
+                !value.IsDeleted && value.Id == trackingCustomerId, ct);
+            if (!customerExists)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "اطلاعات مشتری پیدا نشد.", ct, true);
+                return true;
+            }
+            _orderFlowDrafts.SetShippingTrackingPhoto(new TelegramShippingTrackingPhotoDraft
+            {
+                ChatId = callback.Message.Chat.Id,
+                UserId = callback.From.Id,
+                CustomerId = trackingCustomerId,
+                ShippingRequestId = Guid.Empty,
+                SourceMessageId = callback.Message.MessageId,
+                HasBatchControls = false
+            });
+            await _sender.AnswerCallbackAsync(callback.Id, "عکس کد رهگیری را ارسال کنید.", ct, true);
+            await ReplyAsync(callback.Message.Chat.Id,
+                "📸 عکس کد رهگیری همین مشتری را ارسال کنید. برای لغو، پیام /cancel را بفرستید.", ct);
+            return true;
+        }
+
         var isBatchTracking = callback.Data.StartsWith("shipping:trackingbatch:", StringComparison.Ordinal);
         var trackingPrefix = isBatchTracking ? "shipping:trackingbatch:" : "shipping:tracking:";
         if (callback.Data.StartsWith(trackingPrefix, StringComparison.Ordinal) &&
@@ -704,7 +735,13 @@ public sealed partial class TelegramWebhookController
         }
         else
         {
-            // Legacy address-only requests have no persisted shipment items to attach tracking to.
+            // Legacy address-only requests can still receive and deliver a tracking photo.
+            // Guid.Empty prevents unrelated order items from being marked as shipped.
+            shippingButtons.Add(new[]
+            {
+                new TelegramInlineButton("📸 ارسال کد رهگیری",
+                    $"shipping:trackingcustomer:{customer.Id:N}")
+            });
         }
         var sent = await _sender.SendInlineKeyboardAsync(
             _options.ShippingChatId.Trim(), shippingMessage, shippingButtons, ct);
