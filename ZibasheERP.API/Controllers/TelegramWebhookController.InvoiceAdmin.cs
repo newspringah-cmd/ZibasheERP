@@ -614,6 +614,7 @@ public sealed partial class TelegramWebhookController
                 "🧾 صدور فاکتور دستی\n\nآیا این فاکتور هدیه است؟",
                 new IReadOnlyCollection<TelegramInlineButton>[]
                 {
+                    new[] { new TelegramInlineButton("🔴 فاکتور موجودی", "invoiceadmin:inventory-manual") },
                     new[] { new TelegramInlineButton("🎁 بله، هدیه است", "invoicebatch:manualgift:yes") },
                     new[] { new TelegramInlineButton("خیر", "invoicebatch:manualgift:no") },
                     new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
