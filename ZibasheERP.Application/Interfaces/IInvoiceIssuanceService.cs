@@ -5,7 +5,8 @@ public sealed record CompletedSalesListForInvoice(
     int PublicCode,
     string PerfumeName,
     int ConfirmedRequestCount,
-    int TotalVolume);
+    int TotalVolume,
+    string? TelegramPhotoFileId);
 
 public sealed record ManualInvoiceLineInput(
     string Description,

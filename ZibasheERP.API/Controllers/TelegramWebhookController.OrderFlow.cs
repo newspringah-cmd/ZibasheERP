@@ -31,14 +31,15 @@ public sealed partial class TelegramWebhookController
         if (data == "orderflow:arrival")
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await SendArrivalSelectionAsync(chatId, callback.From.Id, 0, ct);
+            await SendArrivalSelectionAsync(chatId, callback.From.Id, 0, true, null, ct);
             return;
         }
         if (data.StartsWith("orderflow:arrivalpage:", StringComparison.Ordinal) &&
             int.TryParse(data["orderflow:arrivalpage:".Length..], out var arrivalPage))
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await SendArrivalSelectionAsync(chatId, callback.From.Id, Math.Max(0, arrivalPage), ct);
+            await SendArrivalSelectionAsync(
+                chatId, callback.From.Id, Math.Max(0, arrivalPage), true, callback.Message.MessageId, ct);
             return;
         }
         if (data is "orderflow:completed:purchased" or "orderflow:completed:invoiced")
@@ -54,7 +55,8 @@ public sealed partial class TelegramWebhookController
             var selected = _orderFlowDrafts.GetArrivalSelection(chatId, callback.From.Id);
             if (!selected.Add(arrivalListId)) selected.Remove(arrivalListId);
             await _sender.AnswerCallbackAsync(callback.Id, "انتخاب بروزرسانی شد.", ct);
-            await SendArrivalSelectionAsync(chatId, callback.From.Id, togglePage, ct);
+            await SendArrivalSelectionAsync(
+                chatId, callback.From.Id, togglePage, false, callback.Message.MessageId, ct);
             return;
         }
         if (data == "orderflow:arrivalconfirm")
@@ -204,7 +206,13 @@ public sealed partial class TelegramWebhookController
             buttons, ct);
     }
 
-    private async Task SendArrivalSelectionAsync(long chatId, long userId, int page, CancellationToken ct)
+    private async Task SendArrivalSelectionAsync(
+        long chatId,
+        long userId,
+        int page,
+        bool sendPhotoGallery,
+        long? messageIdToEdit,
+        CancellationToken ct)
     {
         const int pageSize = 50;
         var selected = _orderFlowDrafts.GetArrivalSelection(chatId, userId);
@@ -219,6 +227,14 @@ public sealed partial class TelegramWebhookController
         var validIds = await query.Select(list => list.Id).ToArrayAsync(ct);
         selected.RemoveWhere(id => !validIds.Contains(id));
         var lists = await query.Skip(page * pageSize).Take(pageSize).ToArrayAsync(ct);
+        if (sendPhotoGallery && lists.Length > 0)
+            await SendPerfumePhotoGalleryAsync(chatId, lists
+                .Where(list => !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
+                .Select(list => new TelegramPhotoAlbumItem(
+                    list.TelegramPhotoFileId!,
+                    $"📷 <b>{Html(string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)}</b>\n" +
+                    $"کد لیست: <code>{list.PublicCode}</code>"))
+                .ToArray(), ct);
         var buttons = lists.Select(list =>
             (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
@@ -240,7 +256,45 @@ public sealed partial class TelegramWebhookController
             : $"✈️ عطرهای فاکتور‌شده و منتظر رسیدن به ایران: {total}\n" +
               $"صفحه {page + 1} از {maxPage + 1} — انتخاب‌شده: {selected.Count}\n\n" +
               "عطرها را تیک بزنید؛ انتخاب‌ها در صفحات دیگر حفظ می‌شوند.";
-        await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
+        if (messageIdToEdit.HasValue)
+        {
+            var edited = await _sender.EditTextWithKeyboardAsync(
+                chatId.ToString(), messageIdToEdit.Value, message, buttons, ct);
+            if (!edited.IsSuccessful && !IsTelegramMessageUnchanged(edited.Error))
+                await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
+        }
+        else
+        {
+            await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
+        }
+    }
+
+    private async Task SendPerfumePhotoGalleryAsync(
+        long chatId,
+        IReadOnlyCollection<TelegramPhotoAlbumItem> photos,
+        CancellationToken ct)
+    {
+        foreach (var batch in photos.Chunk(10))
+        {
+            TelegramSendResult result;
+            if (batch.Length == 1)
+            {
+                var photo = batch[0];
+                result = await _sender.SendPhotoHtmlAsync(
+                    chatId.ToString(), photo.Photo, photo.Caption, ct);
+            }
+            else
+            {
+                result = await _sender.SendPhotoAlbumAsync(chatId.ToString(), batch, ct);
+            }
+
+            if (!result.IsSuccessful)
+            {
+                await ReplyAsync(chatId,
+                    $"⚠️ نمایش عکس‌های این صفحه کامل نشد: {result.Error ?? "خطای نامشخص"}", ct);
+                break;
+            }
+        }
     }
 
     private static bool TryParseArrivalToggle(string value, out Guid listId, out int page)

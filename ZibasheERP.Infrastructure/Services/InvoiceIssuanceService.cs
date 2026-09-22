@@ -28,11 +28,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .OrderBy(list => list.ClosedDate ?? list.OpenDate)
             .Take(Math.Clamp(limit, 1, 50))
             .Select(list => new CompletedSalesListForInvoice(
-                list.Id, list.PublicCode, list.EnglishName,
+                list.Id, list.PublicCode,
+                list.PersianName != "" ? list.PersianName : list.EnglishName,
                 list.Requests.Count(request => !request.IsDeleted &&
                     request.Kind == SalesListRequestKind.CurrentBottle &&
                     request.Status == SalesListRequestStatus.Confirmed),
-                list.TotalVolume))
+                list.TotalVolume,
+                list.TelegramPhotoFileId))
             .ToArrayAsync(cancellationToken);
 
     public async Task<IReadOnlyCollection<CompletedSalesListForInvoice>> GetWaitingListsAsync(
@@ -44,11 +46,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .OrderBy(list => list.UpdatedAt ?? list.ClosedDate ?? list.OpenDate)
             .Take(Math.Clamp(limit, 1, 50))
             .Select(list => new CompletedSalesListForInvoice(
-                list.Id, list.PublicCode, list.EnglishName,
+                list.Id, list.PublicCode,
+                list.PersianName != "" ? list.PersianName : list.EnglishName,
                 list.Requests.Count(request => !request.IsDeleted &&
                     request.Kind == SalesListRequestKind.CurrentBottle &&
                     request.Status == SalesListRequestStatus.Confirmed),
-                list.TotalVolume))
+                list.TotalVolume,
+                list.TelegramPhotoFileId))
             .ToArrayAsync(cancellationToken);
 
     public async Task MoveCompletedListToWaitingAsync(

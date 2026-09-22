@@ -456,7 +456,7 @@ public sealed partial class TelegramWebhookController
         if (callback.Data == "invoiceadmin:batch")
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await SendInvoiceBatchSelectionAsync(callback.Message.Chat.Id, callback.From.Id, ct);
+            await SendInvoiceBatchSelectionAsync(callback.Message.Chat.Id, callback.From.Id, ct, true);
             return true;
         }
         if (callback.Data == "invoiceadmin:waiting")
@@ -2606,7 +2606,8 @@ public sealed partial class TelegramWebhookController
         var draft = _invoiceIssuanceDrafts.GetOrCreate(chatId, userId);
         if (!draft.Add(salesListId)) draft.Remove(salesListId);
         await _sender.AnswerCallbackAsync(callback.Id, "انتخاب به‌روزرسانی شد.", ct);
-        await SendInvoiceBatchSelectionAsync(chatId, userId, ct);
+        await SendInvoiceBatchSelectionAsync(
+            chatId, userId, ct, false, callback.Message.MessageId);
     }
 
     private async Task<IReadOnlyCollection<string>> SendProductionCopiesAsync(
@@ -2864,7 +2865,12 @@ public sealed partial class TelegramWebhookController
         return parts;
     }
 
-    private async Task SendInvoiceBatchSelectionAsync(long chatId, long userId, CancellationToken ct)
+    private async Task SendInvoiceBatchSelectionAsync(
+        long chatId,
+        long userId,
+        CancellationToken ct,
+        bool sendPhotoGallery = true,
+        long? messageIdToEdit = null)
     {
         var available = await _invoiceIssuanceService.GetCompletedListsAsync(50, ct);
         var selected = _invoiceIssuanceDrafts.GetOrCreate(chatId, userId);
@@ -2874,6 +2880,14 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(chatId, "لیست تکمیل‌شدهٔ آماده برای صدور فاکتور وجود ندارد.", ct);
             return;
         }
+        if (sendPhotoGallery)
+            await SendPerfumePhotoGalleryAsync(chatId, available
+                .Where(list => !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
+                .Select(list => new TelegramPhotoAlbumItem(
+                    list.TelegramPhotoFileId!,
+                    $"📷 <b>{Html(list.PerfumeName)}</b>\n" +
+                    $"کد لیست: <code>{list.PublicCode}</code>"))
+                .ToArray(), ct);
         var rows = available.Select(list => (IReadOnlyCollection<TelegramInlineButton>)new[]
         {
             new TelegramInlineButton(
@@ -2890,9 +2904,19 @@ public sealed partial class TelegramWebhookController
         }).ToList();
         rows.Add(new[] { new TelegramInlineButton($"🧾 صدور فاکتور برای {selected.Count} لیست انتخابی", "invoicebatch:issue") });
         rows.Add(new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:cancel") });
-        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
-            "🧾 لیست‌های تکمیل‌شده\n\nلیست‌هایی را که باید هم‌زمان فاکتور شوند انتخاب کنید. " +
-            "برای هر مشتری فقط یک فاکتور تجمیعی با همه آیتم‌های همان لیست‌ها صادر می‌شود.", rows, ct);
+        var message = "🧾 لیست‌های تکمیل‌شده\n\nلیست‌هایی را که باید هم‌زمان فاکتور شوند انتخاب کنید. " +
+                      "برای هر مشتری فقط یک فاکتور تجمیعی با همه آیتم‌های همان لیست‌ها صادر می‌شود.";
+        if (messageIdToEdit.HasValue)
+        {
+            var edited = await _sender.EditTextWithKeyboardAsync(
+                chatId.ToString(), messageIdToEdit.Value, message, rows, ct);
+            if (!edited.IsSuccessful && !IsTelegramMessageUnchanged(edited.Error))
+                await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, rows, ct);
+        }
+        else
+        {
+            await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, rows, ct);
+        }
     }
 
     private async Task SendWaitingInvoiceListsAsync(long chatId, CancellationToken ct)
