@@ -345,11 +345,10 @@ public sealed partial class TelegramWebhookController
                 item.SalesListId == list.Id &&
                 item.FulfillmentStatus >= OrderItemFulfillmentStatus.WaitingForArrivalInIran))
             .OrderByDescending(list => list.UpdatedAt ?? list.CreatedAt).Take(50).ToArrayAsync(ct);
-        var lines = lists.Select((list, index) =>
-            $"{index + 1}. {(string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)} — کد {list.PublicCode}");
+        await SendOrderStatusPerfumeCardsAsync(chatId, lists, title, ct);
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
             lists.Length == 0 ? $"{title}\n\nموردی وجود ندارد." :
-                $"{title}\nآخرین {lists.Length} عطر\n\n{string.Join("\n", lines)}",
+                $"{title}\nآخرین {lists.Length} عطر در کارت‌های بالا نمایش داده شد.",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[] { new TelegramInlineButton("↩️ وضعیت سفارش‌ها", "orderflow:dashboard") }
@@ -384,6 +383,18 @@ public sealed partial class TelegramWebhookController
             "full" => "✅ لیست تکمیل‌شده",
             _ => "🛒 در انتظار خرید عطر"
         };
+        if (stage == "awaiting")
+        {
+            await SendOrderStatusPerfumeCardsAsync(chatId, lists, title, ct);
+            await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                lists.Length == 0 ? $"{title}\n\nموردی وجود ندارد." :
+                    $"{title}\nتعداد نمایش‌داده‌شده: {lists.Length}\nعطرها در کارت‌های بالا نمایش داده شدند.",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("↩️ وضعیت سفارش‌ها", "orderflow:dashboard") }
+                }, ct);
+            return;
+        }
         var lines = lists.Select((list, index) =>
             $"{index + 1}. {(string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)} — کد {list.PublicCode}");
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
@@ -395,6 +406,40 @@ public sealed partial class TelegramWebhookController
             }, ct);
     }
 
+    private async Task SendOrderStatusPerfumeCardsAsync(
+        long chatId,
+        IReadOnlyCollection<SalesList> lists,
+        string statusTitle,
+        CancellationToken ct)
+    {
+        foreach (var list in lists)
+        {
+            var name = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
+            TelegramSendResult result;
+            if (!string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
+            {
+                result = await _sender.SendPhotoHtmlAsync(
+                    chatId.ToString(),
+                    list.TelegramPhotoFileId!,
+                    $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.PublicCode}</code>\n{Html(statusTitle)}",
+                    ct);
+            }
+            else
+            {
+                result = await _sender.SendHtmlAsync(
+                    chatId.ToString(),
+                    $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.PublicCode}</code>\n{Html(statusTitle)}",
+                    ct);
+            }
+
+            if (!result.IsSuccessful)
+            {
+                await ReplyAsync(chatId,
+                    $"⚠️ نمایش «{name}» ناموفق بود: {result.Error ?? "خطای نامشخص"}", ct);
+            }
+        }
+    }
+
     private async Task SendOrderItemStageSummaryAsync(
         long chatId, OrderItemFulfillmentStatus status, CancellationToken ct)
     {
@@ -404,6 +449,18 @@ public sealed partial class TelegramWebhookController
             .Include(value => value.Perfume)
             .Where(value => !value.IsDeleted && value.FulfillmentStatus == status)
             .OrderBy(value => value.UpdatedAt ?? value.CreatedAt).Take(50).ToArrayAsync(ct);
+        if (status is OrderItemFulfillmentStatus.DecantQueue or
+            OrderItemFulfillmentStatus.DecantedReadyToShip)
+        {
+            await SendGroupedOrderItemStatusCardsAsync(
+                chatId,
+                items,
+                status == OrderItemFulfillmentStatus.DecantQueue
+                    ? "🧴 صف دکانت"
+                    : "📦 دکانت‌شده و آماده ارسال",
+                ct);
+            return;
+        }
         var lines = items.Select((item, index) =>
             $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — " +
             $"{item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر"} — {item.RequestedVolumeMl} میل");
@@ -417,6 +474,62 @@ public sealed partial class TelegramWebhookController
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
             items.Length == 0 ? $"{title}\n\nموردی وجود ندارد." :
                 $"{title}\nتعداد نمایش‌داده‌شده: {items.Length}\n\n{string.Join("\n", lines)}",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("↩️ وضعیت سفارش‌ها", "orderflow:dashboard") }
+            }, ct);
+    }
+
+    private async Task SendGroupedOrderItemStatusCardsAsync(
+        long chatId,
+        IReadOnlyCollection<OrderItem> items,
+        string statusTitle,
+        CancellationToken ct)
+    {
+        var groups = items
+            .GroupBy(item => item.SalesListId)
+            .OrderBy(group => group.First().SalesList?.PersianName ??
+                              group.First().Perfume?.Name ??
+                              group.First().ManualDescription ?? "عطر")
+            .ToArray();
+
+        foreach (var group in groups)
+        {
+            var first = group.First();
+            var list = first.SalesList;
+            var name = list?.PersianName ?? first.Perfume?.Name ?? first.ManualDescription ?? "عطر";
+            var code = list is null ? string.Empty : $"\nکد لیست: <code>{list.PublicCode}</code>";
+            TelegramSendResult heading;
+            if (!string.IsNullOrWhiteSpace(list?.TelegramPhotoFileId))
+            {
+                heading = await _sender.SendPhotoHtmlAsync(
+                    chatId.ToString(), list.TelegramPhotoFileId!,
+                    $"📷 <b>{Html(name)}</b>{code}\n{Html(statusTitle)}", ct);
+            }
+            else
+            {
+                heading = await _sender.SendHtmlAsync(
+                    chatId.ToString(), $"📷 <b>{Html(name)}</b>{code}\n{Html(statusTitle)}", ct);
+            }
+
+            if (!heading.IsSuccessful)
+            {
+                await ReplyAsync(chatId,
+                    $"⚠️ نمایش «{name}» ناموفق بود: {heading.Error ?? "خطای نامشخص"}", ct);
+                continue;
+            }
+
+            var lines = group.Select((item, index) =>
+                $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — {item.RequestedVolumeMl} میل");
+            var details = $"فهرست آیتم‌های {name}\nتعداد: {group.Count()}\n\n{string.Join("\n", lines)}";
+            foreach (var part in SplitTelegramMessage(details))
+                await ReplyAsync(chatId, part, ct);
+        }
+
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+            items.Count == 0
+                ? $"{statusTitle}\n\nموردی وجود ندارد."
+                : $"{statusTitle}\nتعداد لیست: {groups.Length} | تعداد آیتم: {items.Count}",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[] { new TelegramInlineButton("↩️ وضعیت سفارش‌ها", "orderflow:dashboard") }
