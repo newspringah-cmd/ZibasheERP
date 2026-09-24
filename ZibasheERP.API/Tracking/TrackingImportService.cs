@@ -23,7 +23,9 @@ public sealed record TrackingImportItem(
     string RecipientName,
     string Destination,
     string? TrackingUrl,
-    byte[] CardImage);
+    byte[] CardImage,
+    bool IsSafeForAutomaticDelivery = true,
+    string? SafetyNote = null);
 
 public sealed record TrackingImportParseResult(
     bool IsSuccessful,
@@ -197,26 +199,38 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                     "دو بار خواندن PDF نتیجه یکسان نداشت؛ برای جلوگیری از ارسال اشتباه، کل سری متوقف شد.");
 
             var items = new List<TrackingImportItem>();
-            foreach (var row in recognized.OrderBy(value => value.Page).ThenBy(value => value.RowOrder))
+            var verifiedRows = verification.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
+            var orderedRows = recognized.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
+            for (var rowIndex = 0; rowIndex < orderedRows.Length; rowIndex++)
             {
-                if (row.Page < 1 || row.Page > pages.Length) continue;
+                var row = orderedRows[rowIndex];
+                if (row.Page < 1 || row.Page > pages.Length ||
+                    row.RecipientPage < 1 || row.RecipientPage > pages.Length ||
+                    row.TrackingPage < 1 || row.TrackingPage > pages.Length)
+                    continue;
                 var code = NormalizeDigits(row.TrackingCode);
                 if (code.Length is < 15 or > 30 || string.IsNullOrWhiteSpace(row.RecipientName)) continue;
                 try
                 {
-                    var recipientCrop = await CropNormalizedAsync(pages[row.Page - 1], row.RecipientBox, 12, tempRoot, ct);
-                    var trackingCrop = await CropNormalizedAsync(pages[row.Page - 1], row.TrackingBox, 12, tempRoot, ct);
+                    var recipientCrop = await CropNormalizedAsync(
+                        pages[row.RecipientPage - 1], row.RecipientBox, 12, tempRoot, ct);
+                    var trackingCrop = await CropNormalizedAsync(
+                        pages[row.TrackingPage - 1], row.TrackingBox, 12, tempRoot, ct);
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, Clean(row.RecipientName), Clean(row.Destination), null,
-                        BuildPostCard(recipientCrop, trackingCrop)));
+                        BuildPostCard(recipientCrop, trackingCrop),
+                        row.Confidence >= .90 && verifiedRows[rowIndex].Confidence >= .90,
+                        row.Confidence >= .90 && verifiedRows[rowIndex].Confidence >= .90
+                            ? null
+                            : $"اطمینان خواندن ردیف پایین است (بار اول {row.Confidence:P0}، بازبینی {verifiedRows[rowIndex].Confidence:P0})"));
                 }
                 catch (Exception exception)
                 {
                     _logger.LogError(exception,
-                        "Iran Post crop/card generation failed for page {Page}, row {Row}, tracking {TrackingCode}.",
-                        row.Page, row.RowOrder, code);
+                        "Iran Post crop/card generation failed for page {Page}, recipient page {RecipientPage}, tracking page {TrackingPage}, row {Row}, tracking {TrackingCode}.",
+                        row.Page, row.RecipientPage, row.TrackingPage, row.RowOrder, code);
                     return new TrackingImportParseResult(false, [],
-                        $"مرحله برش نام و کد یا ساخت تصویر برای ردیف {row.RowOrder} صفحه {row.Page} ناموفق بود؛ هیچ پیامی ارسال نشد.");
+                        $"مرحله برش نام و کد یا ساخت تصویر برای ردیف {row.RowOrder} بین صفحه‌های {row.TrackingPage} و {row.RecipientPage} ناموفق بود؛ هیچ پیامی ارسال نشد.");
                 }
             }
 
@@ -331,7 +345,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             {
                 type = "input_text",
                 text = """
-                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. مختصات سلول نام گیرنده و سلول کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به کل همان صفحه بده تا خود تصویر اصلی بریده شود. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان سلول PDF بریده خواهد شد. rowOrder ترتیب ردیف در صفحه از بالا به پایین است. اگر درباره ردیفی مطمئن نیستی آن را حذف نکن؛ confidence را کمتر از 0.96 بده.
+                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات سلول نام گیرنده و سلول کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به صفحه مربوط به همان سلول بده تا خود تصویر اصلی بریده شود. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان سلول PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
                     """
             }
         };
@@ -373,6 +387,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                                         properties = new
                                         {
                                             page = new { type = "integer" },
+                                            recipientPage = new { type = "integer" },
+                                            trackingPage = new { type = "integer" },
                                             rowOrder = new { type = "integer" },
                                             recipientName = new { type = "string" },
                                             trackingCode = new { type = "string" },
@@ -381,7 +397,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                                             trackingBox = new { type = "array", items = new { type = "integer" } },
                                             confidence = new { type = "number" }
                                         },
-                                        required = new[] { "page", "rowOrder", "recipientName", "trackingCode", "destination", "recipientBox", "trackingBox", "confidence" },
+                                        required = new[] { "page", "recipientPage", "trackingPage", "rowOrder", "recipientName", "trackingCode", "destination", "recipientBox", "trackingBox", "confidence" },
                                         additionalProperties = false
                                     }
                                 }
@@ -407,8 +423,10 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         {
             PropertyNameCaseInsensitive = true
         }) ?? throw new InvalidOperationException("OpenAI returned an empty PDF result.");
-        if (parsed.Rows.Any(value => value.Confidence < .96 || value.RecipientBox.Length != 4 || value.TrackingBox.Length != 4))
-            throw new InvalidOperationException("One or more postal rows were recognized with insufficient confidence.");
+        if (parsed.Rows.Any(value => value.RecipientBox.Length != 4 || value.TrackingBox.Length != 4 ||
+                                     value.RecipientBox.Any(coordinate => coordinate is < 0 or > 1000) ||
+                                     value.TrackingBox.Any(coordinate => coordinate is < 0 or > 1000)))
+            throw new InvalidOperationException("One or more postal rows have invalid crop coordinates.");
         return parsed.Rows;
     }
 
@@ -551,6 +569,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         for (var index = 0; index < left.Length; index++)
         {
             if (left[index].Page != right[index].Page ||
+                left[index].RecipientPage != right[index].RecipientPage ||
+                left[index].TrackingPage != right[index].TrackingPage ||
                 NormalizeDigits(left[index].TrackingCode) != NormalizeDigits(right[index].TrackingCode) ||
                 NameScore(NormalizeName(left[index].RecipientName), NormalizeName(right[index].RecipientName)) < .90)
                 return false;
@@ -593,6 +613,6 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     private sealed record Candidate(Guid CustomerId, Guid? ShippingRequestId, string ReceiverName,
         string City, DateTime Date, bool IsActive);
     private sealed record PostRowsResponse(PostRecognizedRow[] Rows);
-    private sealed record PostRecognizedRow(int Page, int RowOrder, string RecipientName,
+    private sealed record PostRecognizedRow(int Page, int RecipientPage, int TrackingPage, int RowOrder, string RecipientName,
         string TrackingCode, string Destination, int[] RecipientBox, int[] TrackingBox, double Confidence);
 }

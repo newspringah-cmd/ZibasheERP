@@ -250,14 +250,21 @@ public sealed partial class TelegramWebhookController
                     continue;
                 }
                 var match = await _trackingImportService.MatchAsync(item.RecipientName, item.Destination, ct);
+                var status = item.IsSafeForAutomaticDelivery
+                    ? match.Status
+                    : TrackingDispatchStatus.NeedsReview;
                 batch.Dispatches.Add(new TrackingDispatch
                 {
                     Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
                     Carrier = item.Carrier, TrackingCode = item.TrackingCode,
                     RecipientName = item.RecipientName, Destination = item.Destination,
                     TrackingUrl = item.TrackingUrl, CardImage = item.CardImage,
-                    CustomerId = match.CustomerId, ShippingRequestId = match.ShippingRequestId,
-                    Status = match.Status, MatchNotes = match.Notes
+                    CustomerId = match.CustomerId,
+                    ShippingRequestId = status == TrackingDispatchStatus.Ready ? match.ShippingRequestId : null,
+                    Status = status,
+                    MatchNotes = item.IsSafeForAutomaticDelivery
+                        ? match.Notes
+                        : $"{item.SafetyNote}؛ ارسال خودکار غیرفعال شد"
                 });
             }
         }
