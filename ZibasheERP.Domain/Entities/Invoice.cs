@@ -31,6 +31,9 @@ public class Invoice : BaseEntity
 
     public DateTime IssuedAt { get; set; } = DateTime.UtcNow;
 
+    // آخرین یادآوری پرداخت موفق؛ برای جلوگیری از ارسال تکراری در یک روز.
+    public DateTime? LastPaymentReminderSentAt { get; set; }
+
     public bool IsSentToCustomer { get; set; }
 
     public DateTime? SentToCustomerAt { get; set; }

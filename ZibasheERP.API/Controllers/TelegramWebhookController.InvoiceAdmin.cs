@@ -274,6 +274,7 @@ public sealed partial class TelegramWebhookController
               callback.Data.StartsWith("invoicebatch:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoicepay:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("invoiceinventory:", StringComparison.Ordinal) ||
+              callback.Data.StartsWith("paymentreminder:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("orderflow:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal) ||
               callback.Data.StartsWith("adminrequest:", StringComparison.Ordinal)))
@@ -302,6 +303,12 @@ public sealed partial class TelegramWebhookController
         if (callback.Data.StartsWith("orderflow:", StringComparison.Ordinal))
         {
             await HandleOrderFlowCallbackAsync(callback, ct);
+            return true;
+        }
+
+        if (callback.Data.StartsWith("paymentreminder:", StringComparison.Ordinal))
+        {
+            await HandlePaymentReminderCallbackAsync(callback, ct);
             return true;
         }
 
@@ -1585,6 +1592,10 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("✏️ ویرایش کپشن PDF", "invoiceadmin:edit-caption"),
                     new TelegramInlineButton("📸 عکس دکانت", "decantphoto:start")
+                });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("📣 یادآوری پرداخت", "paymentreminder:menu")
                 });
                 break;
             case "lists":
@@ -4006,6 +4017,7 @@ public sealed partial class TelegramWebhookController
         _invoiceStickerDrafts.Remove(chatId, userId);
         _invoiceInventoryDrafts.Remove(chatId, userId);
         _decantPhotoDrafts.Remove(chatId, userId);
+        PaymentReminderDrafts.TryRemove((chatId, userId), out _);
         CompletedListResendDrafts.TryRemove((chatId, userId), out _);
         ImportEditDrafts.TryRemove((chatId, userId), out _);
     }

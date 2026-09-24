@@ -41,6 +41,9 @@ public class Customer : BaseEntity
     // آخرین زمان ثبت سفارش
     public DateTime? LastOrderAt { get; set; }
 
+    // آخرین یادآوری پرداخت موفق؛ مانع ارسال از چند دسته در یک روز می‌شود.
+    public DateTime? LastPaymentReminderSentAt { get; set; }
+
     // Optimistic concurrency token for credit and debt updates.
     public byte[] RowVersion { get; set; } = [];
 
