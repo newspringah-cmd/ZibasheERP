@@ -920,6 +920,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             list.Id,
             list.PublicCode,
             list.EnglishName,
+            list.TelegramPhotoFileId,
             orderList,
             FormatLabelList(list));
     }

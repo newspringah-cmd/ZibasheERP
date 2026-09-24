@@ -12,6 +12,7 @@ using ZibasheERP.API.Health;
 using ZibasheERP.API.Diagnostics;
 using ZibasheERP.API.N8n;
 using ZibasheERP.API.AddressLabels;
+using ZibasheERP.API.PerfumeLabels;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -140,6 +141,7 @@ builder.Services.AddOptions<AddressLabelOptions>()
         "Enabled address-label generation requires an OpenAI API key and model.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IAddressLabelService, AddressLabelService>();
+builder.Services.AddSingleton<IPerfumeLabelPdfService, PerfumeLabelPdfService>();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();

@@ -151,6 +151,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Perfume>()
             .Property(x => x.PricePerMl)
             .HasPrecision(18, 2);
+
+        modelBuilder.Entity<Perfume>()
+            .Property(x => x.TelegramLogoFileId)
+            .HasMaxLength(500);
     }
 
     private static void ConfigureBottle(ModelBuilder modelBuilder)

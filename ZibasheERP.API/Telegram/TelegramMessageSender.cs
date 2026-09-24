@@ -155,6 +155,10 @@ public interface ITelegramMessageSender
         string chatId,
         string userId,
         CancellationToken cancellationToken = default);
+
+    Task<TelegramFileDownloadResult> DownloadFileAsync(
+        string fileId,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record TelegramSendResult(
@@ -162,6 +166,10 @@ public sealed record TelegramSendResult(
     string? Error = null,
     long? MessageId = null,
     string? ExternalFileId = null);
+public sealed record TelegramFileDownloadResult(
+    bool IsSuccessful,
+    byte[]? Content = null,
+    string? Error = null);
 public sealed record TelegramInlineButton(
     string Text,
     string? CallbackData = null,
@@ -650,6 +658,41 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         }
     }
 
+    public async Task<TelegramFileDownloadResult> DownloadFileAsync(
+        string fileId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_botToken) || string.IsNullOrWhiteSpace(fileId))
+            return new TelegramFileDownloadResult(false, Error: "Telegram file information is missing.");
+        try
+        {
+            using var metadataResponse = await _httpClient.GetAsync(
+                $"./bot{_botToken}/getFile?file_id={Uri.EscapeDataString(fileId.Trim())}", cancellationToken);
+            var metadata = await metadataResponse.Content.ReadFromJsonAsync<TelegramFileApiResponse>(
+                cancellationToken: cancellationToken);
+            if (!metadataResponse.IsSuccessStatusCode || metadata?.Ok != true ||
+                string.IsNullOrWhiteSpace(metadata.Result?.FilePath))
+                return new TelegramFileDownloadResult(false,
+                    Error: metadata?.Description ?? "Telegram file path was not returned.");
+
+            using var fileResponse = await _httpClient.GetAsync(
+                $"./file/bot{_botToken}/{metadata.Result.FilePath}", cancellationToken);
+            if (!fileResponse.IsSuccessStatusCode)
+                return new TelegramFileDownloadResult(false,
+                    Error: $"Telegram file download returned HTTP {(int)fileResponse.StatusCode}.");
+            return new TelegramFileDownloadResult(true,
+                await fileResponse.Content.ReadAsByteArrayAsync(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return new TelegramFileDownloadResult(false, Error: exception.Message);
+        }
+    }
+
     private async Task<TelegramSendResult> SendRequestAsync(
         string method,
         object request,
@@ -734,4 +777,12 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
     private sealed record TelegramChatMemberApiResult(
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("is_member")] bool? IsMember);
+
+    private sealed record TelegramFileApiResponse(
+        [property: JsonPropertyName("ok")] bool Ok,
+        [property: JsonPropertyName("description")] string? Description,
+        [property: JsonPropertyName("result")] TelegramFileApiResult? Result);
+
+    private sealed record TelegramFileApiResult(
+        [property: JsonPropertyName("file_path")] string? FilePath);
 }

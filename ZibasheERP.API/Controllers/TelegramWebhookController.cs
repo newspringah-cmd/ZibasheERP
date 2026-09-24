@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.API.AddressLabels;
+using ZibasheERP.API.PerfumeLabels;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
@@ -73,6 +74,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly IInvoiceInventoryService _invoiceInventoryService;
     private readonly AppDbContext _db;
     private readonly IAddressLabelService _addressLabelService;
+    private readonly IPerfumeLabelPdfService _perfumeLabelPdfService;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -104,6 +106,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramSalesListRebuildWorker salesListRebuildWorker,
         IInvoiceInventoryService invoiceInventoryService,
         IAddressLabelService addressLabelService,
+        IPerfumeLabelPdfService perfumeLabelPdfService,
         AppDbContext db,
         ILogger<TelegramWebhookController> logger)
     {
@@ -136,6 +139,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _salesListRebuildWorker = salesListRebuildWorker;
         _invoiceInventoryService = invoiceInventoryService;
         _addressLabelService = addressLabelService;
+        _perfumeLabelPdfService = perfumeLabelPdfService;
         _db = db;
         _logger = logger;
     }
@@ -445,6 +449,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return;
 
         if (await TryHandleDecantPhotoCallbackAsync(callback, cancellationToken))
+            return;
+
+        if (await TryHandlePerfumeLogoCallbackAsync(callback, cancellationToken))
             return;
 
         if (await TryHandleAdminCallbackAsync(callback, cancellationToken))
@@ -966,6 +973,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return true;
 
         if (await TryHandlePaymentReminderMessageAsync(message, cancellationToken))
+            return true;
+
+        if (await TryHandlePerfumeLogoMessageAsync(message, cancellationToken))
             return true;
 
         if (await TryHandleBlockedUsernameMessageAsync(message, cancellationToken))

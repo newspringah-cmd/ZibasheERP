@@ -14,5 +14,8 @@ public class Perfume : BaseEntity
 
     public bool IsActive { get; set; } = true;
 
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    public string? TelegramLogoFileId { get; set; }
+
     public string? Notes { get; set; }
 }

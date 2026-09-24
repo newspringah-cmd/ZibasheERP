@@ -48,6 +48,7 @@ public sealed record SalesListProductionCopy(
     Guid SalesListId,
     int PublicCode,
     string PerfumeName,
+    string? TelegramPhotoFileId,
     string DecantMessage,
     string LabelPrintMessage);
 

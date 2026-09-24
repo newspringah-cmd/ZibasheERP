@@ -2839,6 +2839,28 @@ public sealed partial class TelegramWebhookController
 
         foreach (var copy in copies)
         {
+            var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[]
+                {
+                    new TelegramInlineButton("🖼 ثبت لوگو", $"plogo:set:{copy.SalesListId:N}"),
+                    new TelegramInlineButton("🖨 چاپ لوگو", $"plogo:print:{copy.SalesListId:N}")
+                }
+            };
+            TelegramSendResult headerResult;
+            var header = $"🏷 لیست چاپ {copy.PublicCode}\n{copy.PerfumeName}";
+            if (!string.IsNullOrWhiteSpace(copy.TelegramPhotoFileId))
+                headerResult = await _sender.SendPhotoWithKeyboardAsync(
+                    destinationChatId, copy.TelegramPhotoFileId, header, buttons, ct);
+            else
+                headerResult = await _sender.SendInlineKeyboardAsync(
+                    destinationChatId, header + "\n⚠️ عکس عطر ثبت نشده است.", buttons, ct);
+            if (!headerResult.IsSuccessful)
+            {
+                failures.Add($"{destinationName}، لیست {copy.PublicCode}: {headerResult.Error ?? "خطای نامشخص"}");
+                continue;
+            }
+
             var part = 0;
             foreach (var message in SplitTelegramMessage(messageSelector(copy)))
             {
@@ -4050,6 +4072,7 @@ public sealed partial class TelegramWebhookController
         _decantPhotoDrafts.Remove(chatId, userId);
         PaymentReminderDrafts.TryRemove((chatId, userId), out _);
         BlockedUsernameDrafts.TryRemove((chatId, userId), out _);
+        PerfumeLogoDrafts.TryRemove((chatId, userId), out _);
         CompletedListResendDrafts.TryRemove((chatId, userId), out _);
         ImportEditDrafts.TryRemove((chatId, userId), out _);
     }
