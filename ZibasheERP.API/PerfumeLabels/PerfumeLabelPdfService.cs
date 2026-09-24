@@ -32,9 +32,9 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
             {
                 container.Page(page =>
                 {
-                    // Physical stock: 60 mm width × 80 mm length.
-                    // Six equal 20 × 40 mm labels: three columns and two rows.
-                    page.Size(new PageSize(60, 80, Unit.Millimetre));
+                    // Physical stock: 80 mm width × 60 mm height.
+                    // Six equal 26.67 × 30 mm labels: three columns and two rows.
+                    page.Size(new PageSize(80, 60, Unit.Millimetre));
                     page.Margin(0);
                     page.Content().Table(table =>
                     {
@@ -48,7 +48,7 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
                         for (var index = 0; index < 6; index++)
                         {
                             var entry = index < pageEntries.Length ? pageEntries[index] : null;
-                            table.Cell().Height(40, Unit.Millimetre)
+                            table.Cell().Height(30, Unit.Millimetre)
                                 .Border(0.35f).BorderColor(Colors.Grey.Medium)
                                 .Padding(1.2f, Unit.Millimetre)
                                 .Element(cell => ComposeCell(cell, logo, entry));
@@ -67,7 +67,7 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
         container.Column(column =>
         {
             column.Spacing(1);
-            column.Item().Height(32, Unit.Millimetre).AlignCenter().AlignMiddle()
+            column.Item().Height(22, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Image(logo).FitArea();
             column.Item().Height(5, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Text(entry.VolumeMl.HasValue ? $"{entry.VolumeMl.Value}ml" : string.Empty)
