@@ -3903,7 +3903,15 @@ public sealed partial class TelegramWebhookController
                     await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
                     return;
                 }
+                var queuedRequest = await _salesListRequestRepository.GetAsync(requestId, ct);
+                if (queuedRequest is null || queuedRequest.SalesListId != queueDraft.SalesListId ||
+                    queuedRequest.Status != SalesListRequestStatus.Confirmed)
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "مورد فعال پیدا نشد.", ct, true);
+                    return;
+                }
                 queueDraft.SelectedRequestId = requestId;
+                queueDraft.OriginalVolumeMl = queuedRequest.VolumeMl;
                 queueDraft.Stage = TelegramAdminRequestStage.AwaitingQueueVolume;
                 _adminRequestDrafts.Set(queueDraft);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -3917,7 +3925,17 @@ public sealed partial class TelegramWebhookController
                     await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
                     return;
                 }
+                var ownerRequest = await _salesListRequestRepository.GetAsync(requestId, ct);
+                if (ownerRequest is null || ownerRequest.SalesListId != identityDraft.SalesListId ||
+                    !ownerRequest.IsBottleOwner || ownerRequest.Status != SalesListRequestStatus.Confirmed)
+                {
+                    await _sender.AnswerCallbackAsync(callback.Id, "صاحب باتل فعال پیدا نشد.", ct, true);
+                    return;
+                }
                 identityDraft.SelectedRequestId = requestId;
+                identityDraft.OriginalIdentity = !string.IsNullOrWhiteSpace(ownerRequest.TelegramUsername)
+                    ? $"@{ownerRequest.TelegramUsername.Trim().TrimStart('@')}"
+                    : ownerRequest.TelegramUserId?.Trim() ?? string.Empty;
                 identityDraft.Stage = TelegramAdminRequestStage.AwaitingQueueIdentity;
                 _adminRequestDrafts.Set(identityDraft);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -4127,7 +4145,8 @@ public sealed partial class TelegramWebhookController
             }
             try
             {
-                await _salesListRequestRepository.UpdateConfirmedVolumeAsync(draft.SelectedRequestId, newVolume, ct);
+                await _salesListRequestRepository.UpdateConfirmedVolumeAsync(
+                    draft.SelectedRequestId, draft.OriginalVolumeMl, newVolume, ct);
                 var changed = await _salesListRequestRepository.GetAsync(draft.SelectedRequestId, ct);
                 if (changed is not null)
                 {
@@ -4153,7 +4172,8 @@ public sealed partial class TelegramWebhookController
         {
             try
             {
-                await _salesListRequestRepository.UpdateBottleOwnerIdentityAsync(draft.SelectedRequestId, input, ct);
+                await _salesListRequestRepository.UpdateBottleOwnerIdentityAsync(
+                    draft.SelectedRequestId, draft.OriginalIdentity, input, ct);
                 var changed = await _salesListRequestRepository.GetAsync(draft.SelectedRequestId, ct);
                 if (changed is not null)
                 {
@@ -4186,7 +4206,7 @@ public sealed partial class TelegramWebhookController
                 .OrderBy(request => request.ConfirmedAt).ThenBy(request => request.CreatedAt).ThenBy(request => request.Id)
                 .ToArrayAsync(ct);
             if (current.Length != draft.QueueRequestIds.Count ||
-                current.Select(request => request.Id).Except(draft.QueueRequestIds).Any())
+                !current.Select(request => request.Id).SequenceEqual(draft.QueueRequestIds))
             {
                 await ReplyAsync(message.Chat.Id,
                     "صف باتل هم‌زمان تغییر کرده است؛ عملیات لغو شد. دوباره از منوی مدیریت صف وارد شوید.", ct);
@@ -4277,6 +4297,12 @@ public sealed partial class TelegramWebhookController
             catch (InvalidOperationException exception)
             {
                 await ReplyAsync(message.Chat.Id, exception.Message, ct);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                _adminRequestDrafts.Remove(message.Chat.Id, message.From.Id);
+                await ReplyAsync(message.Chat.Id,
+                    "صف باتل هم‌زمان توسط مدیر دیگری تغییر کرده است؛ دوباره وارد مدیریت صف شوید.", ct);
             }
             return true;
         }
@@ -5149,7 +5175,7 @@ public sealed partial class TelegramWebhookController
         try
         {
             await _salesListRequestRepository.UpdateConfirmedCurrentBottleRequestAsync(
-                request.Id, draft.VolumeMl, bottle?.Id,
+                request.Id, draft.OriginalVolumeMl, draft.VolumeMl, bottle?.Id,
                 request.IsComplimentaryBottle ? 0 : bottle?.SalePrice ?? 0, ct);
             await RefreshChannelSalesListAsync(request.SalesListId, ct);
         }

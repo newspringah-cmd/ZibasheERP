@@ -219,7 +219,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     }
 
     public async Task UpdateConfirmedVolumeAsync(
-        Guid requestId, int volumeMl, CancellationToken cancellationToken = default)
+        Guid requestId, int expectedVolumeMl, int volumeMl, CancellationToken cancellationToken = default)
     {
         if (volumeMl <= 0)
             throw new InvalidOperationException("مقدار باید مثبت باشد.");
@@ -229,6 +229,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.Status != SalesListRequestStatus.Confirmed)
             throw new InvalidOperationException("این مورد دیگر فعال نیست.");
+        if (request.VolumeMl != expectedVolumeMl)
+            throw new InvalidOperationException(
+                $"این مقدار هم‌زمان توسط مدیر دیگری از {expectedVolumeMl} به {request.VolumeMl} میل تغییر کرده است؛ دوباره وارد ویرایش شوید.");
         if (request.Kind == SalesListRequestKind.CurrentBottle)
         {
             var changedReserved = request.SalesList.ReservedVolume - request.VolumeMl + volumeMl;
@@ -241,12 +244,20 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         }
         request.VolumeMl = volumeMl;
         request.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new InvalidOperationException(
+                "این آیتم هم‌زمان توسط مدیر دیگری تغییر کرده است؛ دوباره وارد ویرایش شوید.");
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task UpdateConfirmedCurrentBottleRequestAsync(
-        Guid requestId, int volumeMl, Guid? bottleId, decimal bottlePrice,
+        Guid requestId, int expectedVolumeMl, int volumeMl, Guid? bottleId, decimal bottlePrice,
         CancellationToken cancellationToken = default)
     {
         if (volumeMl <= 0)
@@ -258,6 +269,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         if (request.Status != SalesListRequestStatus.Confirmed ||
             request.Kind != SalesListRequestKind.CurrentBottle)
             throw new InvalidOperationException("فقط آیتم فعال باتل فعلی قابل تغییر است.");
+        if (request.VolumeMl != expectedVolumeMl)
+            throw new InvalidOperationException(
+                $"این مقدار هم‌زمان توسط مدیر دیگری از {expectedVolumeMl} به {request.VolumeMl} میل تغییر کرده است؛ دوباره وارد ویرایش شوید.");
 
         var changedReserved = request.SalesList.ReservedVolume - request.VolumeMl + volumeMl;
         if (changedReserved > request.SalesList.TotalVolume)
@@ -281,17 +295,32 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             request.BottlePrice = bottlePrice;
         }
         request.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new InvalidOperationException(
+                "این آیتم هم‌زمان توسط مدیر دیگری تغییر کرده است؛ دوباره وارد ویرایش شوید.");
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task UpdateBottleOwnerIdentityAsync(
-        Guid requestId, string identity, CancellationToken cancellationToken = default)
+        Guid requestId, string expectedIdentity, string identity,
+        CancellationToken cancellationToken = default)
     {
         var request = await _dbContext.SalesListRequests.FirstOrDefaultAsync(value =>
             value.Id == requestId && !value.IsDeleted && value.IsBottleOwner &&
             value.Status == SalesListRequestStatus.Confirmed, cancellationToken)
             ?? throw new InvalidOperationException("صاحب باتل فعال پیدا نشد.");
+        var currentIdentity = !string.IsNullOrWhiteSpace(request.TelegramUsername)
+            ? $"@{request.TelegramUsername.Trim().TrimStart('@')}"
+            : request.TelegramUserId?.Trim() ?? string.Empty;
+        if (!string.Equals(currentIdentity, expectedIdentity, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "شناسه صاحب باتل هم‌زمان توسط مدیر دیگری تغییر کرده است؛ دوباره وارد ویرایش شوید.");
         var normalized = identity.Trim();
         if (normalized.StartsWith('@') && normalized.Length > 1)
         {
@@ -307,7 +336,15 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             request.TelegramUsername = null;
         }
         request.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new InvalidOperationException(
+                "شناسه صاحب باتل هم‌زمان توسط مدیر دیگری تغییر کرده است؛ دوباره وارد ویرایش شوید.");
+        }
     }
 
     public async Task SetOmitIdentityOnLabelAsync(

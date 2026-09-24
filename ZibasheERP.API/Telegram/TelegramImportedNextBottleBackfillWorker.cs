@@ -70,7 +70,6 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
                 value.SourceMessageId,
                 value.SourceDate,
                 value.ParsedPayload,
-                value.RawText,
                 SalesListId = value.SalesListId!.Value
             })
             .ToArrayAsync(cancellationToken);
@@ -84,10 +83,6 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
             .Where(value => listIds.Contains(value.SalesListId))
             .Where(value => value.ExternalReference != null)
             .ToDictionaryAsync(value => value.ExternalReference!, cancellationToken);
-        var fancyBottles = await db.Bottles.AsNoTracking()
-            .Where(value => !value.IsDeleted && value.IsActive && value.Type == BottleType.Fancy)
-            .ToArrayAsync(cancellationToken);
-
         var added = 0;
         var reordered = 0;
         var bottleMarkers = 0;
@@ -101,60 +96,19 @@ public sealed class TelegramImportedNextBottleBackfillWorker : BackgroundService
             var requests = JsonSerializer.Deserialize<List<ImportedRequest>>(
                 requestArray.GetRawText(),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
-            var reparsedRequests = TelegramSalesListImportParser.Parse(import.RawText).Requests;
             foreach (var (request, requestIndex) in requests.Select((request, index) => (request, index)))
             {
-                if (requestIndex < reparsedRequests.Count &&
-                    existingRequests.TryGetValue(
-                        $"telegram-import:{import.SourceChannelId}:{import.SourceMessageId}:{requestIndex}",
-                        out var markedRequest))
-                {
-                    var reparsed = reparsedRequests[requestIndex];
-                    var changed = false;
-                    if (markedRequest.OmitIdentityOnLabel != reparsed.OmitIdentityOnLabel)
-                    {
-                        markedRequest.OmitIdentityOnLabel = reparsed.OmitIdentityOnLabel;
-                        changed = true;
-                    }
-                    if (reparsed.IsFancyBottle && reparsed.Kind == SalesListRequestKind.CurrentBottle &&
-                        !reparsed.IsBottleOwner)
-                    {
-                        var bottle = fancyBottles.FirstOrDefault(value =>
-                            value.VolumeMl == reparsed.VolumeMl &&
-                            (string.IsNullOrWhiteSpace(reparsed.FancyBottleVariant) ||
-                             value.Name.Contains(reparsed.FancyBottleVariant,
-                                 StringComparison.OrdinalIgnoreCase)));
-                        if (bottle is not null && markedRequest.BottleId != bottle.Id)
-                        {
-                            markedRequest.BottleId = bottle.Id;
-                            markedRequest.BottlePrice = bottle.SalePrice;
-                            changed = true;
-                        }
-                    }
-                    if (changed)
-                    {
-                        markedRequest.UpdatedAt = DateTime.UtcNow;
-                        bottleMarkers++;
-                    }
-                }
                 if (request.Kind != SalesListRequestKind.NextBottle ||
                     request.VolumeMl <= 0 || string.IsNullOrWhiteSpace(request.TelegramUsername))
                     continue;
                 var externalReference =
                     $"telegram-import:{import.SourceChannelId}:{import.SourceMessageId}:{requestIndex}";
                 var importedAt = import.SourceDate.UtcDateTime.AddTicks(requestIndex);
-                if (existingRequests.TryGetValue(externalReference, out var existing))
-                {
-                    if (existing.Kind == SalesListRequestKind.NextBottle &&
-                        (existing.CreatedAt != importedAt || existing.ConfirmedAt != importedAt))
-                    {
-                        existing.CreatedAt = importedAt;
-                        existing.ConfirmedAt = importedAt;
-                        existing.UpdatedAt = DateTime.UtcNow;
-                        reordered++;
-                    }
+                // Backfill is append-only. Existing requests may have been edited by an
+                // administrator, so their volume, bottle metadata and queue timestamps
+                // must never be restored from the original archived Telegram message.
+                if (existingRequests.ContainsKey(externalReference))
                     continue;
-                }
                 var username = request.TelegramUsername.Trim().TrimStart('@');
                 var giftRecipient = string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUsername)
                     ? null
