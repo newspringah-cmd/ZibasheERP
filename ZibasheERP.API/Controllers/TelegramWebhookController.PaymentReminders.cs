@@ -382,8 +382,7 @@ public sealed partial class TelegramWebhookController
         var invoiceLines = values.Select(value =>
             $"• {value.InvoiceNumber} — {value.TotalAmount:N0} تومان — {FormatPaymentReminderAge(value.IssuedAt, now)}");
         return messageText.Trim() + "\n\n" +
-               string.Join("\n", invoiceLines) + "\n\n" +
-               $"جمع مبلغ در انتظار پرداخت: {values.Sum(value => value.TotalAmount):N0} تومان";
+               string.Join("\n", invoiceLines);
     }
 
     private static bool TryGetPaymentReminderDraft(

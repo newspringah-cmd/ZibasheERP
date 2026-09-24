@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using QuestPDF.Fluent;
 using QuestPDF.Drawing;
@@ -15,7 +16,8 @@ public sealed record ParsedPostalAddress(
     string FullAddress,
     string Mobile,
     string PostalCode,
-    string City);
+    string City,
+    string Neighborhood);
 
 public sealed record AddressLabelResult(
     bool IsSuccessful,
@@ -75,7 +77,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                     cancellationToken)
                 : new ParsedPostalAddress(
                     address.ReceiverName.Trim(), address.FullAddress.Trim(), address.Mobile.Trim(),
-                    address.PostalCode.Trim(), address.City.Trim());
+                    address.PostalCode.Trim(), address.City.Trim(), string.Empty);
 
             var missing = MissingFields(parsed);
             if (missing.Length > 0)
@@ -130,8 +132,9 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                             اجزای یک نشانی پستی ایران را از کل متن استخراج کن. ترتیب خطوط هیچ معنایی ندارد و نام گیرنده ممکن است ابتدا، وسط یا انتهای متن، با یا بدون برچسب «گیرنده» یا «نام»، نوشته شده باشد. همه خطوط را بررسی کن.
                             receiverName فقط نام شخص گیرنده است. ممکن است نام و نام خانوادگی کامل، فقط نام کوچک، یا فقط یک نام خانوادگی تک‌کلمه‌ای مانند «احمدی» باشد؛ تک‌کلمه‌ای بودن را نقص تلقی نکن. @username، شناسه مشتری، نام استان، شهر، محله یا فرستنده را به‌عنوان گیرنده انتخاب نکن.
                             mobile همه شماره‌های تماس موجود در متن است: هم موبایل‌های ۱۱ رقمی که با 09 یا ۰۹ شروع می‌شوند و هم تلفن‌های ثابت، ترجیحاً همراه کد شهر. شماره‌ای که صریحاً با برچسب «تلفن»، «تلفن ثابت»، «تماس» یا «موبایل» آمده را حفظ کن. اگر بیش از یک شماره وجود دارد همه شماره‌های متمایز را به همان ترتیب متن و با «،» در یک رشته برگردان و هیچ‌کدام را حذف نکن. postalCode فقط کدپستی دقیقاً ۱۰ رقمی است؛ آن را با هیچ شماره تماسی اشتباه نگیر و مقدار بدون قرینه کدپستی را postalCode تلقی نکن.
-                            city مقصد کامل پستی را نگه دارد. اگر استان در متن آمده، آن را نیز اضافه کن. اگر متن شهرستان/شهر اصلی و شهر کوچک‌تر، بخش یا مقصد محلی را هم گفته است، همه سطوح موجود را به ترتیب کلی به جزئی و با «،» برگردان؛ مثال: «فارس، داراب، دولت‌آباد». هیچ سطح صریحی را حذف نکن و این حالت را به یک نام کاهش نده.
-                            fullAddress فقط ادامه نشانی قابل تحویل را نگه دارد و نام گیرنده، موبایل، کدپستی و تمام نام‌های استان/شهرستان/شهر/بخشی را که در city قرار داده‌ای از آن حذف کند تا مقصد دوباره داخل آدرس تکرار نشود. محله، خیابان، کوچه، پلاک و واحد را حفظ کن؛ مگر اینکه عیناً بخشی از city باشند.
+                            city فقط تقسیمات مقصد پستی را نگه دارد: استان، شهرستان، شهر و در صورت تصریح، بخش یا روستا. اگر استان و شهرستان یا دو شهر مقصد در متن آمده، همه را به ترتیب کلی به جزئی و با «،» برگردان؛ مثال: «فارس، داراب، دولت‌آباد». محله، کوی، منطقه، ناحیه، شهرک، خیابان، بلوار و کوچه هرگز city نیستند؛ حتی وقتی کلمه «محله» قبل از نامشان نوشته نشده باشد. نام‌های شناخته‌شده‌ای مانند تهرانپارس، پونک، سعادت‌آباد، نارمک، جنت‌آباد، معالی‌آباد و قاسم‌آباد را شهر تشخیص نده.
+                            neighborhood نام محله، کوی، منطقه، ناحیه یا شهرک است؛ چه با برچسب نوشته شده باشد چه فقط نام آن آمده باشد. مثال: برای «تهران، تهرانپارس، خیابان رشید» مقدار city برابر «تهران» و neighborhood برابر «تهرانپارس» است. برای «تهران، شهرک غرب، بلوار فرحزادی» نیز city برابر «تهران» و neighborhood برابر «شهرک غرب» است. اگر محله وجود ندارد رشته خالی برگردان.
+                            fullAddress فقط ادامه نشانی قابل تحویل را نگه دارد و نام گیرنده، موبایل، کدپستی و نام‌های استان/شهرستان/شهر/بخش/روستایی را که در city قرار داده‌ای از آن حذف کند تا مقصد دوباره داخل آدرس تکرار نشود. محله، کوی، منطقه، ناحیه، شهرک، خیابان، بلوار، کوچه، پلاک و واحد را حتماً حفظ کن و هیچ‌کدام را به city منتقل نکن. وجود neighborhood در fullAddress مجاز و لازم است.
                             هیچ مقدار مفقودی را حدس نزن و ارقام را حفظ کن. اگر کدپستی موجود نبود postalCode را رشته خالی برگردان؛ برای سایر مقدارهای پیدا نشده نیز رشته خالی برگردان تا سامانه درخواست اصلاح کند.
                             """
                     },
@@ -153,9 +156,10 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                                 fullAddress = new { type = "string", description = "ادامه نشانی بدون نام گیرنده، تلفن، کدپستی و نام‌های درج‌شده در شهر مقصد" },
                                 mobile = new { type = "string", description = "همه شماره‌های تماس متمایز شامل موبایل و تلفن ثابت، با ویرگول فارسی از هم جداشده" },
                                 postalCode = new { type = "string", description = "فقط کدپستی دقیقاً ده‌رقمی یا رشته خالی در صورت نبودن" },
-                                city = new { type = "string", description = "مقصد کامل پستی شامل همه سطوح موجود به ترتیب استان، شهرستان یا شهر اصلی، شهر یا بخش محلی؛ مانند فارس، داراب، دولت‌آباد" }
+                                city = new { type = "string", description = "فقط تقسیمات اداری مقصد به ترتیب استان، شهرستان، شهر و بخش یا روستا؛ بدون محله، کوی، منطقه، ناحیه، شهرک، خیابان و کوچه" },
+                                neighborhood = new { type = "string", description = "نام محله، کوی، منطقه، ناحیه یا شهرک، حتی اگر بدون برچسب آمده باشد؛ یا رشته خالی" }
                             },
-                            required = new[] { "receiverName", "fullAddress", "mobile", "postalCode", "city" },
+                            required = new[] { "receiverName", "fullAddress", "mobile", "postalCode", "city", "neighborhood" },
                             additionalProperties = false
                         }
                     }
@@ -173,11 +177,79 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
             .SelectMany(value => value.GetProperty("content").EnumerateArray())
             .First(value => value.TryGetProperty("type", out var type) && type.GetString() == "output_text")
             .GetProperty("text").GetString();
-        return JsonSerializer.Deserialize<ParsedPostalAddress>(outputText!, new JsonSerializerOptions
+        var parsed = JsonSerializer.Deserialize<ParsedPostalAddress>(outputText!, new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
         }) ?? throw new InvalidOperationException("OpenAI returned an empty address result.");
+        return MoveNeighborhoodsOutOfCity(parsed, rawAddress);
     }
+
+    private static ParsedPostalAddress MoveNeighborhoodsOutOfCity(
+        ParsedPostalAddress value,
+        string rawAddress)
+    {
+        var cityParts = value.City
+            .Split(new[] { '،', ',', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToArray();
+        if (cityParts.Length == 0)
+            return value;
+
+        var kept = new List<string>();
+        var moved = new List<string>();
+        var neighborhoods = value.Neighborhood
+            .Split(new[] { '،', ',', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToArray();
+        foreach (var part in cityParts)
+        {
+            if (neighborhoods.Any(neighborhood =>
+                    string.Equals(neighborhood, part, StringComparison.OrdinalIgnoreCase)) ||
+                IsNeighborhoodPart(part, rawAddress))
+                moved.Add(part);
+            else
+                kept.Add(part);
+        }
+
+        var addressNeighborhoods = neighborhoods
+            .Concat(moved)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (addressNeighborhoods.Length == 0)
+            return value;
+
+        var fullAddress = value.FullAddress.Trim();
+        foreach (var part in addressNeighborhoods.Reverse())
+        {
+            var addressPart = StartsWithNeighborhoodKeyword(part) ? part : $"محله {part}";
+            if (!fullAddress.Contains(part, StringComparison.OrdinalIgnoreCase))
+                fullAddress = string.IsNullOrWhiteSpace(fullAddress)
+                    ? addressPart
+                    : $"{addressPart}، {fullAddress}";
+        }
+
+        return value with
+        {
+            City = string.Join("، ", kept),
+            FullAddress = fullAddress
+        };
+    }
+
+    private static bool IsNeighborhoodPart(string part, string rawAddress)
+    {
+        if (StartsWithNeighborhoodKeyword(part))
+            return true;
+        if (part.Length < 2)
+            return false;
+
+        return Regex.IsMatch(
+            rawAddress,
+            $@"(?:محله|کوی|منطقه|ناحیه|شهرک)\s*[:：\-]?\s*{Regex.Escape(part)}(?=\s|،|,|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static bool StartsWithNeighborhoodKeyword(string value) =>
+        Regex.IsMatch(value.Trim(), @"^(?:محله|کوی|منطقه|ناحیه|شهرک)(?:\s|:|：|\-)");
 
     private static string[] MissingFields(ParsedPostalAddress value)
     {
