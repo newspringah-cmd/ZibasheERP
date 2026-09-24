@@ -58,11 +58,6 @@ public interface ITelegramMessageSender
         string caption,
         CancellationToken cancellationToken = default);
 
-    Task<TelegramSendResult> SendPhotoAlbumAsync(
-        string chatId,
-        IReadOnlyCollection<TelegramPhotoAlbumItem> photos,
-        CancellationToken cancellationToken = default);
-
     Task<TelegramSendResult> SendStickerAsync(
         string chatId,
         string sticker,
@@ -172,8 +167,6 @@ public sealed record TelegramInlineButton(
     string? CallbackData = null,
     string? CopyText = null,
     string? Url = null);
-public sealed record TelegramPhotoAlbumItem(string Photo, string Caption);
-
 public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
     private readonly HttpClient _httpClient;
@@ -337,30 +330,6 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             "sendPhoto",
             new { chat_id = chatId, photo, caption, parse_mode = "HTML" },
             cancellationToken);
-
-    public async Task<TelegramSendResult> SendPhotoAlbumAsync(
-        string chatId,
-        IReadOnlyCollection<TelegramPhotoAlbumItem> photos,
-        CancellationToken cancellationToken = default)
-    {
-        if (photos.Count is < 2 or > 10)
-            return new TelegramSendResult(false, "Telegram photo albums require 2 to 10 photos.");
-
-        return await SendRequestAsync(
-            "sendMediaGroup",
-            new
-            {
-                chat_id = chatId,
-                media = photos.Select(photo => new
-                {
-                    type = "photo",
-                    media = photo.Photo,
-                    caption = photo.Caption,
-                    parse_mode = "HTML"
-                }).ToArray()
-            },
-            cancellationToken);
-    }
 
     public async Task<TelegramSendResult> SendStickerAsync(
         string chatId,
