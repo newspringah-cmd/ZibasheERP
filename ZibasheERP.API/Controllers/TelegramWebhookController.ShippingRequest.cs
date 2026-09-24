@@ -714,7 +714,14 @@ public sealed partial class TelegramWebhookController
         var items = await ReadyShippingItems(draft.CustomerId).ToArrayAsync(ct);
         var requestId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        foreach (var item in items) { item.ShippingRequestId = requestId; item.ShippingRequestedAt = now; item.UpdatedAt = now; }
+        foreach (var item in items)
+        {
+            item.ShippingRequestId = requestId;
+            item.ShippingRequestedAt = now;
+            item.Order!.DeliveryAddressId = draft.AddressId;
+            item.Order.UpdatedAt = now;
+            item.UpdatedAt = now;
+        }
         await _db.SaveChangesAsync(ct);
         var identity = OrderCustomerLabel(customer);
         var shippingMessage = $"📦 درخواست ارسال جدید\n\nآیدی: {identity}\n\n{FormatAddressForDisplay(address)}";
@@ -751,6 +758,11 @@ public sealed partial class TelegramWebhookController
             await _db.SaveChangesAsync(ct);
             await _sender.AnswerCallbackAsync(callback.Id, $"ارسال ناموفق بود: {sent.Error}", ct, true);
             return;
+        }
+        if (sent.MessageId.HasValue)
+        {
+            foreach (var item in items) item.ShippingTelegramMessageId = sent.MessageId.Value;
+            await _db.SaveChangesAsync(ct);
         }
         _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, draft.UserId);
         await _sender.AnswerCallbackAsync(callback.Id,

@@ -13,6 +13,7 @@ using ZibasheERP.API.Diagnostics;
 using ZibasheERP.API.N8n;
 using ZibasheERP.API.AddressLabels;
 using ZibasheERP.API.PerfumeLabels;
+using ZibasheERP.API.Tracking;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -142,6 +143,8 @@ builder.Services.AddOptions<AddressLabelOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IAddressLabelService, AddressLabelService>();
 builder.Services.AddSingleton<IPerfumeLabelPdfService, PerfumeLabelPdfService>();
+builder.Services.AddScoped<ITrackingImportService, TrackingImportService>();
+builder.Services.AddSingleton<TrackingImportDraftStore>();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();

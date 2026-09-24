@@ -21,6 +21,10 @@ RUN dotnet publish ZibasheERP.API/ZibasheERP.API.csproj \
     /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils imagemagick \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \

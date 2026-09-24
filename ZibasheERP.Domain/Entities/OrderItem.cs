@@ -75,6 +75,7 @@ public class OrderItem : BaseEntity
     public DateTime? ShippedAt { get; set; }
     public Guid? ShippingRequestId { get; set; }
     public DateTime? ShippingRequestedAt { get; set; }
+    public long? ShippingTelegramMessageId { get; set; }
 
     public string? Notes { get; set; }
 }

@@ -1564,7 +1564,8 @@ public sealed partial class TelegramWebhookController
             },
             new[]
             {
-                new TelegramInlineButton("📍 ثبت دستی آدرس", "shipping:manualaddress")
+                new TelegramInlineButton("📍 ثبت دستی آدرس", "shipping:manualaddress"),
+                new TelegramInlineButton("📬 ورود کد رهگیری", "trackingimport:menu")
             }
         };
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);

@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.API.AddressLabels;
 using ZibasheERP.API.PerfumeLabels;
+using ZibasheERP.API.Tracking;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
@@ -75,6 +76,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IAddressLabelService _addressLabelService;
     private readonly IPerfumeLabelPdfService _perfumeLabelPdfService;
+    private readonly ITrackingImportService _trackingImportService;
+    private readonly TrackingImportDraftStore _trackingImportDrafts;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -107,6 +110,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         IInvoiceInventoryService invoiceInventoryService,
         IAddressLabelService addressLabelService,
         IPerfumeLabelPdfService perfumeLabelPdfService,
+        ITrackingImportService trackingImportService,
+        TrackingImportDraftStore trackingImportDrafts,
         AppDbContext db,
         ILogger<TelegramWebhookController> logger)
     {
@@ -140,6 +145,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _invoiceInventoryService = invoiceInventoryService;
         _addressLabelService = addressLabelService;
         _perfumeLabelPdfService = perfumeLabelPdfService;
+        _trackingImportService = trackingImportService;
+        _trackingImportDrafts = trackingImportDrafts;
         _db = db;
         _logger = logger;
     }
@@ -439,6 +446,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleTrackingImportCallbackAsync(callback, cancellationToken))
+            return;
+
         if (await TryHandleShippingRequestCallbackAsync(callback, cancellationToken))
             return;
 
@@ -939,6 +949,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleTrackingImportMessageAsync(message, cancellationToken))
+            return true;
+
         if (await TryHandleShippingTrackingPhotoMessageAsync(message, cancellationToken))
             return true;
 

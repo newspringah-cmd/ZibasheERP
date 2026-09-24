@@ -38,6 +38,9 @@ public class AppDbContext : DbContext
     public DbSet<IntegrationDeliveryFailure> IntegrationDeliveryFailures => Set<IntegrationDeliveryFailure>();
     public DbSet<InvoicePaymentAccount> InvoicePaymentAccounts => Set<InvoicePaymentAccount>();
     public DbSet<InvoiceTelegramSetting> InvoiceTelegramSettings => Set<InvoiceTelegramSetting>();
+    public DbSet<TrackingImportBatch> TrackingImportBatches => Set<TrackingImportBatch>();
+    public DbSet<TrackingDispatch> TrackingDispatches => Set<TrackingDispatch>();
+    public DbSet<TrackingDispatchDelivery> TrackingDispatchDeliveries => Set<TrackingDispatchDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -66,6 +69,47 @@ public class AppDbContext : DbContext
         ConfigureIntegrationDeliveryFailure(modelBuilder);
         ConfigureInvoicePaymentAccount(modelBuilder);
         ConfigureInvoiceTelegramSetting(modelBuilder);
+        ConfigureTrackingImports(modelBuilder);
+    }
+
+    private static void ConfigureTrackingImports(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TrackingImportBatch>()
+            .HasIndex(value => value.SourceHash)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+
+        modelBuilder.Entity<TrackingDispatch>()
+            .HasIndex(value => new { value.Carrier, value.TrackingCode })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+
+        modelBuilder.Entity<TrackingDispatch>()
+            .HasIndex(value => value.ShippingRequestId)
+            .IsUnique()
+            .HasFilter("[ShippingRequestId] IS NOT NULL AND [Status] IN (2, 3, 4)");
+
+        modelBuilder.Entity<TrackingDispatch>()
+            .HasOne(value => value.ImportBatch)
+            .WithMany(value => value.Dispatches)
+            .HasForeignKey(value => value.ImportBatchId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TrackingDispatch>()
+            .HasOne(value => value.Customer)
+            .WithMany()
+            .HasForeignKey(value => value.CustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<TrackingDispatchDelivery>()
+            .HasIndex(value => new { value.TrackingDispatchId, value.TelegramChatId })
+            .IsUnique();
+
+        modelBuilder.Entity<TrackingDispatchDelivery>()
+            .HasOne(value => value.TrackingDispatch)
+            .WithMany(value => value.Deliveries)
+            .HasForeignKey(value => value.TrackingDispatchId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureTelegramBlockedUsername(ModelBuilder modelBuilder)
