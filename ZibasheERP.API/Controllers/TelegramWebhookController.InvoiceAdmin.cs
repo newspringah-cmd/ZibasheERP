@@ -2843,7 +2843,9 @@ public sealed partial class TelegramWebhookController
             {
                 new[]
                 {
-                    new TelegramInlineButton("🖼 ثبت لوگو", $"plogo:set:{copy.SalesListId:N}"),
+                    new TelegramInlineButton(
+                        copy.HasPerfumeLogo ? "✅ لوگو دارد" : "🖼 ثبت لوگو",
+                        $"plogo:set:{copy.SalesListId:N}"),
                     new TelegramInlineButton("🖨 چاپ لوگو", $"plogo:print:{copy.SalesListId:N}")
                 }
             };

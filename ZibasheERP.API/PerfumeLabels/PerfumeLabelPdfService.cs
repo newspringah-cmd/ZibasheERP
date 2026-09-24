@@ -62,15 +62,13 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
 
     private static void ComposeCell(IContainer container, byte[] logo, PerfumeLabelEntry? entry)
     {
-        if (entry is null)
-            return;
         container.Column(column =>
         {
             column.Spacing(1);
             column.Item().Height(18, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Image(logo).FitArea();
             column.Item().Height(6, Unit.Millimetre).AlignCenter().AlignMiddle()
-                .Text(entry.VolumeMl.HasValue ? $"{entry.VolumeMl.Value}ml" : string.Empty)
+                .Text(entry?.VolumeMl.HasValue == true ? $"{entry.VolumeMl.Value}ml" : string.Empty)
                 .FontFamily(Fonts.Arial).FontSize(13).SemiBold();
         });
     }

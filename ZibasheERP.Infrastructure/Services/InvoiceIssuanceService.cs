@@ -921,6 +921,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             list.PublicCode,
             list.EnglishName,
             list.TelegramPhotoFileId,
+            !string.IsNullOrWhiteSpace(list.Perfume.TelegramLogoFileId),
             orderList,
             FormatLabelList(list));
     }

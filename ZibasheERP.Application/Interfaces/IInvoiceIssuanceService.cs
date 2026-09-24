@@ -49,6 +49,7 @@ public sealed record SalesListProductionCopy(
     int PublicCode,
     string PerfumeName,
     string? TelegramPhotoFileId,
+    bool HasPerfumeLogo,
     string DecantMessage,
     string LabelPrintMessage);
 

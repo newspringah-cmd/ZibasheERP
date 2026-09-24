@@ -162,17 +162,17 @@ public sealed partial class TelegramWebhookController
 
     private static IReadOnlyCollection<PerfumeLabelEntry> BuildPerfumeLabelEntries(SalesList list)
     {
-        var requests = list.Requests.OrderBy(value => value.ConfirmedAt ?? value.CreatedAt).ToArray();
+        var requests = list.Requests.ToArray();
         var owner = requests.FirstOrDefault(value => value.IsBottleOwner);
-        var entries = new List<PerfumeLabelEntry>(requests.Length);
-        foreach (var request in requests)
-        {
-            if (request.IsGift && owner is not null && IsPerfumeLabelGiftFor(request, owner))
-                continue;
-            // Bottle owner receives a logo label, but never an ml caption.
-            entries.Add(new PerfumeLabelEntry(request.IsBottleOwner ? null : request.VolumeMl));
-        }
-        return entries;
+        return requests
+            .Where(request => !request.IsGift || owner is null || !IsPerfumeLabelGiftFor(request, owner))
+            // Print the bottle owner's captionless label first, then keep equal
+            // volumes next to each other from the largest volume down.
+            .OrderByDescending(request => request.IsBottleOwner)
+            .ThenByDescending(request => request.VolumeMl)
+            .ThenBy(request => request.ConfirmedAt ?? request.CreatedAt)
+            .Select(request => new PerfumeLabelEntry(request.IsBottleOwner ? null : request.VolumeMl))
+            .ToArray();
     }
 
     private static bool IsPerfumeLabelGiftFor(SalesListRequest gift, SalesListRequest recipient)
