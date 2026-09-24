@@ -41,6 +41,7 @@ public sealed record TrackingMatch(
 public interface ITrackingImportService
 {
     Task<TrackingImportParseResult> ParseChaparAsync(string text, CancellationToken ct);
+    Task<TrackingImportParseResult> ParseIranPostExpressAsync(string text, CancellationToken ct);
     Task<TrackingImportParseResult> ParseIranPostPdfAsync(byte[] pdf, CancellationToken ct);
     Task<TrackingMatch> MatchAsync(string recipientName, string destination, CancellationToken ct);
 }
@@ -132,6 +133,71 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             _logger.LogError(exception, "Chapar tracking text parsing failed.");
             return Task.FromResult(new TrackingImportParseResult(false, [],
                 "مرحله پردازش متن چاپار با خطای فنی روبه‌رو شد؛ هیچ پیامی ارسال نشد و جزئیات در لاگ ثبت شد."));
+        }
+    }
+
+    public async Task<TrackingImportParseResult> ParseIranPostExpressAsync(
+        string text, CancellationToken ct)
+    {
+        try
+        {
+            if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.OpenAiApiKey))
+                return new TrackingImportParseResult(false, [],
+                    "سرویس OpenAI برای خواندن متن پست ویژه فعال نیست؛ هیچ پیامی ارسال نشد.");
+            if (string.IsNullOrWhiteSpace(text))
+                return new TrackingImportParseResult(false, [],
+                    "مرحله خواندن متن پست ویژه ناموفق بود: متن خالی است؛ هیچ پیامی ارسال نشد.");
+
+            var rows = await RecognizePostExpressRowsAsync(text, ct);
+            if (rows.Length == 0)
+                return new TrackingImportParseResult(false, [],
+                    "مرحله خواندن متن پست ویژه ناموفق بود: نام گیرنده و کد رهگیری پیدا نشد؛ هیچ پیامی ارسال نشد.");
+            if (rows.Length > 100)
+                return new TrackingImportParseResult(false, [],
+                    "مرحله اعتبارسنجی متوقف شد: حداکثر ۱۰۰ مرسوله را در هر مرحله وارد کنید؛ هیچ پیامی ارسال نشد.");
+
+            var normalizedInput = NormalizeName(text);
+            var inputDigits = NormalizeDigits(text);
+            var items = new List<TrackingImportItem>();
+            foreach (var row in rows)
+            {
+                var code = NormalizeDigits(row.TrackingCode);
+                var name = Clean(row.RecipientName);
+                var codeExists = code.Length is >= 15 and <= 30 &&
+                                 inputDigits.Contains(code, StringComparison.Ordinal);
+                var nameExists = NormalizeName(name).Length >= 3 &&
+                                 normalizedInput.Contains(NormalizeName(name), StringComparison.Ordinal);
+                if (!codeExists)
+                    return new TrackingImportParseResult(false, [],
+                        $"مرحله اعتبارسنجی متن پست ویژه متوقف شد: کد «{row.TrackingCode}» عیناً در متن ورودی پیدا نشد؛ هیچ پیامی ارسال نشد.");
+                var safe = nameExists && row.Confidence >= .90;
+                items.Add(new TrackingImportItem(
+                    TrackingCarrier.IranPostExpress,
+                    code,
+                    name,
+                    Clean(row.Destination),
+                    null,
+                    BuildPostExpressCard(name, code),
+                    safe,
+                    safe ? null : "نام گیرنده یا اطمینان استخراج متن پست ویژه نیازمند بررسی است"));
+            }
+
+            var duplicates = items.GroupBy(value => value.TrackingCode)
+                .Where(value => value.Count() > 1).Select(value => value.Key).ToArray();
+            if (duplicates.Length > 0)
+                return new TrackingImportParseResult(false, [],
+                    $"مرحله کنترل تکراری متوقف شد: کد تکراری در متن پیدا شد ({string.Join("، ", duplicates)})؛ هیچ پیامی ارسال نشد.");
+            return new TrackingImportParseResult(true, items);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Iran Post Express text parsing failed.");
+            return new TrackingImportParseResult(false, [],
+                "مرحله پردازش متن پست ویژه با خطای فنی روبه‌رو شد؛ هیچ پیامی ارسال نشد و جزئیات در لاگ ثبت شد.");
         }
     }
 
@@ -435,6 +501,78 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return parsed.Rows;
     }
 
+    private async Task<PostExpressRow[]> RecognizePostExpressRowsAsync(string sourceText, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "responses")
+        {
+            Content = JsonContent.Create(new
+            {
+                model = _options.OpenAiModel,
+                input = new object[]
+                {
+                    new
+                    {
+                        role = "system",
+                        content = """
+                            متن اعلان یک یا چند مرسوله پست ویژه ایران را بخوان. برای هر مرسوله فقط نام گیرنده، کد رهگیری و مقصد را استخراج کن. ارقام کد رهگیری و املای نام گیرنده را دقیقاً مطابق متن ورودی حفظ کن و هیچ چیزی را حدس نزن. شماره موبایل، کدپستی، مبلغ و شماره سفارش کد رهگیری نیستند. اگر نام یا کد مبهم است confidence را کمتر از 0.90 برگردان.
+                            """
+                    },
+                    new { role = "user", content = sourceText }
+                },
+                text = new
+                {
+                    format = new
+                    {
+                        type = "json_schema",
+                        name = "iran_post_express_rows",
+                        strict = true,
+                        schema = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                rows = new
+                                {
+                                    type = "array",
+                                    items = new
+                                    {
+                                        type = "object",
+                                        properties = new
+                                        {
+                                            recipientName = new { type = "string" },
+                                            trackingCode = new { type = "string" },
+                                            destination = new { type = "string" },
+                                            confidence = new { type = "number" }
+                                        },
+                                        required = new[] { "recipientName", "trackingCode", "destination", "confidence" },
+                                        additionalProperties = false
+                                    }
+                                }
+                            },
+                            required = new[] { "rows" },
+                            additionalProperties = false
+                        }
+                    }
+                }
+            })
+        };
+        using var response = await _httpClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"OpenAI returned HTTP {(int)response.StatusCode}: {body[..Math.Min(500, body.Length)]}");
+        using var document = JsonDocument.Parse(body);
+        var outputText = document.RootElement.GetProperty("output").EnumerateArray()
+            .Where(value => value.TryGetProperty("content", out _))
+            .SelectMany(value => value.GetProperty("content").EnumerateArray())
+            .First(value => value.TryGetProperty("type", out var type) && type.GetString() == "output_text")
+            .GetProperty("text").GetString();
+        return JsonSerializer.Deserialize<PostExpressRowsResponse>(outputText!, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        })?.Rows ?? [];
+    }
+
     private static async Task<byte[]> CropNormalizedAsync(
         string imagePath, int[] box, int padding, string tempRoot, CancellationToken ct)
     {
@@ -494,6 +632,40 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         if (cardResult.ExitCode != 0 || !File.Exists(output))
             throw new InvalidOperationException($"Iran Post card composition failed: {cardResult.Error}");
         return await File.ReadAllBytesAsync(output, ct);
+    }
+
+    private byte[] BuildPostExpressCard(string name, string code)
+    {
+        var template = Path.Combine(
+            _environment.ContentRootPath, "Assets", "Tracking", "iran-post-template.jpg");
+        if (!File.Exists(template))
+            throw new FileNotFoundException("Iran Post tracking template is missing.", template);
+        var templateBytes = File.ReadAllBytes(template);
+        var document = Document.Create(container => container.Page(page =>
+        {
+            page.Size(120, 120, Unit.Millimetre);
+            page.Margin(0);
+            page.Background().Image(templateBytes).FitArea();
+            page.DefaultTextStyle(style => style.FontFamily(FontFamily).Bold());
+            page.ContentFromRightToLeft();
+            page.Content().Column(column =>
+            {
+                column.Item().Height(37, Unit.Millimetre);
+                column.Item().Height(16, Unit.Millimetre).PaddingLeft(44, Unit.Millimetre)
+                    .PaddingRight(14, Unit.Millimetre).AlignCenter().AlignMiddle()
+                    .Text(name).FontSize(name.Length > 28 ? 16 : 20).FontColor(Colors.Grey.Darken4);
+                column.Item().Height(11, Unit.Millimetre);
+                column.Item().Height(15, Unit.Millimetre).PaddingLeft(41, Unit.Millimetre)
+                    .PaddingRight(14, Unit.Millimetre).ContentFromLeftToRight()
+                    .AlignCenter().AlignMiddle().Text(code).FontSize(code.Length > 20 ? 17 : 20)
+                    .FontColor(Colors.Grey.Darken4);
+            });
+        }));
+        return document.GenerateImages(new ImageGenerationSettings
+        {
+            ImageFormat = ImageFormat.Png,
+            RasterDpi = 271
+        }).Single();
     }
 
     private byte[] BuildChaparCard(string name, string code, string? url)
@@ -648,6 +820,9 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     private sealed record Candidate(Guid CustomerId, Guid? ShippingRequestId, string ReceiverName,
         string City, string FullAddress, string CustomerFullName, DateTime Date, bool IsActive);
     private sealed record PostRowsResponse(PostRecognizedRow[] Rows);
+    private sealed record PostExpressRowsResponse(PostExpressRow[] Rows);
+    private sealed record PostExpressRow(
+        string RecipientName, string TrackingCode, string Destination, double Confidence);
     private sealed record PostRecognizedRow(int Page, int RecipientPage, int TrackingPage, int RowOrder, string RecipientName,
         string TrackingCode, string Destination, int[] RecipientBox, int[] TrackingBox, double Confidence);
 }

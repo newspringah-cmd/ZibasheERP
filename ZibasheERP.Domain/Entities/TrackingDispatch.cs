@@ -5,7 +5,8 @@ namespace ZibasheERP.Domain.Entities;
 public enum TrackingCarrier
 {
     IranPost = 1,
-    Chapar = 2
+    Chapar = 2,
+    IranPostExpress = 3
 }
 
 public enum TrackingDispatchStatus

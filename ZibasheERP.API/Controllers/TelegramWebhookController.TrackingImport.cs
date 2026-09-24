@@ -51,6 +51,7 @@ public sealed partial class TelegramWebhookController
                     new IReadOnlyCollection<TelegramInlineButton>[]
                     {
                         new[] { new TelegramInlineButton("📮 PDF پست", "trackingimport:post") },
+                        new[] { new TelegramInlineButton("🚀 متن پست ویژه", "trackingimport:postexpress") },
                         new[] { new TelegramInlineButton("🚚 متن چاپار", "trackingimport:chapar") },
                         new[] { new TelegramInlineButton("↩️ بازگشت", "invoiceadmin:menu:main") }
                     }, ct);
@@ -66,6 +67,13 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
                 await ReplyAsync(callback.Message.Chat.Id,
                     "متن کامل پیام‌های چاپار را یکجا ارسال کنید. /cancel برای لغو", ct);
+                return true;
+            case "trackingimport:postexpress":
+                _trackingImportDrafts.Set(
+                    callback.Message.Chat.Id, callback.From.Id, TrackingCarrier.IranPostExpress);
+                await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+                await ReplyAsync(callback.Message.Chat.Id,
+                    "متن کامل پیام‌های پست ویژه را یکجا ارسال کنید. خروجی با قالب قرمز پست ساخته می‌شود. /cancel برای لغو", ct);
                 return true;
         }
 
@@ -202,19 +210,35 @@ public sealed partial class TelegramWebhookController
                     text = Encoding.UTF8.GetString(download.Content);
                 else
                 {
+                    var carrierTitle = draft.Carrier == TrackingCarrier.IranPostExpress
+                        ? "پست ویژه"
+                        : "چاپار";
                     await ReplyAsync(message.Chat.Id,
-                        $"⚠️ مرحله دریافت فایل متنی چاپار از تلگرام ناموفق بود: {FriendlyTelegramError(download.Error)}\nهیچ پیامی ارسال نشد.", ct);
+                        $"⚠️ مرحله دریافت فایل متنی {carrierTitle} از تلگرام ناموفق بود: {FriendlyTelegramError(download.Error)}\nهیچ پیامی ارسال نشد.", ct);
                     return true;
                 }
             }
             if (string.IsNullOrWhiteSpace(text))
             {
-                await ReplyAsync(message.Chat.Id, "متن کامل پیام چاپار را ارسال کنید.", ct);
+                await ReplyAsync(message.Chat.Id,
+                    draft.Carrier == TrackingCarrier.IranPostExpress
+                        ? "متن کامل پیام پست ویژه را ارسال کنید."
+                        : "متن کامل پیام چاپار را ارسال کنید.", ct);
                 return true;
             }
             source = Encoding.UTF8.GetBytes(text);
-            await ReplyAsync(message.Chat.Id, "متن دریافت شد؛ در حال تطبیق با درخواست‌ها و آدرس‌های اخیر…", ct);
-            parsed = await _trackingImportService.ParseChaparAsync(text, ct);
+            if (draft.Carrier == TrackingCarrier.IranPostExpress)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "متن پست ویژه دریافت شد؛ در حال استخراج و تطبیق با درخواست‌ها و آدرس‌های اخیر…", ct);
+                parsed = await _trackingImportService.ParseIranPostExpressAsync(text, ct);
+            }
+            else
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "متن چاپار دریافت شد؛ در حال تطبیق با درخواست‌ها و آدرس‌های اخیر…", ct);
+                parsed = await _trackingImportService.ParseChaparAsync(text, ct);
+            }
         }
 
         if (!parsed.IsSuccessful)
@@ -393,7 +417,8 @@ public sealed partial class TelegramWebhookController
         foreach (var dispatch in dispatches)
         {
             // Low-confidence PDF rows stay blocked even if a customer name happens to match.
-            if (dispatch.MatchNotes?.Contains("اطمینان خواندن ردیف پایین", StringComparison.Ordinal) == true)
+            if (dispatch.MatchNotes?.Contains("اطمینان خواندن ردیف پایین", StringComparison.Ordinal) == true ||
+                dispatch.MatchNotes?.Contains("استخراج متن پست ویژه نیازمند بررسی", StringComparison.Ordinal) == true)
                 continue;
             var match = await _trackingImportService.MatchAsync(
                 dispatch.RecipientName, dispatch.Destination, ct);
