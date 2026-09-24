@@ -48,7 +48,7 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
                         for (var index = 0; index < 6; index++)
                         {
                             var entry = index < pageEntries.Length ? pageEntries[index] : null;
-                            table.Cell().Height(30, Unit.Millimetre)
+                            table.Cell().Height(29.8f, Unit.Millimetre)
                                 .Border(0.35f).BorderColor(Colors.Grey.Medium)
                                 .Padding(1.2f, Unit.Millimetre)
                                 .Element(cell => ComposeCell(cell, logo, entry));
@@ -67,9 +67,9 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
         container.Column(column =>
         {
             column.Spacing(1);
-            column.Item().Height(22, Unit.Millimetre).AlignCenter().AlignMiddle()
+            column.Item().Height(18, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Image(logo).FitArea();
-            column.Item().Height(5, Unit.Millimetre).AlignCenter().AlignMiddle()
+            column.Item().Height(6, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Text(entry.VolumeMl.HasValue ? $"{entry.VolumeMl.Value}ml" : string.Empty)
                 .FontFamily(Fonts.Arial).FontSize(13).SemiBold();
         });
