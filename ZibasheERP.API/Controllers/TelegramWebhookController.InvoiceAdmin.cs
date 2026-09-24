@@ -312,6 +312,12 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("invoiceadmin:block-user", StringComparison.Ordinal))
+        {
+            await HandleBlockedUsernameCallbackAsync(callback, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("invoiceadmin:menu:", StringComparison.Ordinal))
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -1631,6 +1637,10 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("🏷 حذف آیدی از لیبل", "adminrequest:start:labelnoid"),
                     new TelegramInlineButton("✏️ نام دلخواه لیبل", "adminrequest:start:labeltext")
+                });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("🚫 بلاک/رفع بلاک یوزرنیم", "invoiceadmin:block-user")
                 });
                 break;
             case "settings":
@@ -3733,7 +3743,8 @@ public sealed partial class TelegramWebhookController
                     $"🗑 حذف یک آیتم\nثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"لیست: {removalDraft.PublicCode} — {removalDraft.SalesListName}\n" +
                     $"مشتری: {DisplayUser(removable)}\nمقدار: {removable.VolumeMl} میل\n" +
-                    $"درخواست: {removableRequestId:N}", ct);
+                    $"درخواست: {removableRequestId:N}\n" +
+                    SalesListAuditPostLine(removable.SalesList), ct);
                 _adminRequestDrafts.Remove(chatId, userId);
                 await _sender.AnswerCallbackAsync(callback.Id, "آیتم حذف شد ✅", ct);
                 await ReplyAsync(chatId, "آیتم حذف و پست کانال به‌روزرسانی شد ✅", ct);
@@ -3832,7 +3843,8 @@ public sealed partial class TelegramWebhookController
                     $"🏷 حذف آیدی از لیبل آیتم\nثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"لیست: {labelDraft.PublicCode} — {labelDraft.SalesListName}\n" +
                     $"مشتری: {DisplayUser(changed)}\nمقدار: {changed.VolumeMl} میل\n" +
-                    $"درخواست: {labelRequestId:N}", ct);
+                    $"درخواست: {labelRequestId:N}\n" +
+                    SalesListAuditPostLine(changed.SalesList), ct);
                 _adminRequestDrafts.Remove(chatId, userId);
                 await _sender.AnswerCallbackAsync(callback.Id, "لیبل بدون آیدی ثبت شد ✅", ct);
                 await ReplyAsync(chatId,
@@ -3978,7 +3990,8 @@ public sealed partial class TelegramWebhookController
                     $"{(parts[2] == "promote" ? "👑 ارتقا به صاحب باتل" : "🗑 حذف از صاحب/صف باتل")}\n" +
                     $"ثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"درخواست: {requestId:N}\n" +
-                    $"زمان: {TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran"):yyyy/MM/dd HH:mm:ss}", ct);
+                    $"زمان: {TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran"):yyyy/MM/dd HH:mm:ss}\n" +
+                    (changed is null ? "پست کانال: موجود نیست" : SalesListAuditPostLine(changed.SalesList)), ct);
                 await _sender.AnswerCallbackAsync(callback.Id, "انجام شد ✅", ct);
                 if (changed is not null)
                     await SendBottleQueueManagementAsync(chatId, changed.SalesList, ct);
@@ -4036,6 +4049,7 @@ public sealed partial class TelegramWebhookController
         _invoiceInventoryDrafts.Remove(chatId, userId);
         _decantPhotoDrafts.Remove(chatId, userId);
         PaymentReminderDrafts.TryRemove((chatId, userId), out _);
+        BlockedUsernameDrafts.TryRemove((chatId, userId), out _);
         CompletedListResendDrafts.TryRemove((chatId, userId), out _);
         ImportEditDrafts.TryRemove((chatId, userId), out _);
     }
@@ -4157,7 +4171,8 @@ public sealed partial class TelegramWebhookController
                         ? _options.AdminChatId : _options.SalesAuditChatId;
                     await _sender.SendAsync(auditChatId,
                         $"✏️ ویرایش مقدار صاحب/صف باتل\nثبت‌کننده: {DisplayTelegramUser(message.From)}\n" +
-                        $"درخواست: {draft.SelectedRequestId:N}\nمقدار جدید: {newVolume} میل", ct);
+                        $"درخواست: {draft.SelectedRequestId:N}\nمقدار جدید: {newVolume} میل\n" +
+                        SalesListAuditPostLine(changed.SalesList), ct);
                     await ReplyAsync(message.Chat.Id, "مقدار با موفقیت ویرایش شد ✅", ct);
                     await SendBottleQueueManagementAsync(message.Chat.Id, changed.SalesList, ct);
                 }
@@ -4180,6 +4195,13 @@ public sealed partial class TelegramWebhookController
                     await RefreshChannelSalesListAsync(changed.SalesListId, ct);
                     draft.Stage = TelegramAdminRequestStage.AwaitingIdentity;
                     _adminRequestDrafts.Set(draft);
+                    var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+                        ? _options.AdminChatId : _options.SalesAuditChatId;
+                    await _sender.SendAsync(auditChatId,
+                        $"✏️ ویرایش شناسه صاحب باتل\nثبت‌کننده: {DisplayTelegramUser(message.From)}\n" +
+                        $"شناسه: {draft.OriginalIdentity} ← {input.Trim()}\n" +
+                        $"درخواست: {draft.SelectedRequestId:N}\n" +
+                        SalesListAuditPostLine(changed.SalesList), ct);
                     await ReplyAsync(message.Chat.Id, "شناسه صاحب باتل ویرایش شد ✅", ct);
                     await SendBottleQueueManagementAsync(message.Chat.Id, changed.SalesList, ct);
                 }
@@ -4290,7 +4312,8 @@ public sealed partial class TelegramWebhookController
                 await _sender.SendAsync(auditChatId,
                     $"↕️ ویرایش یکجای ترتیب صف باتل\nثبت‌کننده: {DisplayTelegramUser(message.From)}\n" +
                     $"لیست: {draft.PublicCode} — {draft.SalesListName}\n" +
-                    $"تعداد قبلی: {current.Length} | تعداد جدید: {ordered.Count} | حذف: {remaining.Count} | اضافه: {ordered.Count(value => value.CreatedAt == now)}", ct);
+                    $"تعداد قبلی: {current.Length} | تعداد جدید: {ordered.Count} | حذف: {remaining.Count} | اضافه: {ordered.Count(value => value.CreatedAt == now)}\n" +
+                    SalesListAuditPostLine(list), ct);
                 _adminRequestDrafts.Remove(message.Chat.Id, message.From.Id);
                 await ReplyAsync(message.Chat.Id, "ترتیب صف باتل ذخیره و پست کانال به‌روزرسانی شد ✅", ct);
             }
@@ -4324,7 +4347,8 @@ public sealed partial class TelegramWebhookController
                     $"✏️ ثبت نام دلخواه روی لیبل\nثبت‌کننده: {DisplayTelegramUser(message.From)}\n" +
                     $"لیست: {draft.PublicCode} — {draft.SalesListName}\n" +
                     $"مشتری/هدیه‌گیرنده: {DisplayUser(changed)}\nمتن لیبل: {input.Trim()}\n" +
-                    $"درخواست: {draft.SelectedRequestId:N}", ct);
+                    $"درخواست: {draft.SelectedRequestId:N}\n" +
+                    SalesListAuditPostLine(changed.SalesList), ct);
                 _adminRequestDrafts.Remove(message.Chat.Id, message.From.Id);
                 await ReplyAsync(message.Chat.Id,
                     $"نام «{input.Trim()}» برای لیبل ثبت و لیست به‌روزرسانی شد ✅", ct);
@@ -4908,12 +4932,15 @@ public sealed partial class TelegramWebhookController
                 await RefreshChannelSalesListAsync(salesListId, ct);
             var removalAuditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
                 ? _options.AdminChatId : _options.SalesAuditChatId;
-            await _sender.SendAsync(removalAuditChatId,
+            var removalAuditMessage =
                 "🗑 حذف تمام آیتم‌های مشتری\n" +
                 $"زمان: {TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran"):yyyy/MM/dd HH:mm:ss}\n" +
                 $"ثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                 $"مشتری: {draft.Identity}\n" +
-                $"تعداد لیست‌های به‌روزشده: {affectedListIds.Count}", ct);
+                $"تعداد لیست‌های به‌روزشده: {affectedListIds.Count}\n" +
+                await SalesListAuditPostLinesAsync(affectedListIds, ct);
+            foreach (var part in SplitTelegramMessage(removalAuditMessage))
+                await _sender.SendAsync(removalAuditChatId, part, ct);
             _adminRequestDrafts.Remove(chatId, callback.From.Id);
             await _sender.AnswerCallbackAsync(callback.Id, "همه آیتم‌های فعال حذف شدند ✅", ct);
             await ReplyAsync(chatId, "همه آیتم‌های فعال مشتری حذف و لیست‌های درگیر به‌روزرسانی شدند ✅", ct);
@@ -4956,13 +4983,16 @@ public sealed partial class TelegramWebhookController
                     await RefreshChannelSalesListAsync(salesListId, ct);
                 var selectedRemovalAuditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
                     ? _options.AdminChatId : _options.SalesAuditChatId;
-                await _sender.SendAsync(selectedRemovalAuditChatId,
+                var selectedRemovalAuditMessage =
                     "🗑 حذف چند آیتم مشتری\n" +
                     $"زمان: {TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran"):yyyy/MM/dd HH:mm:ss}\n" +
                     $"ثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"مشتری: {draft.Identity}\n" +
                     $"تعداد آیتم‌های حذف‌شده: {removedCount}\n" +
-                    $"تعداد لیست‌های به‌روزشده: {affectedListIds.Count}", ct);
+                    $"تعداد لیست‌های به‌روزشده: {affectedListIds.Count}\n" +
+                    await SalesListAuditPostLinesAsync(affectedListIds, ct);
+                foreach (var part in SplitTelegramMessage(selectedRemovalAuditMessage))
+                    await _sender.SendAsync(selectedRemovalAuditChatId, part, ct);
                 draft.AvailableRequestIds.ExceptWith(draft.SelectedRequestIds);
                 draft.SelectedRequestIds.Clear();
                 draft.LowRemainingRemovalConfirmed = false;
@@ -5098,7 +5128,8 @@ public sealed partial class TelegramWebhookController
                 $"عطر: {list.EnglishName}\n" +
                 $"مقدار: {draft.VolumeMl} میل\n" +
                 $"شیشه: {bottleLabel}\n" +
-                $"مبلغ کل: {total:N0} تومان", ct);
+                $"مبلغ کل: {total:N0} تومان\n" +
+                SalesListAuditPostLine(list), ct);
         }
         else
         {
@@ -5109,7 +5140,8 @@ public sealed partial class TelegramWebhookController
                 $"مشتری: {draft.Identity}\n" +
                 $"کد لیست: {list.PublicCode}\n" +
                 $"عطر: {list.EnglishName}\n" +
-                $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل", ct);
+                $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل\n" +
+                SalesListAuditPostLine(list), ct);
         }
         _adminRequestDrafts.Remove(chatId, callback.From.Id);
         await ReplyAsync(chatId, "درخواست با موفقیت ثبت و لیست فروش به‌روزرسانی شد ✅", ct);
@@ -5121,6 +5153,40 @@ public sealed partial class TelegramWebhookController
         return list.TotalVolume == 50
             ? list.RemainingVolume < 10
             : list.RemainingVolume < list.TotalVolume * 0.10m;
+    }
+
+    private async Task<string> SalesListAuditPostLinesAsync(
+        IEnumerable<Guid> salesListIds,
+        CancellationToken ct)
+    {
+        var ids = salesListIds.Distinct().ToArray();
+        var lists = await _db.SalesLists.AsNoTracking()
+            .Where(value => ids.Contains(value.Id))
+            .OrderBy(value => value.PublicCode)
+            .ToArrayAsync(ct);
+        return string.Join("\n", lists.Select(SalesListAuditPostLine));
+    }
+
+    private static string SalesListAuditPostLine(SalesList list)
+    {
+        var prefix = list.PublicCode > 0
+            ? $"پست کانال لیست {list.PublicCode}: "
+            : "پست کانال: ";
+        if (!list.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(list.TelegramChannelId))
+            return prefix + "موجود نیست";
+
+        var channel = list.TelegramChannelId.Trim();
+        string? url = null;
+        if (channel.StartsWith("-100", StringComparison.Ordinal) && channel.Length > 4)
+            url = $"https://t.me/c/{channel[4..]}/{list.TelegramMessageId.Value}";
+        else
+        {
+            var username = channel.TrimStart('@');
+            if (username.Length > 0 && username.All(character =>
+                    char.IsLetterOrDigit(character) || character == '_'))
+                url = $"https://t.me/{username}/{list.TelegramMessageId.Value}";
+        }
+        return prefix + (url ?? "موجود نیست");
     }
 
     private static string BuildLowRemainingRemovalWarning(IEnumerable<SalesList> lists)
@@ -5200,7 +5266,8 @@ public sealed partial class TelegramWebhookController
             $"مشتری: {DisplayUser(request)}\n" +
             $"مقدار: {draft.OriginalVolumeMl} ← {draft.VolumeMl} میل\n" +
             $"شیشه: {bottleLabel}\n" +
-            $"درخواست: {request.Id:N}", ct);
+            $"درخواست: {request.Id:N}\n" +
+            SalesListAuditPostLine(request.SalesList), ct);
         _adminRequestDrafts.Remove(draft.ChatId, draft.UserId);
         await _sender.AnswerCallbackAsync(callback.Id, "آیتم به‌روزرسانی شد ✅", ct);
         await ReplyAsync(draft.ChatId, "مقدار و نوع شیشه آیتم به‌روزرسانی و پست کانال اصلاح شد ✅", ct);

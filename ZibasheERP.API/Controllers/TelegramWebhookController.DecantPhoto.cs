@@ -569,7 +569,7 @@ public sealed partial class TelegramWebhookController
                  (value.TelegramId != null && telegramIds.Contains(value.TelegramId))))
             .ToArrayAsync(ct);
 
-        return identities.Select(identity =>
+        var resolvedTargets = identities.Select(identity =>
         {
             var customer = customers.FirstOrDefault(value =>
                 identity.Username is not null && value.Username != null &&
@@ -585,6 +585,19 @@ public sealed partial class TelegramWebhookController
                 display,
                 display);
         }).ToArray();
+
+        // The same person can appear once as an owner and once as a gift recipient,
+        // sometimes using different raw identities. Deduplicate only after customer
+        // and destination resolution so one list creates one photo per real recipient.
+        return resolvedTargets
+            .GroupBy(target => target.CustomerId.HasValue
+                    ? $"customer:{target.CustomerId.Value:N}"
+                    : !string.IsNullOrWhiteSpace(target.ActiveGroupChatId)
+                        ? $"chat:{target.ActiveGroupChatId}"
+                        : $"identity:{target.DisplayIdentity.TrimStart('@').ToLowerInvariant()}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
     }
 
     private static IReadOnlyList<DecantIdentity> ExtractLegacyDecantRecipients(string? rosterText)

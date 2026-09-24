@@ -155,11 +155,14 @@ public sealed class IssueInvoiceCommandHandler
                                         !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
                          .Select(item => new
                          {
+                             item.SalesListId,
                              FileId = item.SalesList!.TelegramPhotoFileId!,
                              PersianName = item.Perfume?.Name ?? item.ManualDescription,
                              EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
                          })
-                         .GroupBy(value => value.FileId)
+                         .GroupBy(value => value.SalesListId.HasValue
+                             ? $"list:{value.SalesListId.Value:N}"
+                             : $"file:{value.FileId}")
                          .Select(group => group.First()))
             {
                 await _outboxRepository.AddAsync(new NotificationOutbox

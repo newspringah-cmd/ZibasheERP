@@ -248,17 +248,29 @@ public sealed class TelegramGroupMembershipTracker(
 
         var now = DateTime.UtcNow;
         var sequence = 0;
-        var queuedPhotoFileIds = new HashSet<string>(StringComparer.Ordinal);
+        var existingPhotoPayloads = await context.NotificationOutbox.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.Channel == "Telegram" &&
+                value.EventType == "InvoicePerfumePhoto" && value.Recipient == chat.Id.ToString())
+            .Select(value => value.Payload)
+            .ToArrayAsync(cancellationToken);
+        var queuedPhotoKeys = existingPhotoPayloads
+            .Select(InvoicePhotoDedupKey)
+            .Where(value => value is not null)
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var item in giftItems)
         {
+            var photoKey = item.SalesListId.HasValue
+                ? $"list:{item.SalesListId.Value:N}"
+                : $"file:{item.SalesList?.TelegramPhotoFileId}";
             if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId) &&
-                queuedPhotoFileIds.Add(item.SalesList.TelegramPhotoFileId))
+                queuedPhotoKeys.Add(photoKey))
                 context.NotificationOutbox.Add(new NotificationOutbox
                 {
                     Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++), CustomerId = customer.Id,
                     OrderId = order.Id, Channel = "Telegram", EventType = "InvoicePerfumePhoto",
                     Recipient = chat.Id.ToString(), Payload = JsonSerializer.Serialize(new
                     {
+                        item.SalesListId,
                         FileId = item.SalesList.TelegramPhotoFileId,
                         PersianName = item.Perfume?.Name ?? item.ManualDescription,
                         EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
@@ -459,13 +471,16 @@ public sealed class TelegramGroupMembershipTracker(
             foreach (var photo in order.Items
                          .Where(item => item.SourceSalesListRequest?.IsGift != true &&
                                         !string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId))
-                         .Select(item => new
-                         {
-                             FileId = item.SalesList!.TelegramPhotoFileId!,
+                        .Select(item => new
+                        {
+                            item.SalesListId,
+                            FileId = item.SalesList!.TelegramPhotoFileId!,
                              PersianName = item.Perfume?.Name ?? item.ManualDescription,
                              EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
                          })
-                         .GroupBy(value => value.FileId)
+                         .GroupBy(value => value.SalesListId.HasValue
+                             ? $"list:{value.SalesListId.Value:N}"
+                             : $"file:{value.FileId}")
                          .Select(group => group.First()))
             {
                 context.NotificationOutbox.Add(new NotificationOutbox
@@ -548,5 +563,26 @@ public sealed class TelegramGroupMembershipTracker(
     {
         var normalized = username?.Trim().TrimStart('@');
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string? InvoicePhotoDedupKey(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            if (root.TryGetProperty("SalesListId", out var salesListIdValue) &&
+                salesListIdValue.ValueKind == JsonValueKind.String &&
+                Guid.TryParse(salesListIdValue.GetString(), out var salesListId))
+                return $"list:{salesListId:N}";
+            if (root.TryGetProperty("FileId", out var fileIdValue) &&
+                !string.IsNullOrWhiteSpace(fileIdValue.GetString()))
+                return $"file:{fileIdValue.GetString()}";
+        }
+        catch (JsonException)
+        {
+            // Older malformed outbox payloads must not block group linking.
+        }
+        return null;
     }
 }

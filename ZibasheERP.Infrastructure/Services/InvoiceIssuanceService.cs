@@ -237,13 +237,31 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
         await _db.SaveChangesAsync(cancellationToken);
         var invoiceNumbers = new List<string>();
-        var queuedGiftRecipientPhotos = new HashSet<string>(StringComparer.Ordinal);
+        // Product photos are unique per destination and sales list across both the
+        // customer's own items and gifts received from other invoices in this batch.
+        var queuedRecipientListPhotos = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var order in orders)
+        {
+            var ownerChatId = order.Customer?.TelegramGroup is { IsDeleted: false, IsActive: true } group &&
+                              !string.IsNullOrWhiteSpace(group.ChatId)
+                ? group.ChatId.Trim()
+                : null;
+            if (ownerChatId is not null)
+            {
+                foreach (var salesListId in order.Items
+                             .Where(item => item.SourceSalesListRequest?.IsGift != true && item.SalesListId.HasValue)
+                             .Select(item => item.SalesListId!.Value)
+                             .Distinct())
+                    queuedRecipientListPhotos.Add($"{ownerChatId}:{salesListId:N}");
+            }
+        }
+
         foreach (var order in orders)
         {
             var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id), cancellationToken);
             invoiceNumbers.Add(invoice.InvoiceNumber);
             await QueueGiftRecipientNotificationsAsync(
-                order, invoice.InvoiceNumber, queuedGiftRecipientPhotos, cancellationToken);
+                order, invoice.InvoiceNumber, queuedRecipientListPhotos, cancellationToken);
         }
         foreach (var list in lists)
         {
@@ -381,7 +399,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     private async Task QueueGiftRecipientNotificationsAsync(
         Order order,
         string invoiceNumber,
-        HashSet<string> queuedRecipientPhotos,
+        HashSet<string> queuedRecipientListPhotos,
         CancellationToken cancellationToken)
     {
         var giftItems = order.Items
@@ -425,8 +443,11 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             }
 
             var chatId = group!.ChatId.Trim();
+            var photoKey = item.SalesListId.HasValue
+                ? $"{chatId}:{item.SalesListId.Value:N}"
+                : $"{chatId}:file:{item.SalesList?.TelegramPhotoFileId}";
             if (!string.IsNullOrWhiteSpace(item.SalesList?.TelegramPhotoFileId) &&
-                queuedRecipientPhotos.Add($"{chatId}:{item.SalesList.TelegramPhotoFileId}"))
+                queuedRecipientListPhotos.Add(photoKey))
             {
                 await _db.NotificationOutbox.AddAsync(new NotificationOutbox
                 {
@@ -435,6 +456,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     Channel = "Telegram", EventType = "InvoicePerfumePhoto", Recipient = chatId,
                     Payload = System.Text.Json.JsonSerializer.Serialize(new
                     {
+                        item.SalesListId,
                         FileId = item.SalesList.TelegramPhotoFileId,
                         PersianName = item.Perfume?.Name ?? item.ManualDescription,
                         EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription

@@ -25,6 +25,7 @@ public class AppDbContext : DbContext
     public DbSet<OrderArtifact> OrderArtifacts => Set<OrderArtifact>();
     public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
     public DbSet<TelegramProcessedUpdate> TelegramProcessedUpdates => Set<TelegramProcessedUpdate>();
+    public DbSet<TelegramBlockedUsername> TelegramBlockedUsernames => Set<TelegramBlockedUsername>();
     public DbSet<CustomerTelegramGroup> CustomerTelegramGroups => Set<CustomerTelegramGroup>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
@@ -54,6 +55,7 @@ public class AppDbContext : DbContext
         ConfigureOrderArtifact(modelBuilder);
         ConfigureTelegramOrderDraft(modelBuilder);
         ConfigureTelegramProcessedUpdate(modelBuilder);
+        ConfigureTelegramBlockedUsername(modelBuilder);
         ConfigureCustomerTelegramGroup(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
@@ -64,6 +66,13 @@ public class AppDbContext : DbContext
         ConfigureIntegrationDeliveryFailure(modelBuilder);
         ConfigureInvoicePaymentAccount(modelBuilder);
         ConfigureInvoiceTelegramSetting(modelBuilder);
+    }
+
+    private static void ConfigureTelegramBlockedUsername(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TelegramBlockedUsername>()
+            .HasIndex(value => value.NormalizedUsername)
+            .IsUnique();
     }
 
     private static void ConfigureInvoiceTelegramSetting(ModelBuilder modelBuilder)

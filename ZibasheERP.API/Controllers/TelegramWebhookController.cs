@@ -968,6 +968,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandlePaymentReminderMessageAsync(message, cancellationToken))
             return true;
 
+        if (await TryHandleBlockedUsernameMessageAsync(message, cancellationToken))
+            return true;
+
         if (await TryHandleAdminCommandAsync(message, cancellationToken))
             return true;
 

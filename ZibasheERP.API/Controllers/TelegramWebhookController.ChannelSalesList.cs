@@ -110,6 +110,8 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
+        await EnsureUsernameCanRegisterAsync(callback.From.Username, cancellationToken);
+
         var initialList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
             ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
         var membershipChatId = initialList.TelegramChannelId ?? _options.SalesChannelId;
@@ -220,6 +222,7 @@ public sealed partial class TelegramWebhookController
     private async Task ConfirmBottleOwnerGiftAsync(
         TelegramCallbackQuery callback, Guid requestId, CancellationToken cancellationToken)
     {
+        await EnsureUsernameCanRegisterAsync(callback.From.Username, cancellationToken);
         var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.TelegramUserId != callback.From.Id.ToString())
@@ -254,7 +257,8 @@ public sealed partial class TelegramWebhookController
             $"هدیه‌گیرنده: {identity}\n" +
             $"کد لیست: {request.SalesList.PublicCode}\n" +
             $"عطر: {request.SalesList.EnglishName}\n" +
-            $"مقدار: {request.VolumeMl} میل\nشیشه: رایگان", cancellationToken);
+            $"مقدار: {request.VolumeMl} میل\nشیشه: رایگان\n" +
+            SalesListAuditPostLine(request.SalesList), cancellationToken);
         await _sender.AnswerCallbackAsync(
             callback.Id, $"هدیه برای {identity} ثبت شد ✅", cancellationToken, showAlert: true);
     }
@@ -348,6 +352,7 @@ public sealed partial class TelegramWebhookController
     private async Task ConfirmChannelReservationAsync(
         TelegramCallbackQuery callback, Guid requestId, CancellationToken cancellationToken)
     {
+        await EnsureUsernameCanRegisterAsync(callback.From.Username, cancellationToken);
         var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
@@ -384,7 +389,8 @@ public sealed partial class TelegramWebhookController
             $"عطر: {confirmed.SalesList.EnglishName}\n" +
             $"مقدار: {confirmed.VolumeMl} میل\n" +
             $"شیشه: {bottleText}\n" +
-            $"مبلغ کل: {total:N0} تومان", cancellationToken);
+            $"مبلغ کل: {total:N0} تومان\n" +
+            SalesListAuditPostLine(confirmed.SalesList), cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست با موفقیت ثبت شد ✅", cancellationToken);
     }
 
