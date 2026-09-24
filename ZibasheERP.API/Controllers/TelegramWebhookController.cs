@@ -78,6 +78,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly IPerfumeLabelPdfService _perfumeLabelPdfService;
     private readonly ITrackingImportService _trackingImportService;
     private readonly TrackingImportDraftStore _trackingImportDrafts;
+    private readonly IHostApplicationLifetime _applicationLifetime;
 
     public TelegramWebhookController(
         IMediator mediator,
@@ -112,6 +113,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         IPerfumeLabelPdfService perfumeLabelPdfService,
         ITrackingImportService trackingImportService,
         TrackingImportDraftStore trackingImportDrafts,
+        IHostApplicationLifetime applicationLifetime,
         AppDbContext db,
         ILogger<TelegramWebhookController> logger)
     {
@@ -147,6 +149,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _perfumeLabelPdfService = perfumeLabelPdfService;
         _trackingImportService = trackingImportService;
         _trackingImportDrafts = trackingImportDrafts;
+        _applicationLifetime = applicationLifetime;
         _db = db;
         _logger = logger;
     }

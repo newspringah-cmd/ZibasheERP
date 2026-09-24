@@ -218,7 +218,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                         pages[row.TrackingPage - 1], row.TrackingBox, 12, tempRoot, ct);
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, Clean(row.RecipientName), Clean(row.Destination), null,
-                        BuildPostCard(recipientCrop, trackingCrop),
+                        await BuildPostCardAsync(recipientCrop, trackingCrop, tempRoot, ct),
                         row.Confidence >= .90 && verifiedRows[rowIndex].Confidence >= .90,
                         row.Confidence >= .90 && verifiedRows[rowIndex].Confidence >= .90
                             ? null
@@ -277,6 +277,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 value.ShippingRequestId!.Value,
                 value.Order.DeliveryAddress != null ? value.Order.DeliveryAddress.ReceiverName : string.Empty,
                 value.Order.DeliveryAddress != null ? value.Order.DeliveryAddress.City : string.Empty,
+                value.Order.DeliveryAddress != null ? value.Order.DeliveryAddress.FullAddress : string.Empty,
+                value.Order.Customer != null ? value.Order.Customer.FullName : string.Empty,
                 value.ShippingRequestedAt ?? value.CreatedAt,
                 true))
             .Distinct()
@@ -290,6 +292,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             .Where(value => !value.IsDeleted && (value.UpdatedAt ?? value.CreatedAt) >= recentCutoff)
             .OrderByDescending(value => value.UpdatedAt ?? value.CreatedAt)
             .Select(value => new Candidate(value.CustomerId, null, value.ReceiverName, value.City,
+                value.FullAddress, value.Customer != null ? value.Customer.FullName : string.Empty,
                 value.UpdatedAt ?? value.CreatedAt, false))
             .ToArrayAsync(ct);
         var recentResult = SelectUnique(target, destination, recent, requireExact: false);
@@ -299,6 +302,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             .Where(value => !value.IsDeleted && (value.UpdatedAt ?? value.CreatedAt) < recentCutoff)
             .OrderByDescending(value => value.UpdatedAt ?? value.CreatedAt)
             .Select(value => new Candidate(value.CustomerId, null, value.ReceiverName, value.City,
+                value.FullAddress, value.Customer != null ? value.Customer.FullName : string.Empty,
                 value.UpdatedAt ?? value.CreatedAt, false))
             .ToArrayAsync(ct);
         var oldResult = SelectUnique(target, destination, old, requireExact: true);
@@ -315,9 +319,10 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             var best = group.Select(value => new
                 {
                     Candidate = value,
-                    Score = NameScore(target, NormalizeName(value.ReceiverName)) +
+                    Score = CandidateNameScore(target, value) +
                         (!string.IsNullOrWhiteSpace(normalizedDestination) &&
-                         NormalizeName(value.City).Contains(normalizedDestination, StringComparison.Ordinal) ? .03 : 0)
+                         (NormalizeName(value.City).Contains(normalizedDestination, StringComparison.Ordinal) ||
+                          NormalizeName(value.FullAddress).Contains(normalizedDestination, StringComparison.Ordinal)) ? .03 : 0)
                 })
                 .OrderByDescending(value => value.Score)
                 .ThenByDescending(value => value.Candidate.Date)
@@ -345,7 +350,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             {
                 type = "input_text",
                 text = """
-                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات سلول نام گیرنده و سلول کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به صفحه مربوط به همان سلول بده تا خود تصویر اصلی بریده شود. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان سلول PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
+                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات نوشته نام گیرنده و نوشته کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به صفحه مربوط به همان نوشته بده. کادر را تا حد ممکن دور خود حروف و ارقام بگیر و خطوط جدول، حاشیه سلول و نوشته ستون‌های مجاور را داخل آن نیاور. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان نوشته اصلی PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
                     """
             }
         };
@@ -452,58 +457,76 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return await File.ReadAllBytesAsync(output, ct);
     }
 
-    private static byte[] BuildPostCard(byte[] recipientCrop, byte[] trackingCrop) =>
-        BuildCard(Colors.Red.Darken2, "کد رهگیری مرسوله", recipientCrop, trackingCrop, null, false);
-
-    private static byte[] BuildChaparCard(string name, string code, string? url)
+    private async Task<byte[]> BuildPostCardAsync(
+        byte[] recipientCrop, byte[] trackingCrop, string tempRoot, CancellationToken ct)
     {
-        var document = Document.Create(container => container.Page(page =>
-        {
-            page.Size(120, 120, Unit.Millimetre);
-            page.Margin(7, Unit.Millimetre);
-            page.PageColor(Colors.Yellow.Lighten3);
-            page.DefaultTextStyle(style => style.FontFamily(FontFamily).Bold().FontSize(18));
-            page.ContentFromRightToLeft();
-            page.Content().Background(Colors.White).Padding(8, Unit.Millimetre).Column(column =>
-            {
-                column.Spacing(8);
-                column.Item().AlignCenter().Text("کد رهگیری مرسوله").FontSize(28);
-                column.Item().AlignCenter().Text("ارسال با چاپار").FontColor(Colors.DeepPurple.Medium);
-                column.Item().AlignCenter().Text(name).FontSize(25);
-                column.Item().Border(1).BorderColor(Colors.Yellow.Darken2).Padding(12).AlignCenter()
-                    .Text(code).FontFamily("Arial").FontSize(22);
-                column.Item().AlignCenter().Text("✅ ارسال شد").FontColor(Colors.Green.Darken2).FontSize(24);
-                if (!string.IsNullOrWhiteSpace(url))
-                    column.Item().AlignCenter().Text(url).FontFamily("Arial").FontSize(12).FontColor(Colors.Blue.Medium);
-            });
-        }));
-        return document.GenerateImages(new ImageGenerationSettings { ImageFormat = ImageFormat.Png, RasterDpi = 150 }).Single();
+        var template = Path.Combine(
+            _environment.ContentRootPath, "Assets", "Tracking", "iran-post-template.jpg");
+        if (!File.Exists(template))
+            throw new FileNotFoundException("Iran Post tracking template is missing.", template);
+
+        var recipientPath = Path.Combine(tempRoot, $"recipient-{Guid.NewGuid():N}.png");
+        var trackingPath = Path.Combine(tempRoot, $"tracking-{Guid.NewGuid():N}.png");
+        var recipientLayer = Path.Combine(tempRoot, $"recipient-layer-{Guid.NewGuid():N}.png");
+        var trackingLayer = Path.Combine(tempRoot, $"tracking-layer-{Guid.NewGuid():N}.png");
+        var output = Path.Combine(tempRoot, $"post-card-{Guid.NewGuid():N}.png");
+        await File.WriteAllBytesAsync(recipientPath, recipientCrop, ct);
+        await File.WriteAllBytesAsync(trackingPath, trackingCrop, ct);
+
+        var nameLayerResult = await RunProcessAsync("convert",
+            $"\"{recipientPath}\" -fuzz 14% -transparent white -trim +repage " +
+            "-resize \"600x110>\" -gravity center -background none -extent 620x130 " +
+            $"\"{recipientLayer}\"", tempRoot, ct);
+        if (nameLayerResult.ExitCode != 0)
+            throw new InvalidOperationException($"Recipient layer generation failed: {nameLayerResult.Error}");
+
+        var codeLayerResult = await RunProcessAsync("convert",
+            $"\"{trackingPath}\" -fuzz 14% -transparent white -trim +repage " +
+            "-resize \"620x100>\" -gravity center -background none -extent 650x120 " +
+            $"\"{trackingLayer}\"", tempRoot, ct);
+        if (codeLayerResult.ExitCode != 0)
+            throw new InvalidOperationException($"Tracking-code layer generation failed: {codeLayerResult.Error}");
+
+        var cardResult = await RunProcessAsync("convert",
+            $"\"{template}\" \"{recipientLayer}\" -geometry +488+417 -composite " +
+            $"\"{trackingLayer}\" -geometry +458+709 -composite \"{output}\"",
+            tempRoot, ct);
+        if (cardResult.ExitCode != 0 || !File.Exists(output))
+            throw new InvalidOperationException($"Iran Post card composition failed: {cardResult.Error}");
+        return await File.ReadAllBytesAsync(output, ct);
     }
 
-    private static byte[] BuildCard(string color, string title, byte[] name, byte[] code, string? footer, bool unused)
+    private byte[] BuildChaparCard(string name, string code, string? url)
     {
+        var template = Path.Combine(
+            _environment.ContentRootPath, "Assets", "Tracking", "chapar-template.jpg");
+        if (!File.Exists(template))
+            throw new FileNotFoundException("Chapar tracking template is missing.", template);
+        var templateBytes = File.ReadAllBytes(template);
         var document = Document.Create(container => container.Page(page =>
         {
             page.Size(120, 120, Unit.Millimetre);
-            page.Margin(7, Unit.Millimetre);
-            page.PageColor(color);
-            page.DefaultTextStyle(style => style.FontFamily(FontFamily).Bold().FontSize(18));
+            page.Margin(0);
+            page.Background().Image(templateBytes).FitArea();
+            page.DefaultTextStyle(style => style.FontFamily(FontFamily).Bold());
             page.ContentFromRightToLeft();
-            page.Content().Background(Colors.White).Padding(8, Unit.Millimetre).Column(column =>
+            page.Content().Column(column =>
             {
-                column.Spacing(8);
-                column.Item().AlignCenter().Text(title).FontSize(28).FontColor(color);
-                column.Item().Text("گیرنده").FontColor(color);
-                column.Item().Height(18, Unit.Millimetre).Border(1).BorderColor(Colors.Grey.Lighten1)
-                    .Padding(3).AlignCenter().AlignMiddle().Image(name).FitArea();
-                column.Item().Text("شماره مرسوله").FontColor(color);
-                column.Item().Height(20, Unit.Millimetre).Border(1.5f).BorderColor(color)
-                    .Padding(3).AlignCenter().AlignMiddle().Image(code).FitArea();
-                column.Item().AlignCenter().Text("✅ ارسال شد").FontColor(color).FontSize(25);
-                column.Item().AlignCenter().Text("از خرید شما سپاسگزاریم").FontColor(Colors.Grey.Darken1);
+                column.Item().Height(53, Unit.Millimetre);
+                column.Item().Height(10, Unit.Millimetre).PaddingHorizontal(20, Unit.Millimetre)
+                    .AlignCenter().AlignMiddle().Text(name).FontSize(name.Length > 28 ? 16 : 20)
+                    .FontColor(Colors.Grey.Darken4);
+                column.Item().Height(3, Unit.Millimetre);
+                column.Item().Height(12, Unit.Millimetre).PaddingHorizontal(23, Unit.Millimetre)
+                    .ContentFromLeftToRight().AlignCenter().AlignMiddle().Text(code)
+                    .FontSize(code.Length > 20 ? 17 : 20).FontColor(Colors.Grey.Darken4);
             });
         }));
-        return document.GenerateImages(new ImageGenerationSettings { ImageFormat = ImageFormat.Png, RasterDpi = 150 }).Single();
+        return document.GenerateImages(new ImageGenerationSettings
+        {
+            ImageFormat = ImageFormat.Png,
+            RasterDpi = 271
+        }).Single();
     }
 
     private static async Task<(int ExitCode, string Output, string Error)> RunProcessAsync(
@@ -559,6 +582,18 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return 1d - distance / (double)Math.Max(left.Length, right.Length);
     }
 
+    private static double CandidateNameScore(string target, Candidate candidate)
+    {
+        var receiverScore = NameScore(target, NormalizeName(candidate.ReceiverName));
+        var customerScore = NameScore(target, NormalizeName(candidate.CustomerFullName));
+        var normalizedRawAddress = NormalizeName(candidate.FullAddress);
+        var rawAddressScore = target.Length >= 5 &&
+                              normalizedRawAddress.Contains(target, StringComparison.Ordinal)
+            ? 1d
+            : 0d;
+        return Math.Max(receiverScore, Math.Max(customerScore, rawAddressScore));
+    }
+
     private static bool PostReadsAgree(
         IReadOnlyCollection<PostRecognizedRow> first,
         IReadOnlyCollection<PostRecognizedRow> second)
@@ -611,7 +646,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     private static partial Regex ChaparUrlPattern();
 
     private sealed record Candidate(Guid CustomerId, Guid? ShippingRequestId, string ReceiverName,
-        string City, DateTime Date, bool IsActive);
+        string City, string FullAddress, string CustomerFullName, DateTime Date, bool IsActive);
     private sealed record PostRowsResponse(PostRecognizedRow[] Rows);
     private sealed record PostRecognizedRow(int Page, int RecipientPage, int TrackingPage, int RowOrder, string RecipientName,
         string TrackingCode, string Destination, int[] RecipientBox, int[] TrackingBox, double Confidence);

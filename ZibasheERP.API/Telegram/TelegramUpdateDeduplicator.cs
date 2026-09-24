@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Data.SqlClient;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -32,20 +31,17 @@ public sealed class TelegramUpdateDeduplicator : ITelegramUpdateDeduplicator
 
         await using var scope = _scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        dbContext.TelegramProcessedUpdates.Add(new TelegramProcessedUpdate
-        {
-            UpdateId = updateId,
-            ReceivedAt = DateTime.UtcNow
-        });
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException exception) when (
-            exception.InnerException is SqlException { Number: 2601 or 2627 })
-        {
-            return false;
-        }
+        var receivedAt = DateTime.UtcNow;
+        var acquired = await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO [TelegramProcessedUpdates] ([UpdateId], [ReceivedAt])
+            SELECT {updateId}, {receivedAt}
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM [TelegramProcessedUpdates] WITH (UPDLOCK, HOLDLOCK)
+                WHERE [UpdateId] = {updateId}
+            );
+            """, cancellationToken);
+        if (acquired == 0) return false;
 
         if (Interlocked.Increment(ref _acquisitionCount) % CleanupInterval == 0)
         {

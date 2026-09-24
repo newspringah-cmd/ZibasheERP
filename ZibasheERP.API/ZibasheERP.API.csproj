@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <Content Include="Assets\Fonts\B-NAZANIN.TTF" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Tracking\iran-post-template.jpg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Tracking\chapar-template.jpg" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

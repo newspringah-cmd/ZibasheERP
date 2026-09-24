@@ -155,6 +155,14 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        // Telegram/proxies may close a webhook request while two independent vision reads are
+        // still running. Continue safely after that disconnect, but stop on application shutdown
+        // or after a bounded processing window.
+        using var processingCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _applicationLifetime.ApplicationStopping);
+        processingCts.CancelAfter(TimeSpan.FromMinutes(8));
+        ct = processingCts.Token;
+
         byte[] source;
         TrackingImportParseResult parsed;
         if (draft.Carrier == TrackingCarrier.IranPost)
@@ -222,8 +230,11 @@ public sealed partial class TelegramWebhookController
             .FirstOrDefaultAsync(value => value.SourceHash == sourceHash && !value.IsDeleted, ct);
         if (existingBatch is not null)
         {
+            var reevaluated = await ReevaluateTrackingBatchMatchesAsync(existingBatch.Id, ct);
             await ReplyAsync(message.Chat.Id,
-                "⚠️ این فایل/متن قبلاً وارد شده است؛ برای جلوگیری از ارسال تکراری دوباره پردازش نشد.", ct);
+                reevaluated > 0
+                    ? $"ℹ️ این ورودی قبلاً ثبت شده بود؛ بدون ثبت یا ارسال تکراری، تطبیق {reevaluated} مورد دوباره بررسی شد."
+                    : "⚠️ این فایل/متن قبلاً وارد شده است؛ برای جلوگیری از ارسال تکراری دوباره پردازش نشد.", ct);
             await SendTrackingBatchPreviewAsync(message.Chat.Id, existingBatch.Id, false, ct);
             return true;
         }
@@ -370,6 +381,33 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(chatId,
                 $"⚠️ مرحله نمایش خلاصه و دکمه تأیید ناموفق بود: {FriendlyTelegramError(summary.Error)}\nهیچ ارسال نهایی انجام نشده است.", ct);
         }
+    }
+
+    private async Task<int> ReevaluateTrackingBatchMatchesAsync(Guid batchId, CancellationToken ct)
+    {
+        var dispatches = await _db.TrackingDispatches
+            .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
+                value.Status == TrackingDispatchStatus.NeedsReview && value.SentAt == null)
+            .ToArrayAsync(ct);
+        var updated = 0;
+        foreach (var dispatch in dispatches)
+        {
+            // Low-confidence PDF rows stay blocked even if a customer name happens to match.
+            if (dispatch.MatchNotes?.Contains("اطمینان خواندن ردیف پایین", StringComparison.Ordinal) == true)
+                continue;
+            var match = await _trackingImportService.MatchAsync(
+                dispatch.RecipientName, dispatch.Destination, ct);
+            if (match.Status != TrackingDispatchStatus.Ready || !match.CustomerId.HasValue)
+                continue;
+            dispatch.CustomerId = match.CustomerId;
+            dispatch.ShippingRequestId = match.ShippingRequestId;
+            dispatch.Status = TrackingDispatchStatus.Ready;
+            dispatch.MatchNotes = $"{match.Notes} — تطبیق مجدد";
+            dispatch.UpdatedAt = DateTime.UtcNow;
+            updated++;
+        }
+        if (updated > 0) await _db.SaveChangesAsync(ct);
+        return updated;
     }
 
     private async Task ConfirmTrackingBatchAsync(long adminChatId, Guid batchId, CancellationToken ct)
