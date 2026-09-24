@@ -755,6 +755,8 @@ public sealed partial class TelegramWebhookController
         _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, draft.UserId);
         await _sender.AnswerCallbackAsync(callback.Id,
             "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.", ct, true);
+        await ReplyAsync(callback.Message.Chat.Id,
+            "آدرس جهت آماده سازی و ارسال با موفقیت ثبت شد", ct);
         await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
     }
 
