@@ -42,7 +42,11 @@ public sealed partial class TelegramWebhookController
                 TryDecodeCompactGuid(parts[1], out requestId))
             {
                 if (parts[2] == "gift")
-                    await ConfirmBottleOwnerGiftAsync(callback, requestId, cancellationToken);
+                    await _sender.AnswerCallbackAsync(
+                        callback.Id,
+                        "ثبت هدیه برای صاحب باتل از کانال فعلاً غیرفعال است.",
+                        cancellationToken,
+                        showAlert: true);
                 else
                     await ShowChannelBottleSelectionAsync(callback, requestId, cancellationToken);
                 return true;
@@ -175,16 +179,8 @@ public sealed partial class TelegramWebhookController
         {
             new[] { new TelegramInlineButton("👤 برای خودم", $"slp:{EncodeCompactGuid(request.Id)}:self") }
         };
-        if (salesList.HasBottleOwner)
-            rows[0] = new[]
-            {
-                new TelegramInlineButton("👤 برای خودم", $"slp:{EncodeCompactGuid(request.Id)}:self"),
-                new TelegramInlineButton("🎁 هدیه برای صاحب باتل", $"slp:{EncodeCompactGuid(request.Id)}:gift")
-            };
         rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
-        var prompt = salesList.HasBottleOwner
-            ? $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}این {volume} میل را برای خودتان ثبت می‌کنید یا هدیه برای صاحب باتل است؟"
-            : $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}این {volume} میل را برای خودتان ثبت می‌کنید؟";
+        var prompt = $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}این {volume} میل را برای خودتان ثبت می‌کنید؟";
         var originalRequests = await _salesListRequestRepository.GetConfirmedAsync(salesList.Id, cancellationToken);
         var channelResult = await _sender.EditPhotoCaptionAsync(
             salesList.TelegramChannelId, salesList.TelegramMessageId.Value, prompt, rows, cancellationToken);
