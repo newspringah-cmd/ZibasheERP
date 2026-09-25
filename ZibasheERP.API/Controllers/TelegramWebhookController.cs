@@ -11,6 +11,7 @@ using ZibasheERP.API.Telegram;
 using ZibasheERP.API.AddressLabels;
 using ZibasheERP.API.PerfumeLabels;
 using ZibasheERP.API.Tracking;
+using ZibasheERP.API.CustomerAssistant;
 using ZibasheERP.Application.Features.Addresses.GetCustomerAddresses;
 using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
@@ -76,6 +77,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly IAddressLabelService _addressLabelService;
     private readonly IPerfumeLabelPdfService _perfumeLabelPdfService;
     private readonly ITrackingImportService _trackingImportService;
+    private readonly IPerfumeRecommendationService _perfumeRecommendationService;
     private readonly TrackingImportDraftStore _trackingImportDrafts;
     private readonly IHostApplicationLifetime _applicationLifetime;
 
@@ -111,6 +113,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         IAddressLabelService addressLabelService,
         IPerfumeLabelPdfService perfumeLabelPdfService,
         ITrackingImportService trackingImportService,
+        IPerfumeRecommendationService perfumeRecommendationService,
         TrackingImportDraftStore trackingImportDrafts,
         IHostApplicationLifetime applicationLifetime,
         AppDbContext db,
@@ -147,6 +150,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _addressLabelService = addressLabelService;
         _perfumeLabelPdfService = perfumeLabelPdfService;
         _trackingImportService = trackingImportService;
+        _perfumeRecommendationService = perfumeRecommendationService;
         _trackingImportDrafts = trackingImportDrafts;
         _applicationLifetime = applicationLifetime;
         _db = db;
@@ -909,6 +913,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         }
 
         if (await TryHandleCustomerStatusQuestionAsync(message, cancellationToken))
+            return;
+
+        if (await TryHandlePerfumeGuidanceQuestionAsync(message, cancellationToken))
             return;
 
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))

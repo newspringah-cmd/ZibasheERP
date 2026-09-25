@@ -14,6 +14,7 @@ using ZibasheERP.API.N8n;
 using ZibasheERP.API.AddressLabels;
 using ZibasheERP.API.PerfumeLabels;
 using ZibasheERP.API.Tracking;
+using ZibasheERP.API.CustomerAssistant;
 using ZibasheERP.Application.Behaviors;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
 using ZibasheERP.Application.Interfaces;
@@ -142,6 +143,7 @@ builder.Services.AddOptions<AddressLabelOptions>()
         "Enabled address-label generation requires an OpenAI API key and model.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IAddressLabelService, AddressLabelService>();
+builder.Services.AddSingleton<IPerfumeRecommendationService, PerfumeRecommendationService>();
 builder.Services.AddSingleton<IPerfumeLabelPdfService, PerfumeLabelPdfService>();
 builder.Services.AddScoped<ITrackingImportService, TrackingImportService>();
 builder.Services.AddSingleton<TrackingImportDraftStore>();

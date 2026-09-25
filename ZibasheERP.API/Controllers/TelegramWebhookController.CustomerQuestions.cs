@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.API.CustomerAssistant;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.API.Controllers;
@@ -31,6 +32,19 @@ public sealed partial class TelegramWebhookController
     [
         "پرداخت", "فاکتور", "تسویه", "بدهی", "واریز", "کارت به کارت", "رسید پرداخت",
         "مبلغ فاکتور", "شماره کارت"
+    ];
+
+    private static readonly string[] PerfumeGuidanceSubjects =
+    [
+        "عطر", "ادکلن", "رایحه", "نت", "آکورد", "بو", "پخش بو", "ماندگاری",
+        "چوبی", "گلی", "مرکباتی", "وانیلی", "پودری", "چرمی", "دودی", "میوه ای",
+        "شیرین", "تلخ", "گرم", "خنک", "تند", "ملایم", "زنانه", "مردانه", "یونیسکس"
+    ];
+
+    private static readonly string[] PerfumeGuidanceCues =
+    [
+        "پیشنهاد", "معرفی", "مناسب", "دنبال", "میخوام", "می خواهم", "دوست دارم",
+        "چی", "کدوم", "کدام", "چه عطری", "راهنمایی", "بهتره", "انتخاب"
     ];
 
     private async Task<bool> TryHandleCustomerStatusQuestionAsync(
@@ -234,6 +248,83 @@ public sealed partial class TelegramWebhookController
             _logger.LogWarning("Telegram customer status answer failed: {Error}", result.Error);
     }
 
+    private async Task<bool> TryHandlePerfumeGuidanceQuestionAsync(
+        TelegramMessage message,
+        CancellationToken cancellationToken)
+    {
+        var contextText = string.Join(' ', new[]
+        {
+            message.Text,
+            message.ReplyToMessage?.Text,
+            message.ReplyToMessage?.Caption
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (!IsPerfumeGuidanceQuestion(contextText))
+            return false;
+
+        var isConnectedGroup = await _db.CustomerTelegramGroups
+            .AsNoTracking()
+            .AnyAsync(value =>
+                !value.IsDeleted &&
+                value.IsActive &&
+                value.ChatId == message.Chat.Id.ToString(),
+                cancellationToken);
+        if (!isConnectedGroup)
+            return false;
+
+        var catalogRows = await _db.SalesLists
+            .AsNoTracking()
+            .Where(value =>
+                !value.IsDeleted &&
+                value.Status == SalesListStatus.Open &&
+                value.Perfume.IsActive)
+            .OrderByDescending(value => value.OpenDate)
+            .Take(60)
+            .Select(value => new
+            {
+                value.PublicCode,
+                value.PersianName,
+                value.EnglishName,
+                value.DisplayBrand,
+                value.Gender,
+                value.TopNotes,
+                value.MiddleNotes,
+                value.BaseNotes,
+                value.Accords,
+                value.TotalVolume,
+                value.ReservedVolume
+            })
+            .ToListAsync(cancellationToken);
+        var catalog = catalogRows
+            .Select(value => new PerfumeRecommendationCatalogItem(
+                value.PublicCode,
+                value.PersianName,
+                value.EnglishName,
+                value.DisplayBrand,
+                value.Gender == PerfumeGender.Women
+                    ? "زنانه"
+                    : value.Gender == PerfumeGender.Men
+                        ? "مردانه"
+                        : "یونیسکس",
+                value.TopNotes,
+                value.MiddleNotes,
+                value.BaseNotes,
+                value.Accords,
+                Math.Max(0, value.TotalVolume - value.ReservedVolume)))
+            .ToArray();
+
+        var result = await _perfumeRecommendationService.RecommendAsync(
+            contextText,
+            catalog,
+            cancellationToken);
+        await ReplyToCustomerQuestionAsync(
+            message,
+            result.IsSuccessful
+                ? result.Answer!
+                : result.Error ?? "راهنمای انتخاب عطر فعلاً در دسترس نیست.",
+            cancellationToken);
+        return true;
+    }
+
     private static bool IsCustomerStatusQuestion(string? text)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length is < 4 or > 500)
@@ -263,6 +354,22 @@ public sealed partial class TelegramWebhookController
                                  normalized.Contains(value, StringComparison.Ordinal));
         return hasQuestionCue &&
                FinancialSubjects.Any(value => normalized.Contains(value, StringComparison.Ordinal));
+    }
+
+    private static bool IsPerfumeGuidanceQuestion(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length is < 4 or > 700 || text.TrimStart().StartsWith('/'))
+            return false;
+
+        var normalized = NormalizeCustomerQuestion(text);
+        var subjectMatches = PerfumeGuidanceSubjects.Count(value =>
+            normalized.Contains(value, StringComparison.Ordinal));
+        var hasCue = text.Contains('؟') ||
+                     text.Contains('?') ||
+                     PerfumeGuidanceCues.Any(value =>
+                         normalized.Contains(value, StringComparison.Ordinal));
+
+        return (hasCue && subjectMatches >= 1) || subjectMatches >= 2;
     }
 
     private static string FormatCustomerItemStatuses(
