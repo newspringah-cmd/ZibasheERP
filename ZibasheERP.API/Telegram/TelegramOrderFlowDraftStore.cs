@@ -116,7 +116,14 @@ public sealed class TelegramShippingTrackingPhotoDraft
     public bool HasBatchControls { get; init; }
 }
 
-public enum TelegramShippingPreparationStage { AwaitingIdentity, AwaitingAddressChoice, AwaitingNewAddress, Ready }
+public enum TelegramShippingPreparationStage
+{
+    AwaitingIdentity,
+    AwaitingAddressChoice,
+    AwaitingNewAddress,
+    AwaitingDescription,
+    Ready
+}
 
 public sealed class TelegramShippingPreparationDraft
 {
@@ -124,6 +131,7 @@ public sealed class TelegramShippingPreparationDraft
     public required long UserId { get; init; }
     public Guid CustomerId { get; set; }
     public Guid? AddressId { get; set; }
+    public string? ShippingNotes { get; set; }
     public TelegramShippingPreparationStage Stage { get; set; }
     public bool RegistrationOnly { get; set; }
     public bool AllowUnlinkedChat { get; set; }

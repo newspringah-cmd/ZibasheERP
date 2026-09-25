@@ -626,6 +626,15 @@ public sealed partial class TelegramWebhookController
         }
 
         var addressOwnerCustomerId = dispatch.CustomerId!.Value;
+        var addressRegistrationChatId = await _db.Addresses.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.CustomerId == addressOwnerCustomerId &&
+                value.RegistrationTelegramChatId != null)
+            .OrderByDescending(value => value.UpdatedAt ?? value.CreatedAt)
+            .Select(value => value.RegistrationTelegramChatId)
+            .FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(addressRegistrationChatId))
+            return [addressRegistrationChatId];
+
         // The address owner is authoritative. Prefer its newest linked group and do not
         // broadcast a tracking card to every historical group connection.
         var directChatId = await _db.CustomerTelegramGroups.AsNoTracking()
