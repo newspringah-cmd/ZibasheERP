@@ -81,7 +81,8 @@ public sealed class PerfumeRecommendationService : IPerfumeRecommendationService
                 {
                     model = _options.OpenAiModel,
                     store = false,
-                    max_output_tokens = 700,
+                    reasoning = new { effort = "low" },
+                    max_output_tokens = 2400,
                     input = new object[]
                     {
                         new
@@ -145,7 +146,29 @@ public sealed class PerfumeRecommendationService : IPerfumeRecommendationService
                     type.GetString() == "output_text");
             if (outputText.ValueKind == JsonValueKind.Undefined ||
                 !outputText.TryGetProperty("text", out var textValue))
-                throw new InvalidOperationException("OpenAI returned no perfume recommendation text.");
+            {
+                var root = document.RootElement;
+                var status = root.TryGetProperty("status", out var statusValue)
+                    ? statusValue.GetString() ?? "unknown"
+                    : "unknown";
+                var incompleteReason = root.TryGetProperty("incomplete_details", out var incomplete) &&
+                                       incomplete.ValueKind == JsonValueKind.Object &&
+                                       incomplete.TryGetProperty("reason", out var reason)
+                    ? reason.GetString() ?? "none"
+                    : "none";
+                var contentTypes = root.GetProperty("output").EnumerateArray()
+                    .Where(value => value.TryGetProperty("content", out _))
+                    .SelectMany(value => value.GetProperty("content").EnumerateArray())
+                    .Select(value => value.TryGetProperty("type", out var type)
+                        ? type.GetString() ?? "unknown"
+                        : "unknown")
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                throw new InvalidOperationException(
+                    $"OpenAI returned no perfume recommendation text. " +
+                    $"Status={status}; IncompleteReason={incompleteReason}; " +
+                    $"ContentTypes={string.Join(',', contentTypes)}.");
+            }
 
             var parsed = JsonSerializer.Deserialize<RecommendationPayload>(
                 textValue.GetString() ?? string.Empty,
