@@ -12,8 +12,7 @@ public sealed partial class TelegramWebhookController
 {
     private static readonly string[] CustomerStatusSubjects =
     [
-        "عطر", "ادکلن", "دکانت", "سفارش", "لیست", "ایتم", "آیتم",
-        "خریدم", "مرسوله"
+        "عطر", "ادکلن", "دکانت", "لیست"
     ];
 
     private static readonly string[] CustomerStatusQuestions =
@@ -31,7 +30,9 @@ public sealed partial class TelegramWebhookController
     private static readonly string[] FinancialSubjects =
     [
         "پرداخت", "فاکتور", "تسویه", "بدهی", "واریز", "کارت به کارت", "رسید پرداخت",
-        "مبلغ فاکتور", "شماره کارت"
+        "مبلغ فاکتور", "شماره کارت", "قیمت", "هزینه", "تخفیف", "پول", "تومان", "ریال",
+        "شماره حساب", "شماره شبا", "کارت بانکی", "بیعانه", "قسط", "اقساط", "مانده حساب",
+        "موجودی حساب", "بازپرداخت", "برگشت وجه"
     ];
 
     private static readonly string[] PerfumeGuidanceSubjects =
@@ -73,10 +74,8 @@ public sealed partial class TelegramWebhookController
 
         if (isFinancialQuestion)
         {
-            await ReplyToCustomerQuestionAsync(
-                message,
-                "برای بررسی پرداخت، فاکتور، تسویه و سایر مسائل مالی لطفاً با حسابداری زیباشی در ارتباط باشید.",
-                cancellationToken);
+            // Financial questions are intentionally left unanswered so the accountant
+            // can review and answer them in the customer group.
             return true;
         }
 
@@ -258,6 +257,8 @@ public sealed partial class TelegramWebhookController
             message.ReplyToMessage?.Text,
             message.ReplyToMessage?.Caption
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (IsFinancialQuestion(contextText))
+            return false;
         if (!IsPerfumeGuidanceQuestion(contextText))
             return false;
 
@@ -444,12 +445,8 @@ public sealed partial class TelegramWebhookController
         if (string.IsNullOrWhiteSpace(text) || text.Length is < 3 or > 500 || text.TrimStart().StartsWith('/'))
             return false;
         var normalized = NormalizeCustomerQuestion(text);
-        var hasQuestionCue = text.Contains('؟') ||
-                             text.Contains('?') ||
-                             CustomerStatusQuestions.Any(value =>
-                                 normalized.Contains(value, StringComparison.Ordinal));
-        return hasQuestionCue &&
-               FinancialSubjects.Any(value => normalized.Contains(value, StringComparison.Ordinal));
+        return FinancialSubjects.Any(value =>
+            normalized.Contains(value, StringComparison.Ordinal));
     }
 
     private static bool IsPerfumeGuidanceQuestion(string? text)
