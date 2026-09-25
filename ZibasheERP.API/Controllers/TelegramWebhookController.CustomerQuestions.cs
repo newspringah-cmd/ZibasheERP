@@ -93,7 +93,9 @@ public sealed partial class TelegramWebhookController
                 item.Id,
                 item.SalesListId,
                 item.PerfumeId,
-                item.SalesList != null ? item.SalesList.PublicCode : null,
+                item.SalesList != null
+                    ? item.SalesList.StablePublicCode ?? item.SalesList.PublicCode
+                    : null,
                 item.SalesList != null ? item.SalesList.PersianName : null,
                 item.SalesList != null ? item.SalesList.EnglishName : null,
                 item.Perfume != null ? item.Perfume.Name : null,
@@ -128,7 +130,7 @@ public sealed partial class TelegramWebhookController
                 request.Id,
                 request.SalesListId,
                 request.SalesList.PerfumeId,
-                request.SalesList.PublicCode,
+                PublicCode = request.SalesList.StablePublicCode ?? request.SalesList.PublicCode,
                 request.SalesList.PersianName,
                 request.SalesList.EnglishName,
                 PerfumeName = request.SalesList.Perfume.Name,
@@ -281,7 +283,7 @@ public sealed partial class TelegramWebhookController
             .OrderByDescending(value => value.OpenDate)
             .Take(60)
             .Select(value => new PerfumeGuidanceCatalogRow(
-                value.PublicCode,
+                value.StablePublicCode ?? value.PublicCode,
                 value.PersianName,
                 value.EnglishName,
                 value.DisplayBrand,

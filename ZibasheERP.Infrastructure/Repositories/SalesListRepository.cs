@@ -87,7 +87,8 @@ public class SalesListRepository : ISalesListRepository
             .Include(salesList => salesList.Perfume)
             .Include(salesList => salesList.BottleOwnerCustomer)
             .Where(salesList => !salesList.IsDeleted &&
-                ((publicCode.HasValue && salesList.PublicCode == publicCode.Value) ||
+                ((publicCode.HasValue && (salesList.PublicCode == publicCode.Value ||
+                                          salesList.StablePublicCode == publicCode.Value)) ||
                  salesList.EnglishName.Contains(query) ||
                  salesList.PersianName.Contains(query)))
             .OrderByDescending(salesList => salesList.OpenDate)

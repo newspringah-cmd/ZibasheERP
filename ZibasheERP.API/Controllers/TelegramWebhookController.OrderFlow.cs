@@ -301,8 +301,8 @@ public sealed partial class TelegramWebhookController
     {
         var name = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
         return html
-            ? $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.PublicCode}</code>"
-            : $"📷 {name}\nکد لیست: {list.PublicCode}";
+            ? $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.DisplayCode}</code>"
+            : $"📷 {name}\nکد لیست: {list.DisplayCode}";
     }
 
     private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildArrivalCardButtons(
@@ -396,7 +396,7 @@ public sealed partial class TelegramWebhookController
             return;
         }
         var lines = lists.Select((list, index) =>
-            $"{index + 1}. {(string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)} — کد {list.PublicCode}");
+            $"{index + 1}. {(string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)} — کد {list.DisplayCode}");
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
             lists.Length == 0 ? $"{title}\n\nموردی وجود ندارد." :
                 $"{title}\nتعداد نمایش‌داده‌شده: {lists.Length}\n\n{string.Join("\n", lines)}",
@@ -421,14 +421,14 @@ public sealed partial class TelegramWebhookController
                 result = await _sender.SendPhotoHtmlAsync(
                     chatId.ToString(),
                     list.TelegramPhotoFileId!,
-                    $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.PublicCode}</code>\n{Html(statusTitle)}",
+                    $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.DisplayCode}</code>\n{Html(statusTitle)}",
                     ct);
             }
             else
             {
                 result = await _sender.SendHtmlAsync(
                     chatId.ToString(),
-                    $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.PublicCode}</code>\n{Html(statusTitle)}",
+                    $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.DisplayCode}</code>\n{Html(statusTitle)}",
                     ct);
             }
 
@@ -498,7 +498,7 @@ public sealed partial class TelegramWebhookController
             var first = group.First();
             var list = first.SalesList;
             var name = list?.PersianName ?? first.Perfume?.Name ?? first.ManualDescription ?? "عطر";
-            var code = list is null ? string.Empty : $"\nکد لیست: <code>{list.PublicCode}</code>";
+            var code = list is null ? string.Empty : $"\nکد لیست: <code>{list.DisplayCode}</code>";
             TelegramSendResult heading;
             if (!string.IsNullOrWhiteSpace(list?.TelegramPhotoFileId))
             {
@@ -565,7 +565,7 @@ public sealed partial class TelegramWebhookController
         foreach (var list in lists)
         {
             var result = await SendDecantQueueListAsync(list, ct);
-            if (!result.IsSuccessful) failures.Add($"{list.PublicCode}: {result.Error}");
+            if (!result.IsSuccessful) failures.Add($"{list.DisplayCode}: {result.Error}");
         }
         _orderFlowDrafts.ClearArrivalSelection(chatId, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, $"{affected} آیتم وارد صف دکانت شد ✅", ct, true);

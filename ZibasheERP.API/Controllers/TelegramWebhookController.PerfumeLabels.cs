@@ -135,8 +135,8 @@ public sealed partial class TelegramWebhookController
         {
             var pdf = _perfumeLabelPdfService.Create(download.Content, entries);
             var result = await _sender.SendDocumentWithKeyboardAsync(
-                chatId.ToString(), pdf, $"perfume-labels-{list.PublicCode}.pdf",
-                $"🏷 PDF چاپ لوگو — لیست {list.PublicCode}\n{PerfumeLabelName(list)}\n" +
+                chatId.ToString(), pdf, $"perfume-labels-{list.DisplayCode}.pdf",
+                $"🏷 PDF چاپ لوگو — لیست {list.DisplayCode}\n{PerfumeLabelName(list)}\n" +
                 $"تعداد لیبل: {entries.Count} | صفحه: {(entries.Count + 5) / 6}",
                 Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(), ct);
             if (!result.IsSuccessful)

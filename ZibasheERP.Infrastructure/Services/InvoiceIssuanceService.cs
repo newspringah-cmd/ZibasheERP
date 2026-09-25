@@ -28,7 +28,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .OrderBy(list => list.ClosedDate ?? list.OpenDate)
             .Take(Math.Clamp(limit, 1, 50))
             .Select(list => new CompletedSalesListForInvoice(
-                list.Id, list.PublicCode,
+                list.Id, list.StablePublicCode ?? list.PublicCode,
                 list.PersianName != "" ? list.PersianName : list.EnglishName,
                 list.Requests.Count(request => !request.IsDeleted &&
                     request.Kind == SalesListRequestKind.CurrentBottle &&
@@ -46,7 +46,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .OrderBy(list => list.UpdatedAt ?? list.ClosedDate ?? list.OpenDate)
             .Take(Math.Clamp(limit, 1, 50))
             .Select(list => new CompletedSalesListForInvoice(
-                list.Id, list.PublicCode,
+                list.Id, list.StablePublicCode ?? list.PublicCode,
                 list.PersianName != "" ? list.PersianName : list.EnglishName,
                 list.Requests.Count(request => !request.IsDeleted &&
                     request.Kind == SalesListRequestKind.CurrentBottle &&
@@ -190,7 +190,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 OrderNumber = await GenerateOrderNumberAsync(now, cancellationToken),
                 Status = OrderStatus.ListCompleted, RegisteredAt = now,
                 Source = OrderSource.SalesListInvoice, InvoiceIssuanceBatchId = batch.Id,
-                Notes = $"فاکتور تجمیعی لیست‌ها: {string.Join("، ", customerRequests.Select(value => value.List.PublicCode).Distinct().Order())}"
+                Notes = $"فاکتور تجمیعی لیست‌ها: {string.Join("، ", customerRequests.Select(value => value.List.DisplayCode).Distinct().Order())}"
             };
             var row = 0;
             foreach (var (list, request) in customerRequests.OrderBy(value => value.List.OpenDate).ThenBy(value => value.Request.ConfirmedAt))
@@ -198,7 +198,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 row++;
                 if (list.PricePerMl <= 0)
                     throw new InvalidOperationException(
-                        $"قیمت نهایی هر میل برای لیست {list.PublicCode} معتبر نیست.");
+                        $"قیمت نهایی هر میل برای لیست {list.DisplayCode} معتبر نیست.");
 
                 // The list price is the authoritative final price. Requests can have been registered
                 // before an admin price update and therefore carry an outdated price snapshot.
@@ -206,7 +206,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 request.PerfumePricePerMl = finalPricePerMl;
                 request.UpdatedAt = now;
                 var perfumeAmount = finalPricePerMl * request.VolumeMl;
-                var bottleAmount = ResolveInvoiceBottleAmount(request, list.PublicCode);
+                var bottleAmount = ResolveInvoiceBottleAmount(request, list.DisplayCode);
                 order.Items.Add(new OrderItem
                 {
                     Id = Guid.NewGuid(), CreatedAt = now, OrderId = order.Id,
@@ -219,7 +219,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     BottleId = request.BottleId, BottlePrice = bottleAmount,
                     LineTotal = perfumeAmount + bottleAmount, RowNumber = row,
                     FulfillmentStatus = OrderItemFulfillmentStatus.WaitingForArrivalInIran,
-                    Notes = $"کد لیست {list.PublicCode}"
+                    Notes = $"کد لیست {list.DisplayCode}"
                 });
                 request.Status = SalesListRequestStatus.Invoiced;
             }
@@ -299,7 +299,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 request.VolumeMl,
                 PerfumePricePerMl = request.SalesList!.PricePerMl,
                 request.BottlePrice,
-                ListCode = request.SalesList!.PublicCode,
+                ListCode = request.SalesList!.StablePublicCode ?? request.SalesList.PublicCode,
                 PerfumeName = request.SalesList.Perfume != null
                     ? request.SalesList.Perfume.Name
                     : request.SalesList.EnglishName
@@ -762,7 +762,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .Where(value => orderIds.Contains(value.OrderId) && !value.IsDeleted)
             .ToDictionaryAsync(value => value.OrderId, cancellationToken);
         return batch.SalesLists
-            .OrderBy(link => link.SalesList.PublicCode)
+            .OrderBy(link => link.SalesList.StablePublicCode ?? link.SalesList.PublicCode)
             .Select(link =>
             {
                 var listOrders = orders
@@ -784,7 +784,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 });
                 var message = $"💳 واریز جدید\n" +
                               $"عطر: {link.SalesList.EnglishName}\n" +
-                              $"کد لیست: {link.SalesList.PublicCode}\n" +
+                              $"کد لیست: {link.SalesList.DisplayCode}\n" +
                               $"تعداد فاکتور: {listOrders.Length}\n\n{string.Join("\n", rows)}\n\n" +
                               $"✅ پرداخت‌شده   🔴 در انتظار پرداخت\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
                 var actions = listOrders.Where(order =>
@@ -918,7 +918,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var orderList = FormatOrderList(list);
         return new SalesListProductionCopy(
             list.Id,
-            list.PublicCode,
+            list.DisplayCode,
             list.EnglishName,
             list.TelegramPhotoFileId,
             !string.IsNullOrWhiteSpace(list.Perfume.TelegramLogoFileId),
@@ -956,7 +956,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         };
         var brand = "#" + string.Concat(list.DisplayBrand.Select(character =>
             char.IsLetterOrDigit(character) ? character : '_')).Trim('_');
-        return $"کد: {list.PublicCode}\n" +
+        return $"کد: {list.DisplayCode}\n" +
             $"{list.EnglishName}\n{brand}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{list.PersianName}\n\n" +
             $"🍊 نت‌های ابتدایی: {list.TopNotes}\n" +

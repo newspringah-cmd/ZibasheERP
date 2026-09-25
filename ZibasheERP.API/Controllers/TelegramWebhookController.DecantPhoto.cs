@@ -96,7 +96,7 @@ public sealed partial class TelegramWebhookController
                 ChatId = callback.Message.Chat.Id,
                 UserId = callback.From.Id,
                 SalesListId = list.Id,
-                PublicCode = list.PublicCode,
+                PublicCode = list.StablePublicCode ?? list.PublicCode,
                 SalesListName = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName,
                 Stage = TelegramDecantPhotoStage.AwaitingPhoto
             });
@@ -187,9 +187,12 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
-        var list = await _db.SalesLists.AsNoTracking().FirstOrDefaultAsync(
-            value => value.PublicCode == listCode.Value && !value.IsDeleted,
-            ct);
+        var list = await _db.SalesLists.AsNoTracking()
+            .Where(value => !value.IsDeleted &&
+                (value.PublicCode == listCode.Value || value.StablePublicCode == listCode.Value))
+            .OrderBy(value => value.Status == SalesListStatus.Open)
+            .ThenByDescending(value => value.ClosedDate ?? value.UpdatedAt ?? value.CreatedAt)
+            .FirstOrDefaultAsync(ct);
         IReadOnlyList<DecantTarget> targets;
         if (list is null)
         {
@@ -212,7 +215,7 @@ public sealed partial class TelegramWebhookController
         {
             targets = await ResolveDecantTargetsAsync(list.Id, ct);
             draft.SalesListId = list.Id;
-            draft.PublicCode = list.PublicCode;
+            draft.PublicCode = list.DisplayCode;
             draft.SalesListName = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
             draft.LegacyRosterText = null;
         }

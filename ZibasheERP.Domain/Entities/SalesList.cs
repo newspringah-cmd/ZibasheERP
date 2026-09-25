@@ -25,6 +25,14 @@ public class SalesList : BaseEntity
 {
     public int PublicCode { get; set; }
 
+    // A perfume can roll into several database list cycles. PublicCode remains the
+    // unique internal cycle code, while this value keeps the customer-facing code
+    // stable across automatically-created cycles of the same channel list.
+    public int? StablePublicCode { get; set; }
+
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public int DisplayCode => StablePublicCode ?? PublicCode;
+
     [MaxLength(200)]
     public string EnglishName { get; set; } = string.Empty;
 

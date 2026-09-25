@@ -169,8 +169,9 @@ public sealed partial class TelegramWebhookController
             var code = values[0].Trim();
             var lists = await _salesListRepository.GetForAdminAsync(200, ct);
             var matches = lists.Where(value =>
-                value.PublicCode.ToString() == code ||
-                value.Id.ToString("N").StartsWith(code, StringComparison.OrdinalIgnoreCase)).ToArray();
+                (value.Status is SalesListStatus.Open or SalesListStatus.Full) &&
+                (value.DisplayCode.ToString() == code ||
+                 value.Id.ToString("N").StartsWith(code, StringComparison.OrdinalIgnoreCase))).ToArray();
             if (matches.Length != 1)
             {
                 await ReplyAsync(message.Chat.Id,
@@ -219,8 +220,9 @@ public sealed partial class TelegramWebhookController
             }
             var lists = await _salesListRepository.GetForAdminAsync(200, ct);
             var matches = lists.Where(value =>
-                value.PublicCode.ToString() == values[0].Trim() ||
-                value.Id.ToString("N").StartsWith(values[0].Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+                (value.Status is SalesListStatus.Open or SalesListStatus.Full) &&
+                (value.DisplayCode.ToString() == values[0].Trim() ||
+                 value.Id.ToString("N").StartsWith(values[0].Trim(), StringComparison.OrdinalIgnoreCase))).ToArray();
             if (matches.Length != 1)
             {
                 await ReplyAsync(message.Chat.Id, matches.Length == 0
@@ -1857,7 +1859,10 @@ public sealed partial class TelegramWebhookController
 
         var list = await _db.SalesLists.AsNoTracking()
             .Include(value => value.Perfume)
-            .FirstOrDefaultAsync(value => !value.IsDeleted && value.PublicCode == publicCode, ct);
+            .Where(value => !value.IsDeleted && value.Status != SalesListStatus.Open &&
+                (value.PublicCode == publicCode || value.StablePublicCode == publicCode))
+            .OrderByDescending(value => value.ClosedDate ?? value.UpdatedAt ?? value.CreatedAt)
+            .FirstOrDefaultAsync(ct);
         if (list is null)
         {
             await ReplyAsync(message.Chat.Id, "لیستی با این کد پیدا نشد.", ct);
@@ -1958,7 +1963,10 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             var list = await _db.SalesLists.AsNoTracking().Include(value => value.Perfume)
-                .FirstOrDefaultAsync(value => !value.IsDeleted && value.PublicCode == publicCode, ct);
+                .Where(value => !value.IsDeleted && value.Status != SalesListStatus.Open &&
+                    (value.PublicCode == publicCode || value.StablePublicCode == publicCode))
+                .OrderByDescending(value => value.ClosedDate ?? value.UpdatedAt ?? value.CreatedAt)
+                .FirstOrDefaultAsync(ct);
             if (list is null)
             {
                 await ReplyAsync(message.Chat.Id, "لیست پیدا نشد.", ct);
@@ -1983,7 +1991,7 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             draft.SalesListId = list.Id;
-            draft.PublicCode = list.PublicCode;
+            draft.PublicCode = list.DisplayCode;
             draft.RequestIds.AddRange(requests.Select(value => value.Id));
             draft.UpdatedAt = DateTime.UtcNow;
             var lines = requests.Select(value =>
@@ -1994,7 +2002,7 @@ public sealed partial class TelegramWebhookController
             });
             var editable = string.Join("\n", lines);
             foreach (var part in SplitTelegramMessage(
-                         $"✏️ لیست {list.PublicCode} — {list.PersianName}\n\n{editable}"))
+                         $"✏️ لیست {list.DisplayCode} — {list.PersianName}\n\n{editable}"))
                 await ReplyAsync(message.Chat.Id, part, ct);
             await ReplyAsync(message.Chat.Id,
                 "متن بالا را کپی و خط‌ها را حذف، اضافه یا جابه‌جا کنید؛ سپس کل متن آیتم‌ها را بدون عنوان بفرستید.\n" +
@@ -3355,7 +3363,7 @@ public sealed partial class TelegramWebhookController
             .ThenBy(request => request.ConfirmedAt ?? request.CreatedAt)
             .Select(request => new TelegramInvoiceBottlePriceResolutionItem(
                 request.Id,
-                request.SalesList.PublicCode,
+                request.SalesList.StablePublicCode ?? request.SalesList.PublicCode,
                 string.IsNullOrWhiteSpace(request.TelegramUsername)
                     ? request.TelegramUserId
                     : "@" + request.TelegramUsername,
@@ -3634,7 +3642,7 @@ public sealed partial class TelegramWebhookController
                 return;
             }
             draft.SalesListId = list.Id;
-            draft.PublicCode = list.PublicCode;
+            draft.PublicCode = list.DisplayCode;
             draft.SalesListName = list.EnglishName;
             draft.Stage = TelegramAdminRequestStage.AwaitingIdentity;
             _adminRequestDrafts.Set(draft);
@@ -4153,7 +4161,7 @@ public sealed partial class TelegramWebhookController
             };
             var rows = lists.Select(x => (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
-                new TelegramInlineButton($"{x.PublicCode} — {x.EnglishName}",
+                new TelegramInlineButton($"{x.DisplayCode} — {x.EnglishName}",
                     $"adminrequest:list:{kindCode}:{x.Id:N}")
             }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
             {
@@ -4723,7 +4731,7 @@ public sealed partial class TelegramWebhookController
             });
         rows.Add(new[] { new TelegramInlineButton("❌ بستن", "adminrequest:cancel") });
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
-            $"مدیریت صاحب و صف باتل\nلیست {list.PublicCode} — {list.EnglishName}\n" +
+            $"مدیریت صاحب و صف باتل\nلیست {list.DisplayCode} — {list.EnglishName}\n" +
             (rows.Count == 1 ? "صاحب یا فردی در صف ثبت نشده است." : "عملیات موردنظر را انتخاب کنید:"),
             rows, ct);
     }
@@ -4815,7 +4823,7 @@ public sealed partial class TelegramWebhookController
         CancellationToken ct)
     {
         var detailLines = requests.Select(request =>
-            $"• {request.SalesList.PublicCode} — {HtmlClipped(request.SalesList.EnglishName, 50)} — " +
+            $"• {request.SalesList.DisplayCode} — {HtmlClipped(request.SalesList.EnglishName, 50)} — " +
             $"{DisplayUser(request)} — {request.VolumeMl} میل").ToArray();
         var chunk = new System.Text.StringBuilder("آیتم‌های فعال این مشتری:\n\n");
         foreach (var line in detailLines)
@@ -5174,7 +5182,7 @@ public sealed partial class TelegramWebhookController
                 $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
                 $"ثبت‌کننده: {adminIdentity}\n" +
                 $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\n" +
-                $"کد لیست: {list.PublicCode}\n" +
+                $"کد لیست: {list.DisplayCode}\n" +
                 $"عطر: {list.EnglishName}\n" +
                 $"مقدار: {draft.VolumeMl} میل\n" +
                 $"شیشه: {bottleLabel}\n" +
@@ -5188,7 +5196,7 @@ public sealed partial class TelegramWebhookController
                 $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
                 $"ثبت‌کننده: {adminIdentity}\n" +
                 $"مشتری: {draft.Identity}\n" +
-                $"کد لیست: {list.PublicCode}\n" +
+                $"کد لیست: {list.DisplayCode}\n" +
                 $"عطر: {list.EnglishName}\n" +
                 $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل\n" +
                 SalesListAuditPostLine(list), ct);
@@ -5219,8 +5227,8 @@ public sealed partial class TelegramWebhookController
 
     private static string SalesListAuditPostLine(SalesList list)
     {
-        var prefix = list.PublicCode > 0
-            ? $"پست کانال لیست {list.PublicCode}: "
+        var prefix = list.DisplayCode > 0
+            ? $"پست کانال لیست {list.DisplayCode}: "
             : "پست کانال: ";
         if (!list.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(list.TelegramChannelId))
             return prefix + "موجود نیست";
@@ -5244,7 +5252,7 @@ public sealed partial class TelegramWebhookController
         var details = lists
             .OrderBy(value => value.PublicCode)
             .Select(value =>
-                $"• {value.PublicCode} — {value.PersianName} — باقی‌مانده: {value.RemainingVolume} از {value.TotalVolume} میل");
+                $"• {value.DisplayCode} — {value.PersianName} — باقی‌مانده: {value.RemainingVolume} از {value.TotalVolume} میل");
         return "⚠️ این لیست زیر محدوده مجاز حذف است. آیا از حذف مطمئن هستید؟\n\n" +
                string.Join("\n", details);
     }

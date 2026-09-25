@@ -251,7 +251,7 @@ public sealed partial class TelegramWebhookController
             $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
             $"هدیه‌دهنده: {DisplayTelegramUser(callback.From)}\n" +
             $"هدیه‌گیرنده: {identity}\n" +
-            $"کد لیست: {request.SalesList.PublicCode}\n" +
+            $"کد لیست: {request.SalesList.DisplayCode}\n" +
             $"عطر: {request.SalesList.EnglishName}\n" +
             $"مقدار: {request.VolumeMl} میل\nشیشه: رایگان\n" +
             SalesListAuditPostLine(request.SalesList), cancellationToken);
@@ -384,7 +384,7 @@ public sealed partial class TelegramWebhookController
             $"کاربر: {DisplayTelegramUser(callback.From)}\n" +
             (confirmed.IsGift ? $"هدیه‌گیرنده: {GiftRecipientLabel(confirmed)}\n" : string.Empty) +
             $"Telegram ID: {callback.From.Id}\n" +
-            $"کد لیست: {confirmed.SalesList.PublicCode}\n" +
+            $"کد لیست: {confirmed.SalesList.DisplayCode}\n" +
             $"عطر: {confirmed.SalesList.EnglishName}\n" +
             $"مقدار: {confirmed.VolumeMl} میل\n" +
             $"شیشه: {bottleText}\n" +
@@ -540,7 +540,7 @@ public sealed partial class TelegramWebhookController
         if (!string.IsNullOrWhiteSpace(completedPages.Continuation))
             await _sender.SendHtmlAsync(
                 completedListsChatId,
-                $"✅ ادامه لیست تکمیل‌شده {completed.PublicCode}\n\n{completedPages.Continuation}",
+                $"✅ ادامه لیست تکمیل‌شده {completed.DisplayCode}\n\n{completedPages.Continuation}",
                 ct);
 
         completed.Status = SalesListStatus.Closed;
@@ -576,6 +576,7 @@ public sealed partial class TelegramWebhookController
         var nextList = new SalesList
         {
             Id = Guid.NewGuid(), CreatedAt = now, PublicCode = publicCode,
+            StablePublicCode = completed.DisplayCode,
             EnglishName = completed.EnglishName, ProductPageUrl = completed.ProductPageUrl,
             DisplayBrand = completed.DisplayBrand, Gender = completed.Gender, ReleaseYear = completed.ReleaseYear,
             PersianName = completed.PersianName, TopNotes = completed.TopNotes, MiddleNotes = completed.MiddleNotes,
@@ -651,7 +652,7 @@ public sealed partial class TelegramWebhookController
         await _salesListRepository.UpdateAsync(nextList, ct);
         await _salesListRepository.SaveChangesAsync(ct);
         await ReplyAsync(long.Parse(_options.AdminChatId),
-            $"پست عطر برای دورهٔ جدید بازنشانی شد ✅\nکد جدید: {nextList.PublicCode}" +
+            $"پست عطر برای دورهٔ جدید بازنشانی شد ✅\nکد ثابت لیست: {nextList.DisplayCode}" +
             (nextOwner is null ? "\nصاحب باتل: هنوز ثبت نشده است."
                 : $"\nصاحب باتل: {DisplayUser(nextOwner)} — {nextOwner.VolumeMl} میل"), ct);
     }
@@ -723,7 +724,7 @@ public sealed partial class TelegramWebhookController
             : $"<a href=\"{HtmlClipped(list.ProductPageUrl, 180)}\">{englishName}</a>";
         var brandTag = "#" + HtmlClipped(ToHashtag(list.DisplayBrand), 45);
         var notesSection = FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, false);
-        var header = $"\u200F<b>{list.PublicCode}</b>\n{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
+        var header = $"\u200F<b>{list.DisplayCode}</b>\n{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
             notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
@@ -738,7 +739,7 @@ public sealed partial class TelegramWebhookController
             ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
             : BuildStackedUserLines("Next Bottle", nextUsers);
         if (header.Length > 760)
-            header = $"\u200F<b>{list.PublicCode}</b>\n{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
+            header = $"\u200F<b>{list.DisplayCode}</b>\n{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
                 FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
                 $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
