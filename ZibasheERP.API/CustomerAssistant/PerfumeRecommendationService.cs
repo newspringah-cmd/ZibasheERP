@@ -21,6 +21,7 @@ public sealed record PerfumeRecommendationCatalogItem(
 public sealed record PerfumeRecommendationResult(
     bool IsSuccessful,
     string? Answer = null,
+    IReadOnlyCollection<int>? ListCodes = null,
     string? Error = null);
 
 public interface IPerfumeRecommendationService
@@ -92,6 +93,7 @@ public sealed class PerfumeRecommendationService : IPerfumeRecommendationService
                                 تو «زیبا»، دستیار انتخاب عطر فروشگاه زیباشی هستی. پاسخ را کوتاه، دوستانه و فارسی بنویس.
                                 فقط از فهرست لیست‌های باز ارائه‌شده پیشنهاد بده و هیچ عطر، نت، ویژگی، موجودی یا کد لیستی را حدس نزن.
                                 حداکثر سه پیشنهاد بده. برای هر پیشنهاد نام عطر، کد لیست و دلیل کوتاه مرتبط با خواسته مشتری را ذکر کن.
+                                listCodes باید فقط کد دقیق همان لیست‌هایی باشد که در answer پیشنهاد داده‌ای. اگر فقط سؤال تکمیلی می‌پرسی یا پیشنهادی نداری، آرایه خالی برگردان.
                                 اگر داده‌های نت یا آکورد برای نتیجه قطعی کافی نیست، صریح بگو اطلاعات ثبت‌شده کافی نیست.
                                 اگر سؤال برای پیشنهاد دقیق به اطلاعات بیشتری مثل رایحه دلخواه، فصل، جنسیت یا موقعیت مصرف نیاز دارد، فقط یک سؤال روشن بپرس.
                                 درباره پرداخت، فاکتور، تسویه، بدهی، اعتبار یا شماره کارت پاسخ نده و کاربر را به حسابداری زیباشی ارجاع بده.
@@ -121,9 +123,15 @@ public sealed class PerfumeRecommendationService : IPerfumeRecommendationService
                                     {
                                         type = "string",
                                         description = "پاسخ کوتاه فارسی و محدود به اطلاعات فهرست ارائه‌شده"
+                                    },
+                                    listCodes = new
+                                    {
+                                        type = "array",
+                                        description = "حداکثر سه کد لیست باز که در پاسخ پیشنهاد شده‌اند",
+                                        items = new { type = "integer" }
                                     }
                                 },
-                                required = new[] { "answer" },
+                                required = new[] { "answer", "listCodes" },
                                 additionalProperties = false
                             }
                         }
@@ -176,7 +184,12 @@ public sealed class PerfumeRecommendationService : IPerfumeRecommendationService
             if (string.IsNullOrWhiteSpace(parsed?.Answer))
                 throw new InvalidOperationException("OpenAI returned an empty perfume recommendation.");
 
-            return new(true, parsed.Answer.Trim());
+            var validCodes = (parsed.ListCodes ?? [])
+                .Where(code => catalog.Any(item => item.ListCode == code))
+                .Distinct()
+                .Take(3)
+                .ToArray();
+            return new(true, parsed.Answer.Trim(), validCodes);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -191,5 +204,5 @@ public sealed class PerfumeRecommendationService : IPerfumeRecommendationService
 
     public void Dispose() => _httpClient.Dispose();
 
-    private sealed record RecommendationPayload(string Answer);
+    private sealed record RecommendationPayload(string Answer, int[]? ListCodes);
 }

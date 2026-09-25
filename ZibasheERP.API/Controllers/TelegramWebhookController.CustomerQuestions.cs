@@ -279,8 +279,7 @@ public sealed partial class TelegramWebhookController
                 value.Perfume.IsActive)
             .OrderByDescending(value => value.OpenDate)
             .Take(60)
-            .Select(value => new
-            {
+            .Select(value => new PerfumeGuidanceCatalogRow(
                 value.PublicCode,
                 value.PersianName,
                 value.EnglishName,
@@ -291,8 +290,11 @@ public sealed partial class TelegramWebhookController
                 value.BaseNotes,
                 value.Accords,
                 value.TotalVolume,
-                value.ReservedVolume
-            })
+                value.ReservedVolume,
+                value.TelegramPhotoFileId,
+                value.ProductPageUrl,
+                value.TelegramChannelId,
+                value.TelegramMessageId))
             .ToListAsync(cancellationToken);
         var catalog = catalogRows
             .Select(value => new PerfumeRecommendationCatalogItem(
@@ -322,7 +324,101 @@ public sealed partial class TelegramWebhookController
                 ? result.Answer!
                 : result.Error ?? "راهنمای انتخاب عطر فعلاً در دسترس نیست.",
             cancellationToken);
+        if (result.IsSuccessful && result.ListCodes is { Count: > 0 })
+            await SendRecommendedPerfumeCardsAsync(
+                message.Chat.Id,
+                result.ListCodes,
+                catalogRows,
+                cancellationToken);
         return true;
+    }
+
+    private async Task SendRecommendedPerfumeCardsAsync(
+        long chatId,
+        IReadOnlyCollection<int> listCodes,
+        IReadOnlyCollection<PerfumeGuidanceCatalogRow> catalogRows,
+        CancellationToken cancellationToken)
+    {
+        var rowsByCode = catalogRows
+            .GroupBy(value => value.PublicCode)
+            .ToDictionary(group => group.Key, group => group.First());
+
+        foreach (var code in listCodes.Distinct().Take(3))
+        {
+            if (!rowsByCode.TryGetValue(code, out var row))
+                continue;
+
+            var persianName = string.IsNullOrWhiteSpace(row.PersianName)
+                ? "عطر پیشنهادی"
+                : row.PersianName;
+            var englishName = row.EnglishName;
+            var productUrl = ValidCustomerLink(row.ProductPageUrl);
+            var listUrl = BuildCustomerListUrl(row.TelegramChannelId, row.TelegramMessageId);
+            var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>();
+            if (productUrl is not null)
+                buttons.Add(new[] { new TelegramInlineButton("🔗 مشاهده مشخصات عطر", Url: productUrl) });
+            if (listUrl is not null && !string.Equals(listUrl, productUrl, StringComparison.OrdinalIgnoreCase))
+                buttons.Add(new[] { new TelegramInlineButton("🧴 مشاهده لیست زیباشی", Url: listUrl) });
+
+            var caption = $"🧴 <b>{Html(persianName)}</b>" +
+                          (string.IsNullOrWhiteSpace(englishName) ? string.Empty : $"\n{Html(englishName)}") +
+                          $"\nکد لیست: {code}";
+            TelegramSendResult sent;
+            if (!string.IsNullOrWhiteSpace(row.TelegramPhotoFileId) && buttons.Count > 0)
+            {
+                sent = await _sender.SendPhotoWithKeyboardAsync(
+                    chatId.ToString(),
+                    row.TelegramPhotoFileId,
+                    caption,
+                    buttons,
+                    cancellationToken);
+            }
+            else if (!string.IsNullOrWhiteSpace(row.TelegramPhotoFileId))
+            {
+                sent = await _sender.SendPhotoHtmlAsync(
+                    chatId.ToString(),
+                    row.TelegramPhotoFileId,
+                    caption,
+                    cancellationToken);
+            }
+            else if (buttons.Count > 0)
+            {
+                sent = await _sender.SendInlineKeyboardAsync(
+                    chatId.ToString(),
+                    $"🧴 {persianName}\nکد لیست: {code}",
+                    buttons,
+                    cancellationToken);
+            }
+            else
+            {
+                continue;
+            }
+
+            if (!sent.IsSuccessful)
+                _logger.LogWarning(
+                    "Telegram recommended perfume card failed for list {PublicCode}: {Error}",
+                    code,
+                    sent.Error);
+        }
+    }
+
+    private static string? ValidCustomerLink(string? value) =>
+        Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? uri.ToString()
+            : null;
+
+    private static string? BuildCustomerListUrl(string? channelId, long? messageId)
+    {
+        if (!messageId.HasValue || string.IsNullOrWhiteSpace(channelId))
+            return null;
+        var channel = channelId.Trim();
+        if (channel.StartsWith("-100", StringComparison.Ordinal) && channel.Length > 4)
+            return $"https://t.me/c/{channel[4..]}/{messageId.Value}";
+        var username = channel.TrimStart('@');
+        return username.Length > 0 && !long.TryParse(username, out _)
+            ? $"https://t.me/{username}/{messageId.Value}"
+            : null;
     }
 
     private static bool IsCustomerStatusQuestion(string? text)
@@ -505,4 +601,21 @@ public sealed partial class TelegramWebhookController
         string? ManualDescription,
         OrderItemFulfillmentStatus Status,
         DateTime ChangedAt);
+
+    private sealed record PerfumeGuidanceCatalogRow(
+        int PublicCode,
+        string PersianName,
+        string EnglishName,
+        string DisplayBrand,
+        PerfumeGender Gender,
+        string TopNotes,
+        string MiddleNotes,
+        string BaseNotes,
+        string Accords,
+        int TotalVolume,
+        int ReservedVolume,
+        string? TelegramPhotoFileId,
+        string ProductPageUrl,
+        string? TelegramChannelId,
+        long? TelegramMessageId);
 }
