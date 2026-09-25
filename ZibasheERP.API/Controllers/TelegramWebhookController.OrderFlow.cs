@@ -181,7 +181,8 @@ public sealed partial class TelegramWebhookController
                                         listCounts.GetValueOrDefault(SalesListStatus.AwaitingAvailability);
         var decantQueueListCount = await _db.OrderItems.AsNoTracking()
             .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
-                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue)
+                (value.FulfillmentStatus == OrderItemFulfillmentStatus.ArrivedInIran ||
+                 value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue))
             .Select(value => value.SalesListId).Distinct().CountAsync(ct);
         var waitingArrivalLists = await _db.OrderItems.AsNoTracking()
             .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
@@ -195,7 +196,7 @@ public sealed partial class TelegramWebhookController
             new[] { new TelegramInlineButton($"✅ خرید شده ({waitingArrivalLists})", "orderflow:completed:purchased") },
             new[] { new TelegramInlineButton($"✅ فاکتور شده ({waitingArrivalLists})", "orderflow:completed:invoiced") },
             new[] { new TelegramInlineButton($"✈️ منتظر رسیدن به ایران ({waitingArrivalLists})", "orderflow:arrival") },
-            new[] { new TelegramInlineButton($"🧴 صف دکانت ({decantQueueListCount})", "orderflow:itemstatus:8") },
+            new[] { new TelegramInlineButton($"🧴 رسیده ایران / صف دکانت ({decantQueueListCount})", "orderflow:itemstatus:8") },
             new[] { new TelegramInlineButton($"📦 آماده ارسال ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.DecantedReadyToShip)})", "orderflow:itemstatus:9") },
             new[] { new TelegramInlineButton($"🚚 ارسال‌شده ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.Shipped)})", "orderflow:itemstatus:10") }
         };
@@ -443,24 +444,56 @@ public sealed partial class TelegramWebhookController
     private async Task SendOrderItemStageSummaryAsync(
         long chatId, OrderItemFulfillmentStatus status, CancellationToken ct)
     {
-        var items = await _db.OrderItems.AsNoTracking()
-            .Include(value => value.Order).ThenInclude(value => value!.Customer)
-            .Include(value => value.SalesList)
-            .Include(value => value.Perfume)
-            .Where(value => !value.IsDeleted && value.FulfillmentStatus == status)
-            .OrderBy(value => value.UpdatedAt ?? value.CreatedAt).Take(50).ToArrayAsync(ct);
+        var statuses = status == OrderItemFulfillmentStatus.DecantQueue
+            ? new[]
+            {
+                OrderItemFulfillmentStatus.ArrivedInIran,
+                OrderItemFulfillmentStatus.DecantQueue
+            }
+            : new[] { status };
         if (status is OrderItemFulfillmentStatus.DecantQueue or
             OrderItemFulfillmentStatus.DecantedReadyToShip)
         {
+            // Limit grouped views by perfume/list rather than by individual decants.
+            // Taking individual items first could hide later perfumes when early lists had many customers.
+            var salesListIds = await _db.OrderItems.AsNoTracking()
+                .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
+                    statuses.Contains(value.FulfillmentStatus))
+                .GroupBy(value => value.SalesListId!.Value)
+                .Select(group => new
+                {
+                    SalesListId = group.Key,
+                    ChangedAt = group.Max(value => value.UpdatedAt ?? value.CreatedAt)
+                })
+                .OrderBy(value => value.ChangedAt)
+                .Take(200)
+                .Select(value => value.SalesListId)
+                .ToArrayAsync(ct);
+            var groupedItems = await _db.OrderItems.AsNoTracking()
+                .Include(value => value.Order).ThenInclude(value => value!.Customer)
+                .Include(value => value.SalesList)
+                .Include(value => value.Perfume)
+                .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
+                    salesListIds.Contains(value.SalesListId.Value) &&
+                    statuses.Contains(value.FulfillmentStatus))
+                .OrderBy(value => value.UpdatedAt ?? value.CreatedAt)
+                .ToArrayAsync(ct);
             await SendGroupedOrderItemStatusCardsAsync(
                 chatId,
-                items,
+                groupedItems,
                 status == OrderItemFulfillmentStatus.DecantQueue
-                    ? "🧴 صف دکانت"
+                    ? "🧴 رسیده ایران / صف دکانت"
                     : "📦 دکانت‌شده و آماده ارسال",
                 ct);
             return;
         }
+
+        var items = await _db.OrderItems.AsNoTracking()
+            .Include(value => value.Order).ThenInclude(value => value!.Customer)
+            .Include(value => value.SalesList)
+            .Include(value => value.Perfume)
+            .Where(value => !value.IsDeleted && statuses.Contains(value.FulfillmentStatus))
+            .OrderBy(value => value.UpdatedAt ?? value.CreatedAt).Take(50).ToArrayAsync(ct);
         var lines = items.Select((item, index) =>
             $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — " +
             $"{item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر"} — {item.RequestedVolumeMl} میل");
