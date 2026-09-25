@@ -117,6 +117,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             return;
         if (request.Status != SalesListRequestStatus.PendingConfirmation || request.ExpiresAt <= DateTime.UtcNow)
             throw new InvalidOperationException("مهلت تأیید این درخواست تمام شده است.");
+        if (string.IsNullOrWhiteSpace(request.TelegramUsername))
+            throw new InvalidOperationException(
+                "ثبت آیتم بدون یوزرنیم تلگرام مجاز نیست؛ ابتدا در تنظیمات تلگرام یوزرنیم تعیین کنید.");
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
             !await IsGiftRecipientBottleOwnerAsync(request.Id, cancellationToken))
             throw new InvalidOperationException("نوع شیشه برای این درخواست مشخص نشده است.");

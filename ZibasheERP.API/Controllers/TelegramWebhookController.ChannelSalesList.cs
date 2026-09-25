@@ -351,6 +351,9 @@ public sealed partial class TelegramWebhookController
         await EnsureUsernameCanRegisterAsync(callback.From.Username, cancellationToken);
         var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (string.IsNullOrWhiteSpace(request.TelegramUsername))
+            throw new InvalidOperationException(
+                "این درخواست بدون یوزرنیم ایجاد شده و قابل ثبت نیست؛ دوباره از پست لیست اقدام کنید.");
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
             !await _salesListRequestRepository.IsGiftRecipientBottleOwnerAsync(request.Id, cancellationToken))
             throw new InvalidOperationException("ابتدا نوع شیشه را انتخاب کنید.");

@@ -179,6 +179,11 @@ public sealed partial class TelegramWebhookController
             }
             var identity = values[1].Trim();
             var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
+            if (string.IsNullOrWhiteSpace(username) || username.Length < 5)
+            {
+                await ReplyAsync(message.Chat.Id, "برای ثبت آیتم جدید، @username معتبر مشتری الزامی است.", ct);
+                return true;
+            }
             var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
             var request = new SalesListRequest
             {
@@ -236,6 +241,11 @@ public sealed partial class TelegramWebhookController
             }
             var identity = values[1].Trim();
             var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
+            if (string.IsNullOrWhiteSpace(username) || username.Length < 5)
+            {
+                await ReplyAsync(message.Chat.Id, "برای ثبت آیتم جدید، @username معتبر مشتری الزامی است.", ct);
+                return true;
+            }
             var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
             var request = new SalesListRequest
             {
@@ -4289,16 +4299,16 @@ public sealed partial class TelegramWebhookController
                         $"خط {index + 1}: هدیه جدید را از مسیر «ثبت هدیه» اضافه کنید؛ در این بخش فقط هدیه موجود قابل جابه‌جایی است.", ct);
                     return true;
                 }
-                var normalizedUsername = NormalizeAdminRequestUsername(identity);
-                var telegramId = normalizedUsername is null
-                    ? new string(identity.Where(char.IsDigit).ToArray())
-                    : $"admin-username:{normalizedUsername.ToLowerInvariant()}";
-                if (normalizedUsername is null && telegramId.Length < 5)
+                var normalizedUsername = identity.StartsWith('@')
+                    ? NormalizeAdminRequestUsername(identity)
+                    : null;
+                if (normalizedUsername is null || normalizedUsername.Length < 5)
                 {
                     await ReplyAsync(message.Chat.Id,
-                        $"خط {index + 1}: آیدی معتبر نیست؛ @username یا Telegram ID وارد کنید.", ct);
+                        $"خط {index + 1}: برای آیتم جدید @username معتبر الزامی است.", ct);
                     return true;
                 }
+                var telegramId = $"admin-username:{normalizedUsername.ToLowerInvariant()}";
                 ordered.Add(new SalesListRequest
                 {
                     Id = Guid.NewGuid(), CreatedAt = now, SalesListId = draft.SalesListId,
@@ -4503,16 +4513,28 @@ public sealed partial class TelegramWebhookController
             var identities = System.Text.RegularExpressions.Regex.Split(
                 input, "\\s+for\\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             var giver = identities[0].Trim();
-            var normalized = giver.StartsWith('@') ? giver : new string(giver.Where(char.IsDigit).ToArray());
-            if (identities.Length > 2 || (giver.StartsWith('@') && giver.Length < 2) ||
-                (!giver.StartsWith('@') && normalized.Length == 0))
+            var giverUsername = giver.StartsWith('@') ? NormalizeAdminRequestUsername(giver) : null;
+            if (identities.Length > 2 || giverUsername is null || giverUsername.Length < 5)
             {
-                await ReplyAsync(message.Chat.Id, "شناسه نامعتبر است؛ @username یا Telegram ID وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "برای ثبت آیتم جدید، @username معتبر مشتری الزامی است.", ct);
                 return true;
             }
-            draft.Identity = normalized;
+            draft.Identity = $"@{giverUsername}";
             draft.IsGift = draft.Kind == TelegramAdminRequestKind.GiftRequest || identities.Length == 2;
             draft.GiftRecipientIdentity = identities.Length == 2 ? identities[1].Trim() : string.Empty;
+            if (identities.Length == 2)
+            {
+                var inlineRecipient = draft.GiftRecipientIdentity.StartsWith('@')
+                    ? NormalizeAdminRequestUsername(draft.GiftRecipientIdentity)
+                    : null;
+                if (inlineRecipient is null || inlineRecipient.Length < 5)
+                {
+                    await ReplyAsync(message.Chat.Id,
+                        "برای هدیه‌گیرنده نیز @username معتبر الزامی است.", ct);
+                    return true;
+                }
+                draft.GiftRecipientIdentity = $"@{inlineRecipient}";
+            }
             if (draft.Kind == TelegramAdminRequestKind.GiftRequest)
             {
                 draft.GiftRecipientIdentity = string.Empty;
@@ -4537,13 +4559,15 @@ public sealed partial class TelegramWebhookController
         if (draft.Stage == TelegramAdminRequestStage.AwaitingGiftRecipient)
         {
             var recipient = input.Trim();
-            if (!(recipient.StartsWith('@') && recipient.Length > 1) &&
-                new string(recipient.Where(char.IsDigit).ToArray()).Length < 5)
+            var recipientUsername = recipient.StartsWith('@')
+                ? NormalizeAdminRequestUsername(recipient)
+                : null;
+            if (recipientUsername is null || recipientUsername.Length < 5)
             {
-                await ReplyAsync(message.Chat.Id, "شناسه هدیه‌گیرنده نامعتبر است.", ct);
+                await ReplyAsync(message.Chat.Id, "برای هدیه‌گیرنده نیز @username معتبر الزامی است.", ct);
                 return true;
             }
-            draft.GiftRecipientIdentity = recipient;
+            draft.GiftRecipientIdentity = $"@{recipientUsername}";
             draft.Stage = TelegramAdminRequestStage.AwaitingVolume;
             _adminRequestDrafts.Set(draft);
             await ReplyAsync(message.Chat.Id, "مقدار هدیه را به میل وارد کنید؛ مثال: 5", ct);
