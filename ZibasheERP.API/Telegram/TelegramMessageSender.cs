@@ -10,6 +10,9 @@ namespace ZibasheERP.API.Telegram;
 
 public interface ITelegramMessageSender
 {
+    Task<TelegramSendResult> ConfigureAssistantIdentityAsync(
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> ConfigureAdminMenuAsync(
         string chatId,
         CancellationToken cancellationToken = default);
@@ -318,6 +321,13 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             },
             cancellationToken);
     }
+
+    public async Task<TelegramSendResult> ConfigureAssistantIdentityAsync(
+        CancellationToken cancellationToken = default) =>
+        await SendRequestAsync(
+            "setMyName",
+            new { name = ZibaAssistantIdentity.DisplayName },
+            cancellationToken);
 
     public async Task<TelegramSendResult> SendPhotoAsync(
         string chatId,

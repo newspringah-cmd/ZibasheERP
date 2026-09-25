@@ -63,7 +63,8 @@ public sealed record TelegramCallbackQuery(
 
 public sealed record TelegramChatMemberUpdated(
     [property: JsonPropertyName("chat")] TelegramChat Chat,
-    [property: JsonPropertyName("new_chat_member")] TelegramChatMember NewChatMember);
+    [property: JsonPropertyName("new_chat_member")] TelegramChatMember NewChatMember,
+    [property: JsonPropertyName("old_chat_member")] TelegramChatMember? OldChatMember = null);
 
 public sealed record TelegramChatMember(
     [property: JsonPropertyName("status")] string Status,

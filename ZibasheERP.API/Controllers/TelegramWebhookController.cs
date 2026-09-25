@@ -16,7 +16,6 @@ using ZibasheERP.Application.Features.Addresses.AddTelegramAddress;
 using ZibasheERP.Application.Features.Addresses.SetDefaultAddress;
 using ZibasheERP.Application.Features.Addresses.DeleteAddress;
 using ZibasheERP.Application.Features.Customers.LinkTelegram;
-using ZibasheERP.Application.Features.Customers.GetCustomerAccount;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Features.Invoices.GetOrderInvoice;
 using ZibasheERP.Application.Features.Orders.CreateOrder;
@@ -288,7 +287,10 @@ public sealed partial class TelegramWebhookController : ControllerBase
         var command = TelegramCommandParser.Parse(message.Text);
         if (command == TelegramCommand.Help)
         {
-            await SendMainMenuAsync(message.Chat.Id, CommandHelp(), cancellationToken);
+            await SendMainMenuAsync(
+                message.Chat.Id,
+                ZibaAssistantIdentity.Introduction + "\n\n" + CommandHelp(),
+                cancellationToken);
             return Ok();
         }
 
@@ -328,7 +330,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
             {
                 await SendMainMenuAsync(
                     message.Chat.Id,
-                    $"{usernameLink.CustomerName} عزیز، به زیباشی خوش آمدید 🌿\nبرای مشاهده لیست‌ها /lists و سفارش‌های خود /orders را ارسال کنید.",
+                    ZibaAssistantIdentity.Introduction,
                     cancellationToken);
                 return Ok();
             }
@@ -355,7 +357,6 @@ public sealed partial class TelegramWebhookController : ControllerBase
             {
                 await SendAccountBalanceAsync(
                     message.Chat.Id,
-                    message.From.Id.ToString(),
                     cancellationToken);
                 return Ok();
             }
@@ -517,7 +518,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
             if (selection.Type == TelegramCallbackType.MenuOrders)
                 await SendOrdersAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
             else if (selection.Type == TelegramCallbackType.MenuBalance)
-                await SendAccountBalanceAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
+                await SendAccountBalanceAsync(callback.Message.Chat.Id, cancellationToken);
             else
                 await SendAddressesAsync(callback.Message.Chat.Id, telegramId, cancellationToken);
 
@@ -857,7 +858,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     {
         var result = await _sender.SendAsync(
             chatId.ToString(),
-            "به زیباشی خوش آمدید 🌿\n" +
+            ZibaAssistantIdentity.Introduction + "\n\n" +
             "حساب شما هنوز به اطلاعات مشتری متصل نشده است. پس از صدور اولین فاکتور، حسابدار گروه اختصاصی شما را می‌سازد و ربات را به آن اضافه می‌کند.\n" +
             "در حال حاضر نیازی به ارسال شماره موبایل نیست.",
             cancellationToken);
@@ -871,6 +872,13 @@ public sealed partial class TelegramWebhookController : ControllerBase
     {
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;
+
+        var groupCommand = TelegramCommandParser.Parse(message.Text);
+        if (groupCommand is TelegramCommand.Start or TelegramCommand.Help)
+        {
+            await ReplyAsync(message.Chat.Id, ZibaAssistantIdentity.Introduction, cancellationToken);
+            return;
+        }
 
         if (await TryHandleDecantGroupConnectionAsync(message, cancellationToken))
             return;
@@ -899,6 +907,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
             await ReplyAsync(message.Chat.Id, giftResponse, cancellationToken);
             return;
         }
+
+        if (await TryHandleCustomerStatusQuestionAsync(message, cancellationToken))
+            return;
 
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))
             return;
@@ -1302,29 +1313,12 @@ public sealed partial class TelegramWebhookController : ControllerBase
 
     private async Task SendAccountBalanceAsync(
         long chatId,
-        string telegramId,
         CancellationToken cancellationToken)
     {
-        var account = await _mediator.Send(
-            new GetCustomerAccountQuery(null, telegramId),
-            cancellationToken);
-        if (account is null)
-        {
-            await ReplyAsync(chatId, "حساب مشتری پیدا نشد. ابتدا /start را ارسال کنید.", cancellationToken);
-            return;
-        }
-
-        var access = account.IsBlocked || !account.CanPlaceOrder
-            ? "امکان ثبت سفارش: غیرفعال"
-            : "امکان ثبت سفارش: فعال";
         await ReplyAsync(
             chatId,
-            $"وضعیت حساب {account.FullName}:\n" +
-            $"کیف پول: {account.WalletBalance:N0} تومان\n" +
-            $"سقف اعتبار: {account.CreditLimit:N0} تومان\n" +
-            $"بدهی فعلی: {account.CurrentDebt:N0} تومان\n" +
-            $"اعتبار قابل استفاده: {account.AvailableCredit:N0} تومان\n" +
-            access,
+            ZibaAssistantIdentity.Signature + "\n\n" +
+            "برای بررسی پرداخت، فاکتور، تسویه، بدهی و اعتبار حساب لطفاً با حسابداری زیباشی در ارتباط باشید.",
             cancellationToken);
     }
 
@@ -1350,7 +1344,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         "راهنمای ربات زیباشی:\n" +
         "/lists — مشاهده لیست‌های فروش فعال\n" +
         "/orders — سفارش‌های من\n" +
-        "/balance — وضعیت بدهی و اعتبار من\n" +
+        "/balance — ارتباط با حسابداری برای امور مالی\n" +
         "/track شماره‌سفارش — پیگیری مرسوله\n" +
         "/addresses — آدرس‌های من\n" +
         "/addaddress — ثبت آدرس جدید\n" +

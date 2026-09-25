@@ -40,6 +40,7 @@ public sealed record TelegramGroupLinkResult(
 
 public sealed class TelegramGroupMembershipTracker(
     AppDbContext context,
+    ITelegramMessageSender sender,
     ILogger<TelegramGroupMembershipTracker> logger) : ITelegramGroupMembershipTracker
 {
     public async Task TrackMigrationAsync(
@@ -124,6 +125,28 @@ public sealed class TelegramGroupMembershipTracker(
             return;
 
         var chatId = update.Chat.Id.ToString();
+        var canDeliver = TelegramGroupMembershipPolicy.CanDeliver(
+            update.NewChatMember.Status,
+            update.NewChatMember.IsMember,
+            update.NewChatMember.CanSendMessages);
+        var couldDeliverBefore = update.OldChatMember is not null &&
+            TelegramGroupMembershipPolicy.CanDeliver(
+                update.OldChatMember.Status,
+                update.OldChatMember.IsMember,
+                update.OldChatMember.CanSendMessages);
+        if (canDeliver && !couldDeliverBefore)
+        {
+            var introduction = await sender.SendAsync(
+                chatId,
+                ZibaAssistantIdentity.Introduction,
+                cancellationToken);
+            if (!introduction.IsSuccessful)
+                logger.LogWarning(
+                    "Telegram assistant introduction failed for group {TelegramGroupChatId}: {Error}",
+                    chatId,
+                    introduction.Error);
+        }
+
         var groups = await context.CustomerTelegramGroups
             .Where(value => value.ChatId == chatId && !value.IsDeleted)
             .ToArrayAsync(cancellationToken);
@@ -136,10 +159,6 @@ public sealed class TelegramGroupMembershipTracker(
         }
 
         var now = DateTime.UtcNow;
-        var canDeliver = TelegramGroupMembershipPolicy.CanDeliver(
-            update.NewChatMember.Status,
-            update.NewChatMember.IsMember,
-            update.NewChatMember.CanSendMessages);
         foreach (var group in groups)
         {
             group.IsActive = canDeliver;

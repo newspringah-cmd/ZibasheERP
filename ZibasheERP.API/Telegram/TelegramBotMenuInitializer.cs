@@ -17,18 +17,25 @@ public sealed class TelegramBotMenuInitializer(
             return;
         }
 
+        var identityResult = await sender.ConfigureAssistantIdentityAsync(cancellationToken);
+        if (identityResult.IsSuccessful)
+            logger.LogInformation("Telegram assistant identity configured as {DisplayName}.", ZibaAssistantIdentity.DisplayName);
+        else
+            logger.LogWarning("Telegram assistant identity could not be configured: {Error}", identityResult.Error);
+
         var result = await sender.ConfigureAdminMenuAsync(
             _options.AdminChatId.Trim(),
             cancellationToken);
         if (result.IsSuccessful)
         {
             logger.LogInformation("Telegram admin command menu configured.");
-            return;
         }
-
-        logger.LogWarning(
-            "Telegram admin command menu could not be configured: {Error}",
-            result.Error);
+        else
+        {
+            logger.LogWarning(
+                "Telegram admin command menu could not be configured: {Error}",
+                result.Error);
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
