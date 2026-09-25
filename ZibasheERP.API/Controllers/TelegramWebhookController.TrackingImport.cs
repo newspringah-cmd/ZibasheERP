@@ -491,39 +491,66 @@ public sealed partial class TelegramWebhookController
             }
             foreach (var chatId in chatIds)
             {
-                var delivery = dispatch.Deliveries.FirstOrDefault(value => value.TelegramChatId == chatId);
+                var delivery = await _db.TrackingDispatchDeliveries.AsNoTracking()
+                    .FirstOrDefaultAsync(value => value.TrackingDispatchId == dispatch.Id &&
+                        value.TelegramChatId == chatId, ct);
                 if (delivery?.SentAt is not null) continue;
                 if (delivery?.AttemptedAt is not null)
                 {
-                    delivery.LastError = "نتیجه تلاش قبلی نامطمئن است؛ برای جلوگیری از ارسال تکراری خودکار تکرار نشد";
+                    await _db.TrackingDispatchDeliveries
+                        .Where(value => value.Id == delivery.Id)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(value => value.LastError,
+                                "نتیجه تلاش قبلی نامطمئن است؛ برای جلوگیری از ارسال تکراری خودکار تکرار نشد")
+                            .SetProperty(value => value.UpdatedAt, DateTime.UtcNow), ct);
                     continue;
                 }
-                delivery ??= new TrackingDispatchDelivery
+
+                var now = DateTime.UtcNow;
+                if (delivery is null)
                 {
-                    Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
-                    TrackingDispatchId = dispatch.Id, TelegramChatId = chatId
-                };
-                if (delivery.TrackingDispatch is null && !dispatch.Deliveries.Contains(delivery))
-                    dispatch.Deliveries.Add(delivery);
-                delivery.AttemptedAt = DateTime.UtcNow;
-                delivery.UpdatedAt = DateTime.UtcNow;
-                await _db.SaveChangesAsync(ct);
+                    var deliveryId = Guid.NewGuid();
+                    await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO TrackingDispatchDeliveries
+                            (Id, TrackingDispatchId, TelegramChatId, AttemptedAt, CreatedAt, UpdatedAt, IsDeleted)
+                        SELECT {deliveryId}, {dispatch.Id}, {chatId}, {now}, {now}, {now}, CAST(0 AS bit)
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM TrackingDispatchDeliveries WITH (UPDLOCK, HOLDLOCK)
+                            WHERE TrackingDispatchId = {dispatch.Id} AND TelegramChatId = {chatId});
+                        """, ct);
+                }
+                else
+                {
+                    var claimedDelivery = await _db.TrackingDispatchDeliveries
+                        .Where(value => value.Id == delivery.Id && value.AttemptedAt == null && value.SentAt == null)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(value => value.AttemptedAt, now)
+                            .SetProperty(value => value.UpdatedAt, now), ct);
+                    if (claimedDelivery == 0) continue;
+                }
+
+                delivery = await _db.TrackingDispatchDeliveries.AsNoTracking()
+                    .FirstAsync(value => value.TrackingDispatchId == dispatch.Id &&
+                        value.TelegramChatId == chatId, ct);
+                if (delivery.AttemptedAt is null || delivery.SentAt is not null) continue;
                 var result = await _sender.SendPhotoBytesWithKeyboardAsync(chatId, dispatch.CardImage,
                     $"tracking-{dispatch.TrackingCode}.png",
                     $"📦 کد رهگیری مرسوله شما\n{dispatch.TrackingCode}" +
                     (string.IsNullOrWhiteSpace(dispatch.TrackingUrl) ? "" : $"\n{dispatch.TrackingUrl}"), [], ct);
-                if (result.IsSuccessful)
-                {
-                    delivery.SentAt = DateTime.UtcNow;
-                    delivery.LastError = null;
-                }
-                else
-                    delivery.LastError = result.Error;
-                delivery.UpdatedAt = DateTime.UtcNow;
-                await _db.SaveChangesAsync(ct);
+                var completedAt = DateTime.UtcNow;
+                await _db.TrackingDispatchDeliveries.Where(value => value.Id == delivery.Id)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(value => value.SentAt,
+                            result.IsSuccessful ? completedAt : (DateTime?)null)
+                        .SetProperty(value => value.LastError,
+                            result.IsSuccessful ? null : result.Error)
+                        .SetProperty(value => value.UpdatedAt, completedAt), ct);
             }
 
-            if (dispatch.Deliveries.Count(value => value.SentAt.HasValue) == chatIds.Length)
+            var sentDestinationCount = await _db.TrackingDispatchDeliveries.AsNoTracking()
+                .CountAsync(value => value.TrackingDispatchId == dispatch.Id &&
+                    value.SentAt.HasValue && chatIds.Contains(value.TelegramChatId), ct);
+            if (sentDestinationCount == chatIds.Length)
             {
                 dispatch.Status = TrackingDispatchStatus.Sent;
                 dispatch.SentAt = DateTime.UtcNow;
@@ -536,12 +563,13 @@ public sealed partial class TelegramWebhookController
                 dispatch.Status = TrackingDispatchStatus.Failed;
                 dispatch.LastError = "ارسال به همه گروه‌های فعال مشتری کامل نشد";
                 failedCount++;
-                var deliveryErrors = dispatch.Deliveries
-                    .Where(value => !value.SentAt.HasValue)
+                var deliveryErrors = await _db.TrackingDispatchDeliveries.AsNoTracking()
+                    .Where(value => value.TrackingDispatchId == dispatch.Id &&
+                        !value.SentAt.HasValue && chatIds.Contains(value.TelegramChatId))
                     .Select(value => value.LastError)
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .Distinct()
-                    .ToArray();
+                    .ToArrayAsync(ct);
                 failureDetails.Add($"{dispatch.RecipientName}: مرحله ارسال تلگرام — " +
                     (deliveryErrors.Length == 0 ? dispatch.LastError : string.Join("؛ ", deliveryErrors)));
             }
