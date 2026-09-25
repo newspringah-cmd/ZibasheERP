@@ -32,5 +32,8 @@ public class Address : BaseEntity
     [MaxLength(100)]
     public string? Description { get; set; }
 
+    [MaxLength(50)]
+    public string? RegistrationTelegramChatId { get; set; }
+
     public bool IsDefault { get; set; }
 }

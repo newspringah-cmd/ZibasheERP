@@ -445,6 +445,7 @@ public sealed partial class TelegramWebhookController
                 ReceiverName = customer.FullName, Mobile = customer.Mobile,
                 Province = string.Empty, City = string.Empty, PostalCode = string.Empty,
                 FullAddress = input, Description = "آدرس خام ثبت‌شده توسط حسابدار",
+                RegistrationTelegramChatId = message.Chat.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 IsDefault = !hasAddress
             };
             _db.Addresses.Add(address);

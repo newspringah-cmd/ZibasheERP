@@ -456,6 +456,8 @@ public sealed partial class TelegramWebhookController
         var failureDetails = new List<string>();
         foreach (var id in ids)
         {
+            try
+            {
             var claimed = await _db.TrackingDispatches
                 .Where(value => value.Id == id &&
                     (value.Status == TrackingDispatchStatus.Ready || value.Status == TrackingDispatchStatus.Failed))
@@ -477,10 +479,7 @@ public sealed partial class TelegramWebhookController
                 continue;
             }
 
-            var chatIds = await _db.CustomerTelegramGroups.AsNoTracking()
-                .Where(value => !value.IsDeleted && value.IsActive && value.CustomerId == dispatch.CustomerId)
-                .OrderByDescending(value => value.LastSeenAt ?? value.LinkedAt)
-                .Select(value => value.ChatId).Distinct().ToArrayAsync(ct);
+            var chatIds = await ResolveTrackingDestinationChatIdsAsync(dispatch, ct);
             if (chatIds.Length == 0)
             {
                 dispatch.Status = TrackingDispatchStatus.Failed;
@@ -548,11 +547,89 @@ public sealed partial class TelegramWebhookController
             }
             dispatch.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception,
+                    "Tracking dispatch processing failed for {DispatchId} in batch {BatchId}.", id, batchId);
+                _db.ChangeTracker.Clear();
+                var technicalError = $"خطای فنی در مرحله ارسال؛ شناسه پیگیری داخلی: {id:N}";
+                try
+                {
+                    await _db.TrackingDispatches
+                        .Where(value => value.Id == id && value.Status != TrackingDispatchStatus.Sent)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(value => value.Status, TrackingDispatchStatus.Failed)
+                            .SetProperty(value => value.LastError, technicalError)
+                            .SetProperty(value => value.UpdatedAt, DateTime.UtcNow), ct);
+                }
+                catch (Exception persistenceException)
+                {
+                    _logger.LogError(persistenceException,
+                        "Could not persist tracking dispatch failure for {DispatchId}.", id);
+                }
+                failedCount++;
+                failureDetails.Add($"شناسه {id:N}: {technicalError}");
+            }
         }
         await ReplyAsync(adminChatId,
             $"نتیجه ارسال کد رهگیری:\n✅ موفق: {sentCount}\n⚠️ ناموفق: {failedCount}\n" +
             "موارد مبهم و تکراری ارسال نشدند." +
             (failureDetails.Count == 0 ? "" : $"\n\nجزئیات خطا:\n{string.Join("\n", failureDetails.Take(15).Select(value => $"• {value}"))}"), ct);
+    }
+
+    private async Task<string[]> ResolveTrackingDestinationChatIdsAsync(
+        TrackingDispatch dispatch, CancellationToken ct)
+    {
+        if (dispatch.ShippingRequestId.HasValue)
+        {
+            var registrationChatId = await _db.OrderItems.AsNoTracking()
+                .Where(value => !value.IsDeleted &&
+                    value.ShippingRequestId == dispatch.ShippingRequestId &&
+                    value.Order != null && value.Order.DeliveryAddress != null)
+                .OrderByDescending(value => value.ShippingRequestedAt ?? value.CreatedAt)
+                .Select(value => value.Order!.DeliveryAddress!.RegistrationTelegramChatId)
+                .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrWhiteSpace(registrationChatId)) return [registrationChatId];
+        }
+
+        var addressOwnerCustomerId = dispatch.CustomerId!.Value;
+        // The address owner is authoritative. Prefer its newest linked group and do not
+        // broadcast a tracking card to every historical group connection.
+        var directChatId = await _db.CustomerTelegramGroups.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive &&
+                value.CustomerId == addressOwnerCustomerId)
+            .OrderByDescending(value => value.LastSeenAt ?? value.LinkedAt)
+            .Select(value => value.ChatId)
+            .FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(directChatId)) return [directChatId];
+
+        // Legacy imports can contain duplicate customer rows for the same username.
+        // Recover the group through the exact normalized username of the address owner.
+        var ownerUsername = await _db.Customers.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.Id == addressOwnerCustomerId)
+            .Select(value => value.Username)
+            .FirstOrDefaultAsync(ct);
+        var normalizedUsername = ownerUsername?.Trim().TrimStart('@').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedUsername)) return [];
+
+        var matchingCustomerIds = await _db.Customers.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.Username != null &&
+                (value.Username.ToLower() == normalizedUsername ||
+                 value.Username.ToLower() == "@" + normalizedUsername))
+            .Select(value => value.Id)
+            .ToArrayAsync(ct);
+        var usernameChatId = await _db.CustomerTelegramGroups.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive &&
+                matchingCustomerIds.Contains(value.CustomerId))
+            .OrderByDescending(value => value.LastSeenAt ?? value.LinkedAt)
+            .Select(value => value.ChatId)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(usernameChatId) ? [] : [usernameChatId];
     }
 
     private async Task MarkShippingRequestSentAsync(TrackingDispatch dispatch, CancellationToken ct)
