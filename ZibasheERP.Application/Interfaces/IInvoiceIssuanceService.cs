@@ -53,6 +53,11 @@ public sealed record SalesListProductionCopy(
     string DecantMessage,
     string LabelPrintMessage);
 
+public sealed record ProductionCopyArchive(
+    DateTime FirstIssuedAt,
+    DateTime LastIssuedAt,
+    IReadOnlyCollection<SalesListProductionCopy> ProductionCopies);
+
 public sealed record InvoicePaymentTrackingReport(
     Guid BatchId,
     Guid SalesListId,
@@ -92,6 +97,9 @@ public interface IInvoiceIssuanceService
 
     Task<InvoiceIssuancePreview> PreviewCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,
+        CancellationToken cancellationToken = default);
+
+    Task<ProductionCopyArchive?> GetAllProductionCopiesAsync(
         CancellationToken cancellationToken = default);
 
     Task<InvoiceIssuanceResult> IssueManualAsync(

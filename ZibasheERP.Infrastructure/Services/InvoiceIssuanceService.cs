@@ -55,6 +55,51 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 list.TelegramPhotoFileId))
             .ToArrayAsync(cancellationToken);
 
+    public async Task<ProductionCopyArchive?> GetAllProductionCopiesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await _db.InvoiceIssuanceBatchSalesLists.AsNoTracking()
+            .Where(link => !link.InvoiceIssuanceBatch.IsDeleted &&
+                link.InvoiceIssuanceBatch.Status == InvoiceIssuanceBatchStatus.Issued &&
+                link.InvoiceIssuanceBatch.IssuedAt.HasValue)
+            .OrderBy(link => link.InvoiceIssuanceBatch.IssuedAt)
+            .ThenBy(link => link.InvoiceIssuanceBatch.CreatedAt)
+            .ThenBy(link => link.SalesList.StablePublicCode ?? link.SalesList.PublicCode)
+            .Select(link => new
+            {
+                link.SalesListId,
+                IssuedAt = link.InvoiceIssuanceBatch.IssuedAt!.Value
+            })
+            .ToArrayAsync(cancellationToken);
+        if (rows.Length == 0)
+            return null;
+
+        var salesListIds = rows.Select(row => row.SalesListId).Distinct().ToArray();
+        var lists = await _db.SalesLists.AsNoTracking()
+            .Include(list => list.Requests.Where(request => !request.IsDeleted &&
+                request.Kind == SalesListRequestKind.CurrentBottle &&
+                request.Status == SalesListRequestStatus.Invoiced))
+                .ThenInclude(request => request.Bottle)
+            .Include(list => list.Perfume)
+            .Where(list => !list.IsDeleted && salesListIds.Contains(list.Id))
+            .ToArrayAsync(cancellationToken);
+        var listsById = lists.ToDictionary(list => list.Id);
+        var copies = rows
+            .Select(row => listsById.TryGetValue(row.SalesListId, out var list)
+                ? CreateProductionCopy(list)
+                : null)
+            .Where(copy => copy is not null)
+            .Cast<SalesListProductionCopy>()
+            .ToArray();
+
+        return copies.Length == 0
+            ? null
+            : new ProductionCopyArchive(
+                rows[0].IssuedAt,
+                rows[^1].IssuedAt,
+                copies);
+    }
+
     public async Task MoveCompletedListToWaitingAsync(
         Guid salesListId, CancellationToken cancellationToken = default)
     {

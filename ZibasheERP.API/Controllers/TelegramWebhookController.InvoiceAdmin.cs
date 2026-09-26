@@ -460,6 +460,55 @@ public sealed partial class TelegramWebhookController
                 "کد لیست تکمیل‌شده را وارد کنید؛ مثال: 7139\n\nپیام قبلی حذف نمی‌شود. برای لغو، /cancel را بفرستید.", ct);
             return true;
         }
+        if (callback.Data == "invoiceadmin:resend-production-copies")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "در حال بررسی همهٔ فاکتورها…", ct);
+            var archive = await _invoiceIssuanceService.GetAllProductionCopiesAsync(ct);
+            if (archive is null || archive.ProductionCopies.Count == 0)
+            {
+                await ReplyAsync(callback.Message.Chat.Id,
+                    "⚠️ سری فاکتورشده‌ای برای بازسازی لیست چاپ پیدا نشد.", ct);
+                return true;
+            }
+
+            var firstIssuedAt = archive.FirstIssuedAt.AddHours(3.5);
+            var lastIssuedAt = archive.LastIssuedAt.AddHours(3.5);
+            await _sender.SendInlineKeyboardAsync(
+                callback.Message.Chat.Id.ToString(),
+                $"🏷 ارسال مجدد همهٔ لیست‌های چاپ\n\n" +
+                $"از اولین صدور: {firstIssuedAt:yyyy/MM/dd HH:mm}\n" +
+                $"تا آخرین صدور: {lastIssuedAt:yyyy/MM/dd HH:mm}\n" +
+                $"تعداد کل لیست‌ها: {archive.ProductionCopies.Count}\n\n" +
+                "فقط نسخه‌های چاپ دوباره ارسال می‌شوند؛ فاکتور، بدهی و وضعیت سفارش تغییری نمی‌کند.",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[]
+                    {
+                        new TelegramInlineButton("✅ تأیید ارسال همه", "invoiceadmin:rpc:all"),
+                        new TelegramInlineButton("انصراف", "invoiceadmin:menu:invoices")
+                    }
+                }, ct);
+            return true;
+        }
+        if (callback.Data == "invoiceadmin:rpc:all")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "ارسال مجدد آغاز شد…", ct);
+            var archive = await _invoiceIssuanceService.GetAllProductionCopiesAsync(ct);
+            if (archive is null || archive.ProductionCopies.Count == 0)
+            {
+                await ReplyAsync(callback.Message.Chat.Id,
+                    "⚠️ لیست‌های چاپ فاکتورشده دیگر در دسترس نیستند.", ct);
+                return true;
+            }
+
+            var failures = await SendProductionCopiesAsync(archive.ProductionCopies, ct);
+            await ReplyAsync(callback.Message.Chat.Id,
+                failures.Count == 0
+                    ? $"✅ هر {archive.ProductionCopies.Count} لیست چاپ از اولین فاکتور تا امروز مجدداً به گروه چاپ لیبل ارسال شد."
+                    : $"⚠️ ارسال مجدد انجام شد، اما {failures.Count} مورد ناموفق بود:\n" +
+                      string.Join("\n", failures.Select(failure => $"• {failure}")), ct);
+            return true;
+        }
         if (callback.Data == "invoiceadmin:edit-completed-list")
         {
             CompletedListEditDrafts[(callback.Message.Chat.Id, callback.From.Id)] = new CompletedListEditDraft();
@@ -1601,6 +1650,11 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("📊 گزارش ارسال تجمیعی سری آخر",
                         "invoiceadmin:last-batch-delivery-report")
+                });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("🏷 ارسال مجدد همهٔ لیست‌های چاپ",
+                        "invoiceadmin:resend-production-copies")
                 });
                 buttons.Add(new[]
                 {
