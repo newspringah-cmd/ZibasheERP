@@ -321,6 +321,8 @@ public sealed partial class TelegramWebhookController
             .Include(value => value.Order).ThenInclude(value => value!.Customer)
             .Include(value => value.SalesList)
             .Include(value => value.Perfume)
+            .Include(value => value.Bottle)
+            .Include(value => value.SourceSalesListRequest)
             .Where(value => !value.IsDeleted && value.Order != null && value.Order.CustomerId == customer.Id &&
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
                 value.ShippingRequestId == null).OrderBy(value => value.CreatedAt).ToArrayAsync(ct);
@@ -346,8 +348,7 @@ public sealed partial class TelegramWebhookController
             item.UpdatedAt = now;
         }
         await _db.SaveChangesAsync(ct);
-        var lines = items.Select((item, index) =>
-            $"{index + 1}. {item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر"} — {item.RequestedVolumeMl} میل");
+        var lines = items.Select((item, index) => FormatShippingItemLine(item, index));
         var message = $"📦 درخواست ارسال جدید\n\nمشتری: {OrderCustomerLabel(customer)}\n" +
             $"گیرنده: {address.ReceiverName}\nموبایل: {address.Mobile}\nکدپستی: {address.PostalCode}\n" +
             $"آدرس: {address.Province}، {address.City}، {address.FullAddress}\n\nاقلام آماده ارسال:\n{string.Join("\n", lines)}";
@@ -885,6 +886,8 @@ public sealed partial class TelegramWebhookController
             .Include(value => value.Order).ThenInclude(value => value!.Customer)
             .Include(value => value.SalesList)
             .Include(value => value.Perfume)
+            .Include(value => value.Bottle)
+            .Include(value => value.SourceSalesListRequest)
             .Where(value => !value.IsDeleted && value.ShippingRequestId == requestId)
             .OrderBy(value => value.CreatedAt)
             .ToArrayAsync(ct);
@@ -895,8 +898,7 @@ public sealed partial class TelegramWebhookController
         }
 
         var customer = items[0].Order!.Customer;
-        var lines = items.Select((item, index) =>
-            $"{index + 1}. {item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر"} — {item.RequestedVolumeMl} میل");
+        var lines = items.Select((item, index) => FormatShippingItemLine(item, index));
         await _sender.AnswerCallbackAsync(callback.Id, "گزارش آماده شد ✅", ct);
         await ReplyAsync(message.Chat.Id,
             $"📋 گزارش {OrderCustomerLabel(customer)}\n\n{string.Join("\n", lines)}", ct);
@@ -917,14 +919,38 @@ public sealed partial class TelegramWebhookController
         }
         var items = await _db.OrderItems.AsNoTracking().Include(value => value.Order).ThenInclude(value => value!.Customer)
             .Include(value => value.SalesList).Include(value => value.Perfume)
+            .Include(value => value.Bottle)
+            .Include(value => value.SourceSalesListRequest)
             .Where(value => !value.IsDeleted && value.ShippingRequestId.HasValue &&
                 selected.Contains(value.ShippingRequestId.Value) &&
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip).ToArrayAsync(ct);
         var groups = items.GroupBy(ShippingItemName).OrderBy(value => value.Key).Select(group =>
         {
+            var bottleSummary = group
+                .GroupBy(item => new
+                {
+                    item.RequestedVolumeMl,
+                    Description = FormatShippingBottleCategory(item)
+                })
+                .OrderByDescending(value => value.Key.RequestedVolumeMl)
+                .ThenBy(value => value.Key.Description)
+                .Select(value =>
+                    $"  • {value.Count()} عدد {value.Key.RequestedVolumeMl} میل {value.Key.Description}")
+                .ToArray();
             var customers = group.GroupBy(value => value.Order!.CustomerId).Select(customerGroup =>
-                $"  • {OrderCustomerLabel(customerGroup.First().Order!.Customer)} — {customerGroup.Sum(value => value.RequestedVolumeMl)} میل");
-            return $"🧴 {group.Key}\nتعداد نفر: {group.Select(value => value.Order!.CustomerId).Distinct().Count()} | مجموع: {group.Sum(value => value.RequestedVolumeMl)} میل\n" +
+            {
+                var specifications = customerGroup
+                    .Select(item => $"{item.RequestedVolumeMl} میل: {FormatShippingBottleAndLabel(item)}")
+                    .Distinct()
+                    .ToArray();
+                return $"  • {OrderCustomerLabel(customerGroup.First().Order!.Customer)} — " +
+                       $"{customerGroup.Sum(value => value.RequestedVolumeMl)} میل\n" +
+                       $"    {string.Join(" | ", specifications)}";
+            });
+            return $"🧴 {group.Key}\n" +
+                   $"تعداد دکانت: {group.Count()} | تعداد نفر: {group.Select(value => value.Order!.CustomerId).Distinct().Count()} | مجموع: {group.Sum(value => value.RequestedVolumeMl)} میل\n" +
+                   $"تفکیک شیشه‌ها:\n{string.Join("\n", bottleSummary)}\n" +
+                   "مشتری‌ها:\n" +
                    string.Join("\n", customers);
         });
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -1055,12 +1081,55 @@ public sealed partial class TelegramWebhookController
     private IQueryable<OrderItem> ReadyShippingItems(Guid customerId) =>
         _db.OrderItems.Include(value => value.Order).ThenInclude(value => value!.Customer)
             .Include(value => value.SalesList).Include(value => value.Perfume)
+            .Include(value => value.Bottle)
+            .Include(value => value.SourceSalesListRequest)
             .Where(value => !value.IsDeleted && value.Order != null && value.Order.CustomerId == customerId &&
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && value.ShippingRequestId == null)
             .OrderBy(value => value.CreatedAt);
 
     private static string ShippingItemName(OrderItem item) =>
         item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر";
+
+    private static string FormatShippingItemLine(OrderItem item, int index)
+        => $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل" +
+           $" | {FormatShippingBottleAndLabel(item)}";
+
+    private static string FormatShippingBottleAndLabel(OrderItem item)
+    {
+        var bottle = item.IsBottleOwner
+            ? "صاحب باتل"
+            : item.Bottle?.Type switch
+            {
+                BottleType.Fancy => $"فانتزی ({item.Bottle.Name})",
+                BottleType.Normal => $"نرمال ({item.Bottle.Name})",
+                _ => "نامشخص"
+            };
+        var label = item.SourceSalesListRequest?.LabelIdentityText?.Trim();
+        var labelText = !string.IsNullOrWhiteSpace(label)
+            ? $"، لیبل: {label}"
+            : item.SourceSalesListRequest?.OmitIdentityOnLabel == true
+                ? "، لیبل: بدون آیدی"
+                : string.Empty;
+        return $"شیشه: {bottle}{labelText}";
+    }
+
+    private static string FormatShippingBottleCategory(OrderItem item)
+    {
+        var bottle = item.IsBottleOwner
+            ? "صاحب باتل"
+            : item.Bottle?.Type switch
+            {
+                BottleType.Fancy => "فانتزی",
+                BottleType.Normal => "نرمال",
+                _ => "با شیشه نامشخص"
+            };
+        var label = item.SourceSalesListRequest?.LabelIdentityText?.Trim();
+        if (!string.IsNullOrWhiteSpace(label))
+            bottle += $" — لیبل {label}";
+        else if (item.SourceSalesListRequest?.OmitIdentityOnLabel == true)
+            bottle += " — لیبل بدون آیدی";
+        return bottle;
+    }
 
     private static string FormatAddressForDisplay(Address address) =>
         string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)
