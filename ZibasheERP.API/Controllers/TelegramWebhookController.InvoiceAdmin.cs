@@ -1663,6 +1663,11 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("📣 یادآوری پرداخت", "paymentreminder:menu")
                 });
+                buttons.Add(new[]
+                {
+                    new TelegramInlineButton("📊 معوقات ۱۵ تا ۳۰ روز", "paymentreminder:report:d15_30"),
+                    new TelegramInlineButton("📊 معوقات بیش از ۳۰ روز", "paymentreminder:report:over30")
+                });
                 break;
             case "lists":
                 message = "🧴 مدیریت لیست‌های فروش";

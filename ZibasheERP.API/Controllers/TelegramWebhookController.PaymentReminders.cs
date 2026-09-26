@@ -25,6 +25,19 @@ internal sealed record PaymentReminderCandidate(
     string? DestinationChatId,
     bool HasActiveDestination);
 
+internal sealed record PaymentAgingReportItem(
+    string Name,
+    int VolumeMl,
+    int Quantity);
+
+internal sealed record PaymentAgingReportRow(
+    string InvoiceNumber,
+    DateTime IssuedAt,
+    Guid CustomerId,
+    string CustomerName,
+    string? CustomerUsername,
+    IReadOnlyCollection<PaymentAgingReportItem> Items);
+
 public sealed partial class TelegramWebhookController
 {
     private const string DefaultPaymentReminderText =
@@ -47,6 +60,20 @@ public sealed partial class TelegramWebhookController
         var chatId = callback.Message.Chat.Id;
         var userId = callback.From.Id;
         var data = callback.Data;
+
+        if (data.StartsWith("paymentreminder:report:", StringComparison.Ordinal))
+        {
+            var bucket = data["paymentreminder:report:".Length..];
+            if (bucket is not ("d15_30" or "over30"))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "بازه گزارش معتبر نیست.", ct, true);
+                return;
+            }
+
+            await _sender.AnswerCallbackAsync(callback.Id, "در حال تهیه گزارش…", ct);
+            await SendPaymentAgingReportAsync(chatId, bucket, ct);
+            return;
+        }
 
         if (data == "paymentreminder:menu")
         {
@@ -370,6 +397,122 @@ public sealed partial class TelegramWebhookController
                 customer.Username,
                 destination?.ChatId,
                 hasDestination);
+        }).ToArray();
+    }
+
+    private async Task SendPaymentAgingReportAsync(long chatId, string bucket, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var rows = await LoadPaymentAgingReportAsync(bucket, now, ct);
+        var title = bucket == "d15_30"
+            ? "بیش از ۱۵ تا ۳۰ روز"
+            : "بیش از ۳۰ روز";
+
+        if (rows.Count == 0)
+        {
+            await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                $"📊 گزارش آیتم‌های در انتظار پرداخت — {title}\n\nموردی پیدا نشد.",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("↩ بازگشت", "invoiceadmin:menu:invoices") }
+                }, ct);
+            return;
+        }
+
+        var customerCount = rows.Select(value => value.CustomerId).Distinct().Count();
+        var itemCount = rows.Sum(value => value.Items.Sum(item => item.Quantity));
+        var lines = new List<string>
+        {
+            $"📊 گزارش آیتم‌های در انتظار پرداخت — {title}",
+            string.Empty,
+            $"تعداد مشتری: {customerCount}",
+            $"تعداد فاکتور: {rows.Count}",
+            $"تعداد آیتم: {itemCount}",
+            "مبنای محاسبه: زمان صدور فاکتور",
+            string.Empty
+        };
+
+        foreach (var row in rows.OrderBy(value => value.IssuedAt))
+        {
+            var customer = !string.IsNullOrWhiteSpace(row.CustomerUsername)
+                ? $"@{row.CustomerUsername.Trim().TrimStart('@')}"
+                : row.CustomerName;
+            lines.Add($"👤 {customer} | فاکتور {row.InvoiceNumber} | {FormatPaymentReminderAge(row.IssuedAt, now)}");
+            if (row.Items.Count == 0)
+            {
+                lines.Add("  • بدون جزئیات آیتم");
+            }
+            else
+            {
+                lines.AddRange(row.Items.Select(item =>
+                    $"  • {item.Name} — {item.VolumeMl} میل" +
+                    (item.Quantity > 1 ? $" × {item.Quantity}" : string.Empty)));
+            }
+            lines.Add(string.Empty);
+        }
+
+        var parts = SplitTelegramMessage(string.Join("\n", lines).TrimEnd()).ToArray();
+        foreach (var part in parts.SkipLast(1))
+            await _sender.SendAsync(chatId.ToString(), part, ct);
+
+        await _sender.SendInlineKeyboardAsync(chatId.ToString(), parts[^1],
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("↩ بازگشت", "invoiceadmin:menu:invoices") }
+            }, ct);
+    }
+
+    private async Task<IReadOnlyCollection<PaymentAgingReportRow>> LoadPaymentAgingReportAsync(
+        string bucket,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var fifteenDaysAgo = now.AddDays(-15);
+        var thirtyDaysAgo = now.AddDays(-30);
+        var query = _db.Invoices.AsNoTracking()
+            .Include(value => value.Order)!.ThenInclude(value => value!.Customer)
+            .Include(value => value.Order)!.ThenInclude(value => value!.Payments)
+            .Include(value => value.Order)!.ThenInclude(value => value!.Items)
+                .ThenInclude(value => value.Perfume)
+            .Include(value => value.Order)!.ThenInclude(value => value!.Items)
+                .ThenInclude(value => value.SalesList)
+            .Where(value =>
+                !value.IsDeleted &&
+                value.Status == InvoiceStatus.Issued &&
+                value.Order != null &&
+                !value.Order.IsDeleted &&
+                value.Order.Status != OrderStatus.Cancelled &&
+                value.Order.Customer != null &&
+                !value.Order.Payments.Any(payment =>
+                    !payment.IsDeleted && payment.Status == PaymentStatus.Confirmed));
+
+        query = bucket == "d15_30"
+            ? query.Where(value => value.IssuedAt < fifteenDaysAgo && value.IssuedAt >= thirtyDaysAgo)
+            : query.Where(value => value.IssuedAt < thirtyDaysAgo);
+
+        var invoices = await query.AsSplitQuery().ToArrayAsync(ct);
+        return invoices.Select(invoice =>
+        {
+            var customer = invoice.Order!.Customer!;
+            var items = invoice.Order.Items
+                .Where(item => !item.IsDeleted)
+                .OrderBy(item => item.RowNumber)
+                .Select(item => new PaymentAgingReportItem(
+                    item.Perfume?.Name
+                    ?? item.SalesList?.PersianName
+                    ?? item.SalesList?.EnglishName
+                    ?? item.ManualDescription
+                    ?? "آیتم بدون نام",
+                    item.RequestedVolumeMl,
+                    item.Quantity))
+                .ToArray();
+            return new PaymentAgingReportRow(
+                invoice.InvoiceNumber,
+                invoice.IssuedAt,
+                customer.Id,
+                customer.FullName,
+                customer.Username,
+                items);
         }).ToArray();
     }
 
