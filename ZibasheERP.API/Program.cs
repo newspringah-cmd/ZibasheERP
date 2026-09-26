@@ -163,6 +163,9 @@ builder.Services.AddHostedService(serviceProvider =>
 builder.Services.AddSingleton<TelegramSalesListRebuildWorker>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramSalesListRebuildWorker>());
+builder.Services.AddSingleton<TelegramProductionCopyResendWorker>();
+builder.Services.AddHostedService(serviceProvider =>
+    serviceProvider.GetRequiredService<TelegramProductionCopyResendWorker>());
 builder.Services.AddHostedService<TelegramImportedNextBottleBackfillWorker>();
 builder.Services.AddHostedService<TelegramBottlePriceSyncWorker>();
 builder.Services.AddScoped<TelegramUpdateDeduplicationFilter>();

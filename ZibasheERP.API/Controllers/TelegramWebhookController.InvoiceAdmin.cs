@@ -492,21 +492,14 @@ public sealed partial class TelegramWebhookController
         }
         if (callback.Data == "invoiceadmin:rpc:all")
         {
-            await _sender.AnswerCallbackAsync(callback.Id, "ارسال مجدد آغاز شد…", ct);
-            var archive = await _invoiceIssuanceService.GetAllProductionCopiesAsync(ct);
-            if (archive is null || archive.ProductionCopies.Count == 0)
-            {
-                await ReplyAsync(callback.Message.Chat.Id,
-                    "⚠️ لیست‌های چاپ فاکتورشده دیگر در دسترس نیستند.", ct);
-                return true;
-            }
-
-            var failures = await SendProductionCopiesAsync(archive.ProductionCopies, ct);
+            var queued = _productionCopyResendWorker.TryQueue(callback.Message.Chat.Id);
+            await _sender.AnswerCallbackAsync(callback.Id,
+                queued ? "ارسال همهٔ لیست‌ها در پس‌زمینه آغاز شد ✅" : "ارسال قبلی هنوز در حال اجرا است.",
+                ct, showAlert: !queued);
             await ReplyAsync(callback.Message.Chat.Id,
-                failures.Count == 0
-                    ? $"✅ هر {archive.ProductionCopies.Count} لیست چاپ از اولین فاکتور تا امروز مجدداً به گروه چاپ لیبل ارسال شد."
-                    : $"⚠️ ارسال مجدد انجام شد، اما {failures.Count} مورد ناموفق بود:\n" +
-                      string.Join("\n", failures.Select(failure => $"• {failure}")), ct);
+                queued
+                    ? "⏳ ارسال همهٔ لیست‌های چاپ در پس‌زمینه شروع شد. این فرایند تا آخرین لیست ادامه دارد و پس از پایان گزارش کامل ارسال می‌شود."
+                    : "⏳ ارسال همهٔ لیست‌های چاپ از قبل در حال اجرا است؛ تا دریافت گزارش پایان صبر کنید.", ct);
             return true;
         }
         if (callback.Data == "invoiceadmin:edit-completed-list")

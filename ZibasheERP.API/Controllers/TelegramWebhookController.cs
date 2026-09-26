@@ -72,6 +72,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly TelegramDecantPhotoDraftStore _decantPhotoDrafts;
     private readonly TelegramOrderFlowDraftStore _orderFlowDrafts;
     private readonly TelegramSalesListRebuildWorker _salesListRebuildWorker;
+    private readonly TelegramProductionCopyResendWorker _productionCopyResendWorker;
     private readonly IInvoiceInventoryService _invoiceInventoryService;
     private readonly AppDbContext _db;
     private readonly IAddressLabelService _addressLabelService;
@@ -109,6 +110,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramDecantPhotoDraftStore decantPhotoDrafts,
         TelegramOrderFlowDraftStore orderFlowDrafts,
         TelegramSalesListRebuildWorker salesListRebuildWorker,
+        TelegramProductionCopyResendWorker productionCopyResendWorker,
         IInvoiceInventoryService invoiceInventoryService,
         IAddressLabelService addressLabelService,
         IPerfumeLabelPdfService perfumeLabelPdfService,
@@ -146,6 +148,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _decantPhotoDrafts = decantPhotoDrafts;
         _orderFlowDrafts = orderFlowDrafts;
         _salesListRebuildWorker = salesListRebuildWorker;
+        _productionCopyResendWorker = productionCopyResendWorker;
         _invoiceInventoryService = invoiceInventoryService;
         _addressLabelService = addressLabelService;
         _perfumeLabelPdfService = perfumeLabelPdfService;

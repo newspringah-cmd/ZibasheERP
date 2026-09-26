@@ -58,19 +58,53 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     public async Task<ProductionCopyArchive?> GetAllProductionCopiesAsync(
         CancellationToken cancellationToken = default)
     {
-        var rows = await _db.InvoiceIssuanceBatchSalesLists.AsNoTracking()
-            .Where(link => !link.InvoiceIssuanceBatch.IsDeleted &&
-                link.InvoiceIssuanceBatch.Status == InvoiceIssuanceBatchStatus.Issued &&
-                link.InvoiceIssuanceBatch.IssuedAt.HasValue)
-            .OrderBy(link => link.InvoiceIssuanceBatch.IssuedAt)
-            .ThenBy(link => link.InvoiceIssuanceBatch.CreatedAt)
-            .ThenBy(link => link.SalesList.StablePublicCode ?? link.SalesList.PublicCode)
-            .Select(link => new
+        var itemRows = await _db.OrderItems.AsNoTracking()
+            .Where(item => !item.IsDeleted && item.SalesListId.HasValue &&
+                item.Order != null && !item.Order.IsDeleted &&
+                item.Order.Source == OrderSource.SalesListInvoice &&
+                item.Order.Invoices.Any(invoice => !invoice.IsDeleted &&
+                    (invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Issued ||
+                     invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid)))
+            .Select(item => new
             {
-                link.SalesListId,
-                IssuedAt = link.InvoiceIssuanceBatch.IssuedAt!.Value
+                SalesListId = item.SalesListId!.Value,
+                IssuedAt = item.Order!.Invoices
+                    .Where(invoice => !invoice.IsDeleted &&
+                        (invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Issued ||
+                         invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid))
+                    .Min(invoice => invoice.IssuedAt)
             })
             .ToArrayAsync(cancellationToken);
+
+        // Older invoices may only carry the list reference on the order itself.
+        var legacyOrderRows = await _db.Orders.AsNoTracking()
+            .Where(order => !order.IsDeleted && order.SalesListId.HasValue &&
+                order.Source == OrderSource.SalesListInvoice &&
+                order.Invoices.Any(invoice => !invoice.IsDeleted &&
+                    (invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Issued ||
+                     invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid)))
+            .Select(order => new
+            {
+                SalesListId = order.SalesListId!.Value,
+                IssuedAt = order.Invoices
+                    .Where(invoice => !invoice.IsDeleted &&
+                        (invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Issued ||
+                         invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid))
+                    .Min(invoice => invoice.IssuedAt)
+            })
+            .ToArrayAsync(cancellationToken);
+
+        var rows = itemRows
+            .Concat(legacyOrderRows)
+            .GroupBy(row => row.SalesListId)
+            .Select(group => new
+            {
+                SalesListId = group.Key,
+                IssuedAt = group.Min(row => row.IssuedAt)
+            })
+            .OrderBy(row => row.IssuedAt)
+            .ThenBy(row => row.SalesListId)
+            .ToArray();
         if (rows.Length == 0)
             return null;
 
