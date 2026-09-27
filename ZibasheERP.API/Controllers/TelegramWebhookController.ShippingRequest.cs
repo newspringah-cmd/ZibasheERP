@@ -70,10 +70,7 @@ public sealed partial class TelegramWebhookController
                 AllowUnlinkedChat = true
             });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await _sender.SendForceReplyAsync(
-                callback.Message.Chat.Id.ToString(),
-                "آدرس کامل را وارد کنید",
-                ct);
+            await SendShippingInputPromptAsync(callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct);
             return true;
         }
 
@@ -111,10 +108,8 @@ public sealed partial class TelegramWebhookController
             draft.Stage = TelegramShippingPreparationStage.AwaitingNewAddress;
             _orderFlowDrafts.SetShippingPreparation(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await _sender.SendForceReplyAsync(
-                callback.Message.Chat.Id.ToString(),
-                "آدرس کامل را در همین کادر پاسخ وارد کنید",
-                ct);
+            await SendShippingInputPromptAsync(
+                callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct);
             return true;
         }
 
@@ -383,7 +378,9 @@ public sealed partial class TelegramWebhookController
     private async Task<bool> TryHandleShippingPreparationMessageAsync(TelegramMessage message, CancellationToken ct)
     {
         var senderUserId = message.From?.Id ?? 0;
-        if (!_orderFlowDrafts.TryGetShippingPreparation(message.Chat.Id, senderUserId, out var draft))
+        var isAnonymousReply = message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
+        if (!_orderFlowDrafts.TryGetShippingPreparation(
+                message.Chat.Id, senderUserId, out var draft, isAnonymousReply))
             return false;
         var isAnonymousAdminReply = draft.Stage == TelegramShippingPreparationStage.AwaitingNewAddress &&
             message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
@@ -426,10 +423,7 @@ public sealed partial class TelegramWebhookController
                 : TelegramShippingPreparationStage.AwaitingAddressChoice;
             _orderFlowDrafts.SetShippingPreparation(draft);
             if (draft.RegistrationOnly)
-                await _sender.SendForceReplyAsync(
-                    message.Chat.Id.ToString(),
-                    "آدرس کامل را در همین کادر پاسخ وارد کنید",
-                    ct);
+                await SendShippingInputPromptAsync(message.Chat.Id, "آدرس کامل را وارد کنید", ct);
             else
                 await SendShippingAddressChoicesAsync(draft, ct);
             return true;
@@ -461,10 +455,8 @@ public sealed partial class TelegramWebhookController
                 draft.AddressId = address.Id;
                 draft.Stage = TelegramShippingPreparationStage.AwaitingDescription;
                 _orderFlowDrafts.SetShippingPreparation(draft);
-                await _sender.SendForceReplyAsync(
-                    message.Chat.Id.ToString(),
-                    "توضیحات ارسال را وارد کنید؛ اگر توضیحی ندارید، علامت - را بفرستید.",
-                    ct);
+                await SendShippingInputPromptAsync(message.Chat.Id,
+                    "توضیحات ارسال را وارد کنید؛ اگر توضیحی ندارید، علامت - را بفرستید.", ct);
                 return true;
             }
             draft.AddressId = address.Id;
@@ -585,12 +577,20 @@ public sealed partial class TelegramWebhookController
                 AllowUnlinkedChat = true,
                 LinkGroupOnIdentity = true
             });
-            await _sender.SendForceReplyAsync(message.Chat.Id.ToString(),
+            await SendShippingInputPromptAsync(message.Chat.Id,
                 "یوزرنیم مشتری را به‌صورت @username وارد کنید. پس از ثبت، این گروه به‌صورت دائمی به مشتری متصل می‌شود.", ct);
             return true;
         }
         await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
         return true;
+    }
+
+    private async Task SendShippingInputPromptAsync(long chatId, string text, CancellationToken ct)
+    {
+        if (chatId > 0)
+            await _sender.SendForceReplyAsync(chatId.ToString(), text, ct);
+        else
+            await ReplyAsync(chatId, text, ct);
     }
 
     private async Task<bool> EnsureActiveCustomerGroupLinkAsync(TelegramChat chat, CancellationToken ct)

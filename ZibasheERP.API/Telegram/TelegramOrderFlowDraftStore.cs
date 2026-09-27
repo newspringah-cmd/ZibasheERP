@@ -63,22 +63,41 @@ public sealed class TelegramOrderFlowDraftStore
 
     public void SetShippingPreparation(TelegramShippingPreparationDraft draft)
     {
+        RemoveExpired();
         draft.UpdatedAt = DateTime.UtcNow;
         _shippingPreparations[(draft.ChatId, draft.UserId)] = draft;
     }
 
-    public bool TryGetShippingPreparation(long chatId, long userId, out TelegramShippingPreparationDraft draft)
+    public bool TryGetShippingPreparation(
+        long chatId,
+        long userId,
+        out TelegramShippingPreparationDraft draft,
+        bool allowAnonymousChatFallback = false)
     {
+        RemoveExpired();
         if (_shippingPreparations.TryGetValue((chatId, userId), out draft!))
         {
             draft.UpdatedAt = DateTime.UtcNow;
             return true;
         }
-        draft = _shippingPreparations.Values
-            .Where(value => value.ChatId == chatId && value.UpdatedAt >= DateTime.UtcNow - Lifetime)
+        if (!allowAnonymousChatFallback)
+        {
+            draft = null!;
+            return false;
+        }
+        var anonymousCandidates = _shippingPreparations.Values
+            .Where(value => value.ChatId == chatId &&
+                value.Stage == TelegramShippingPreparationStage.AwaitingNewAddress &&
+                value.UpdatedAt >= DateTime.UtcNow - Lifetime)
             .OrderByDescending(value => value.UpdatedAt)
-            .FirstOrDefault()!;
-        if (draft is null) return false;
+            .Take(2)
+            .ToArray();
+        if (anonymousCandidates.Length != 1)
+        {
+            draft = null!;
+            return false;
+        }
+        draft = anonymousCandidates[0];
         draft.UpdatedAt = DateTime.UtcNow;
         return true;
     }
@@ -103,6 +122,8 @@ public sealed class TelegramOrderFlowDraftStore
         var threshold = DateTime.UtcNow - Lifetime;
         foreach (var item in _drafts.Where(item => item.Value.UpdatedAt < threshold))
             _drafts.TryRemove(item.Key, out _);
+        foreach (var item in _shippingPreparations.Where(item => item.Value.UpdatedAt < threshold))
+            _shippingPreparations.TryRemove(item.Key, out _);
     }
 }
 
