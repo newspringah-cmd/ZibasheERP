@@ -108,12 +108,30 @@ public sealed class TelegramNotificationMessageFormatterTests
     [Fact]
     public void Format_InvoiceIssued_LabelsGiftRecipientAndKeepsGiftPrice()
     {
-        var message = TelegramNotificationMessageFormatter.Format(
-            "InvoiceIssued",
-            "{\"OrderNumber\":\"ZS-GIFT-1\",\"InvoiceNumber\":\"INV-GIFT-1\",\"TotalAmount\":900000,\"Items\":[{\"RowNumber\":1,\"PerfumeEnglishName\":\"Gift Perfume\",\"PerfumePersianName\":\"عطر هدیه\",\"RequestedVolumeMl\":5,\"LineTotal\":900000,\"IsGift\":true,\"GiftRecipientUsername\":\"gift_receiver\"}]}" );
+        var previousCulture = System.Globalization.CultureInfo.CurrentCulture;
+        string message;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture =
+                System.Globalization.CultureInfo.GetCultureInfo("fa-IR");
+            message = TelegramNotificationMessageFormatter.Format(
+                "InvoiceIssued",
+                "{\"OrderNumber\":\"ZS-GIFT-1\",\"InvoiceNumber\":\"INV-GIFT-1\",\"IssuedAt\":\"2026-08-03T12:00:00Z\",\"TotalAmount\":900000,\"Items\":[{\"RowNumber\":1,\"PerfumeEnglishName\":\"Gift Perfume\",\"PerfumePersianName\":\"عطر هدیه\",\"RequestedVolumeMl\":5,\"LineTotal\":900000,\"IsGift\":true,\"GiftRecipientUsername\":\"gift_receiver\"}]}" );
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previousCulture;
+        }
 
         Assert.Contains("900,000", message);
+        Assert.False(message.Contains("۹۰۰٬۰۰۰", StringComparison.Ordinal));
         Assert.Contains("هدیه برای: @gift_receiver", message);
+        Assert.True(message.IndexOf("تاریخ شمسی:", StringComparison.Ordinal) <
+                    message.IndexOf("هدیه برای:", StringComparison.Ordinal));
+        Assert.Equal(1, message.Split("Gift Perfume", StringSplitOptions.None).Length - 1);
+        Assert.False(message.Contains("1.\n", StringComparison.Ordinal));
+        Assert.Contains("تاریخ شمسی: 1405/05/12", message);
+        Assert.Contains($"{Environment.NewLine}{Environment.NewLine}شماره فاکتور:", message);
     }
 
     [Fact]

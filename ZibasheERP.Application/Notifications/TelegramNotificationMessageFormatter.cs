@@ -13,7 +13,7 @@ public static class TelegramNotificationMessageFormatter
         if (eventType == "DebtReminder")
         {
             var message = ReadString(root, "Message") ?? "لطفاً برای تسویه اقدام کنید.";
-            return $"یادآوری زیباشی: مانده بدهی شما {ReadDecimal(root, "Amount"):N0} تومان است. {message}";
+            return $"یادآوری زیباشی: مانده بدهی شما {FormatAmount(ReadDecimal(root, "Amount"))} تومان است. {message}";
         }
         if (eventType == "TelegramGroupDeliveryTest")
         {
@@ -73,7 +73,7 @@ public static class TelegramNotificationMessageFormatter
             "OrderShipped" => FormatShipped(root, orderNumber),
             "OrderDelivered" => $"سفارش {orderNumber} تحویل داده شد. از خرید شما سپاسگزاریم.",
             "PaymentRejected" => $"پرداخت سفارش {orderNumber} تأیید نشد. علت: {ReadString(root, "Reason") ?? "نیازمند بررسی"}",
-            "PaymentRefunded" => $"مبلغ {ReadDecimal(root, "Amount"):N0} تومان برای سفارش {orderNumber} بازپرداخت شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
+            "PaymentRefunded" => $"مبلغ {FormatAmount(ReadDecimal(root, "Amount"))} تومان برای سفارش {orderNumber} بازپرداخت شد. علت: {ReadString(root, "Reason") ?? "ثبت نشده"}",
             _ => $"وضعیت سفارش {orderNumber} به‌روزرسانی شد."
         };
     }
@@ -90,74 +90,116 @@ public static class TelegramNotificationMessageFormatter
         var title = string.IsNullOrWhiteSpace(username)
             ? "فاکتور عطر"
             : $"فاکتور عطر — @{username.Trim().TrimStart('@')}";
-        var builder = new StringBuilder()
-            .AppendLine($"🧾 {title}")
-            .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
-            .AppendLine($"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}")
-            .AppendLine($"شماره سفارش: {orderNumber}")
-            .AppendLine();
-
-        if (root.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array)
+        var invoiceItems = root.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array
+            ? items.EnumerateArray().ToArray()
+            : Array.Empty<JsonElement>();
+        var hasGiftItems = invoiceItems.Any(item => ReadBoolean(item, "IsGift"));
+        var builder = new StringBuilder();
+        if (hasGiftItems)
         {
-            foreach (var item in items.EnumerateArray())
-            {
-                var rowNumber = ReadInt(item, "RowNumber");
-                var brand = ReadString(item, "PerfumeBrand");
-                var englishName = ReadString(item, "PerfumeEnglishName") ?? ReadString(item, "PerfumeName");
-                var persianName = ReadString(item, "PerfumePersianName") ?? ReadString(item, "PerfumeName");
-                var englishTitle = string.Join(' ', new[] { brand, englishName }
-                    .Where(value => !string.IsNullOrWhiteSpace(value)));
-                if (string.IsNullOrWhiteSpace(englishTitle))
-                    englishTitle = "آیتم دستی";
-                if (string.IsNullOrWhiteSpace(persianName))
-                    persianName = "آیتم دستی";
-
-                builder
-                    .AppendLine($"{rowNumber}.")
-                    .AppendLine($"نام انگلیسی: {englishTitle}")
-                    .AppendLine($"نام فارسی: {persianName}")
-                    .AppendLine($"مقدار: {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر")
-                    .AppendLine($"مبلغ عطر و شیشه: {ReadDecimal(item, "LineTotal"):N0} تومان")
-                    .AppendLine();
-
-                if (ReadBoolean(item, "IsGift"))
-                {
-                    var recipient = ReadString(item, "GiftRecipientUsername");
-                    recipient = string.IsNullOrWhiteSpace(recipient)
-                        ? ReadString(item, "GiftRecipientTelegramId")
-                        : $"@{recipient.Trim().TrimStart('@')}";
-                    builder.AppendLine($"🎁 هدیه برای: {recipient ?? "گیرنده نامشخص"}").AppendLine();
-                }
-
-                if (builder.Length > 3200)
-                {
-                    builder.AppendLine("… ادامه ردیف‌ها در نسخه PDF");
-                    break;
-                }
-            }
-
+            AppendSpacedLine(builder, $"🧾 {title}");
+            AppendSpacedLine(builder, $"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}");
+            AppendSpacedLine(builder, $"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}");
+            AppendSpacedLine(builder, $"شماره سفارش: {orderNumber}");
+        }
+        else
+        {
+            builder
+                .AppendLine($"🧾 {title}")
+                .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
+                .AppendLine($"شماره فاکتور: {ReadString(root, "InvoiceNumber") ?? "نامشخص"}")
+                .AppendLine($"شماره سفارش: {orderNumber}")
+                .AppendLine();
         }
 
-        builder
-            .AppendLine($"💰 جمع عطر و شیشه: {ReadDecimal(root, "TotalAmount"):N0} تومان")
-            .AppendLine();
+        foreach (var item in invoiceItems.Where(item => ReadBoolean(item, "IsGift")))
+        {
+            var recipient = ReadString(item, "GiftRecipientUsername");
+            recipient = string.IsNullOrWhiteSpace(recipient)
+                ? ReadString(item, "GiftRecipientTelegramId")
+                : $"@{recipient.Trim().TrimStart('@')}";
+            AppendSpacedLine(builder, $"🎁 هدیه برای: {recipient ?? "گیرنده نامشخص"}");
+            AppendInvoiceItemDetails(builder, item, spaced: true);
+        }
+
+        foreach (var item in invoiceItems.Where(item => !ReadBoolean(item, "IsGift")))
+        {
+            if (hasGiftItems) AppendSpacedLine(builder, $"{ReadInt(item, "RowNumber")}.");
+            else builder.AppendLine($"{ReadInt(item, "RowNumber")}.");
+            AppendInvoiceItemDetails(builder, item, spaced: hasGiftItems);
+            if (builder.Length > 3200)
+            {
+                builder.AppendLine("… ادامه ردیف‌ها در نسخه PDF");
+                break;
+            }
+        }
+
+        if (hasGiftItems)
+            AppendSpacedLine(builder, $"💰 جمع عطر و شیشه: {FormatAmount(ReadDecimal(root, "TotalAmount"))} تومان");
+        else
+            builder.AppendLine($"💰 جمع عطر و شیشه: {FormatAmount(ReadDecimal(root, "TotalAmount"))} تومان").AppendLine();
 
         if (root.TryGetProperty("PaymentAccounts", out var accounts) && accounts.ValueKind == JsonValueKind.Array)
         {
-            builder.AppendLine("شماره کارت جهت واریز:");
+            if (hasGiftItems) AppendSpacedLine(builder, "شماره کارت جهت واریز:");
+            else builder.AppendLine("شماره کارت جهت واریز:");
             foreach (var account in accounts.EnumerateArray())
             {
-                builder.AppendLine(FormatCard(ReadString(account, "CardNumber") ?? string.Empty));
-                builder.AppendLine($"{ReadString(account, "AccountHolder")} — بانک {ReadString(account, "BankName")}");
+                if (hasGiftItems)
+                {
+                    AppendSpacedLine(builder, FormatCard(ReadString(account, "CardNumber") ?? string.Empty));
+                    AppendSpacedLine(builder, $"{ReadString(account, "AccountHolder")} — بانک {ReadString(account, "BankName")}");
+                }
+                else
+                {
+                    builder.AppendLine(FormatCard(ReadString(account, "CardNumber") ?? string.Empty));
+                    builder.AppendLine($"{ReadString(account, "AccountHolder")} — بانک {ReadString(account, "BankName")}");
+                }
             }
-            builder.AppendLine();
+            if (!hasGiftItems) builder.AppendLine();
         }
 
-        builder.AppendLine("با تشکر از خرید شما")
-            .Append("مهلت پرداخت فاکتور: ۲۴ ساعت");
+        if (hasGiftItems)
+        {
+            AppendSpacedLine(builder, "با تشکر از خرید شما");
+            builder.Append("مهلت پرداخت فاکتور: ۲۴ ساعت");
+        }
+        else
+        {
+            builder.AppendLine("با تشکر از خرید شما")
+                .Append("مهلت پرداخت فاکتور: ۲۴ ساعت");
+        }
 
         return builder.ToString();
     }
+
+    private static void AppendInvoiceItemDetails(StringBuilder builder, JsonElement item, bool spaced)
+    {
+        var brand = ReadString(item, "PerfumeBrand");
+        var englishName = ReadString(item, "PerfumeEnglishName") ?? ReadString(item, "PerfumeName");
+        var persianName = ReadString(item, "PerfumePersianName") ?? ReadString(item, "PerfumeName");
+        var englishTitle = string.Join(' ', new[] { brand, englishName }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (string.IsNullOrWhiteSpace(englishTitle)) englishTitle = "آیتم دستی";
+        if (string.IsNullOrWhiteSpace(persianName)) persianName = "آیتم دستی";
+
+        var lines = new[]
+        {
+            $"نام انگلیسی: {englishTitle}",
+            $"نام فارسی: {persianName}",
+            $"مقدار: {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر",
+            $"مبلغ عطر و شیشه: {FormatAmount(ReadDecimal(item, "LineTotal"))} تومان"
+        };
+        foreach (var line in lines)
+        {
+            if (spaced) AppendSpacedLine(builder, line);
+            else builder.AppendLine(line);
+        }
+        if (!spaced) builder.AppendLine();
+    }
+
+    private static void AppendSpacedLine(StringBuilder builder, string value) =>
+        builder.AppendLine(value).AppendLine();
 
     private static string FormatGiftInvoice(JsonElement root)
     {
@@ -210,6 +252,9 @@ public static class TelegramNotificationMessageFormatter
         root.TryGetProperty(propertyName, out var value) && value.TryGetDecimal(out var result)
             ? result
             : 0;
+
+    private static string FormatAmount(decimal value) =>
+        value.ToString("N0", CultureInfo.InvariantCulture);
 
     private static int ReadInt(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var result)
