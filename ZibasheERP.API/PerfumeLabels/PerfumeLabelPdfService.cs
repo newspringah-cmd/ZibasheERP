@@ -4,7 +4,7 @@ using QuestPDF.Infrastructure;
 
 namespace ZibasheERP.API.PerfumeLabels;
 
-public sealed record PerfumeLabelEntry(int? VolumeMl);
+public sealed record PerfumeLabelEntry(int? VolumeMl, string? Caption = null);
 
 public interface IPerfumeLabelPdfService
 {
@@ -62,14 +62,19 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
 
     private static void ComposeCell(IContainer container, byte[] logo, PerfumeLabelEntry? entry)
     {
+        var caption = entry?.VolumeMl.HasValue == true
+            ? $"{entry.VolumeMl.Value}ml"
+            : entry?.Caption ?? string.Empty;
+        var captionFontSize = entry?.VolumeMl.HasValue == true ? 13 : 9;
+
         container.Column(column =>
         {
             column.Spacing(1);
             column.Item().Height(18, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Image(logo).FitArea();
             column.Item().Height(6, Unit.Millimetre).AlignCenter().AlignMiddle()
-                .Text(entry?.VolumeMl.HasValue == true ? $"{entry.VolumeMl.Value}ml" : string.Empty)
-                .FontFamily(Fonts.Arial).FontSize(13).SemiBold();
+                .Text(caption)
+                .FontFamily(Fonts.Arial).FontSize(captionFontSize).SemiBold();
         });
     }
 }

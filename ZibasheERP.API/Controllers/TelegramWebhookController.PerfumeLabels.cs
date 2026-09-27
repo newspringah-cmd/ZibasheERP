@@ -166,14 +166,19 @@ public sealed partial class TelegramWebhookController
         var owner = requests.FirstOrDefault(value => value.IsBottleOwner);
         return requests
             .Where(request => !request.IsGift || owner is null || !IsPerfumeLabelGiftFor(request, owner))
-            // Print the bottle owner's captionless label first, then keep equal
+            // Print the bottle owner's username-only label first, then keep equal
             // volumes next to each other from the largest volume down.
             .OrderByDescending(request => request.IsBottleOwner)
             .ThenByDescending(request => request.VolumeMl)
             .ThenBy(request => request.ConfirmedAt ?? request.CreatedAt)
-            .Select(request => new PerfumeLabelEntry(request.IsBottleOwner ? null : request.VolumeMl))
+            .Select(request => request.IsBottleOwner
+                ? new PerfumeLabelEntry(null, NormalizePerfumeLabelUsername(request.TelegramUsername))
+                : new PerfumeLabelEntry(request.VolumeMl))
             .ToArray();
     }
+
+    private static string NormalizePerfumeLabelUsername(string? username) =>
+        username?.Trim().TrimStart('@') ?? string.Empty;
 
     private static bool IsPerfumeLabelGiftFor(SalesListRequest gift, SalesListRequest recipient)
     {
