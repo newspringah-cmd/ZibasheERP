@@ -306,10 +306,12 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 if (!verifiedRows.TryGetValue(code, out var verifiedRow)) continue;
                 try
                 {
+                    var recipientBox = CreatePostRecipientCropBox(row.RecipientBox);
+                    var trackingBox = CreatePostTrackingCropBox(row.TrackingBox);
                     var recipientCrop = await CropNormalizedAsync(
-                        pages[row.RecipientPage - 1], row.RecipientBox, 12, tempRoot, ct);
+                        pages[row.RecipientPage - 1], recipientBox, 0, tempRoot, ct);
                     var trackingCrop = await CropNormalizedAsync(
-                        pages[row.TrackingPage - 1], row.TrackingBox, 12, tempRoot, ct);
+                        pages[row.TrackingPage - 1], trackingBox, 0, tempRoot, ct);
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, Clean(row.RecipientName), Clean(row.Destination), null,
                         await BuildPostCardAsync(recipientCrop, trackingCrop, tempRoot, ct),
@@ -455,7 +457,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             {
                 type = "input_text",
                 text = """
-                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات نوشته نام گیرنده و نوشته کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به صفحه مربوط به همان نوشته بده. کادر را تا حد ممکن دور خود حروف و ارقام بگیر و خطوط جدول، حاشیه سلول و نوشته ستون‌های مجاور را داخل آن نیاور. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان نوشته اصلی PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره نام ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
+                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات نام گیرنده را در recipientBox بده. در trackingBox کل سلول شماره مرسوله شامل بارکد کامل و عدد زیر بارکد را بده، اما ستون ردیف کناری را وارد نکن. همه مختصات به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 باشند. ستون فرستنده و نام «زیباشی» نباید داخل recipientBox باشد. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان نوشته اصلی PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره نام ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
                     """ + deterministicCodeInstruction
             }
         };
@@ -634,6 +636,28 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return await File.ReadAllBytesAsync(output, ct);
     }
 
+    private static int[] CreatePostRecipientCropBox(int[] detectedBox)
+    {
+        // Landscape A4 bulk receipt: isolate recipient and exclude the sender column.
+        return
+        [
+            626,
+            Math.Clamp(detectedBox[1] - 7, 0, 999),
+            718,
+            Math.Clamp(detectedBox[3] + 7, 1, 1000)
+        ];
+    }
+
+    private static int[] CreatePostTrackingCropBox(int[] detectedBox)
+    {
+        // Keep barcode + printed number, while excluding the row-number column on the right.
+        var detectedHeight = detectedBox[3] - detectedBox[1];
+        var center = (detectedBox[1] + detectedBox[3]) / 2;
+        var top = detectedHeight >= 35 ? detectedBox[1] - 3 : center - 45;
+        var bottom = detectedHeight >= 35 ? detectedBox[3] + 3 : center + 14;
+        return [821, Math.Clamp(top, 0, 999), 929, Math.Clamp(bottom, 1, 1000)];
+    }
+
     private async Task<byte[]> BuildPostCardAsync(
         byte[] recipientCrop, byte[] trackingCrop, string tempRoot, CancellationToken ct)
     {
@@ -652,21 +676,21 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
 
         var nameLayerResult = await RunProcessAsync("convert",
             $"\"{recipientPath}\" -fuzz 14% -transparent white -trim +repage " +
-            "-resize \"600x110>\" -gravity center -background none -extent 620x130 " +
+            "-resize \"620x140\" -gravity center -background none -extent 630x145 " +
             $"\"{recipientLayer}\"", tempRoot, ct);
         if (nameLayerResult.ExitCode != 0)
             throw new InvalidOperationException($"Recipient layer generation failed: {nameLayerResult.Error}");
 
         var codeLayerResult = await RunProcessAsync("convert",
             $"\"{trackingPath}\" -fuzz 14% -transparent white -trim +repage " +
-            "-resize \"620x100>\" -gravity center -background none -extent 650x120 " +
+            "-resize \"660x135\" -gravity center -background none -extent 670x140 " +
             $"\"{trackingLayer}\"", tempRoot, ct);
         if (codeLayerResult.ExitCode != 0)
             throw new InvalidOperationException($"Tracking-code layer generation failed: {codeLayerResult.Error}");
 
         var cardResult = await RunProcessAsync("convert",
-            $"\"{template}\" \"{recipientLayer}\" -geometry +488+417 -composite " +
-            $"\"{trackingLayer}\" -geometry +458+709 -composite \"{output}\"",
+            $"\"{template}\" \"{recipientLayer}\" -geometry +478+408 -composite " +
+            $"\"{trackingLayer}\" -geometry +448+699 -composite \"{output}\"",
             tempRoot, ct);
         if (cardResult.ExitCode != 0 || !File.Exists(output))
             throw new InvalidOperationException($"Iran Post card composition failed: {cardResult.Error}");
