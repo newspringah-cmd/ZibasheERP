@@ -1110,7 +1110,7 @@ public sealed partial class TelegramWebhookController
             : item.SourceSalesListRequest?.OmitIdentityOnLabel == true
                 ? "، لیبل: بدون آیدی"
                 : string.Empty;
-        return $"شیشه: {bottle}{labelText}";
+        return $"شیشه: {bottle}{labelText}{FormatShippingInventoryMarker(item)}";
     }
 
     private static string FormatShippingBottleCategory(OrderItem item)
@@ -1128,8 +1128,14 @@ public sealed partial class TelegramWebhookController
             bottle += $" — لیبل {label}";
         else if (item.SourceSalesListRequest?.OmitIdentityOnLabel == true)
             bottle += " — لیبل بدون آیدی";
+        bottle += FormatShippingInventoryMarker(item);
         return bottle;
     }
+
+    private static string FormatShippingInventoryMarker(OrderItem item) =>
+        item.SalesList?.IsInventoryOffer == true || item.Order?.IsInventory == true
+            ? " — 🔴 موجودی"
+            : string.Empty;
 
     private static string FormatAddressForDisplay(Address address) =>
         string.Equals(address.Description, "آدرس خام ثبت‌شده توسط حسابدار", StringComparison.Ordinal)

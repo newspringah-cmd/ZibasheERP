@@ -79,6 +79,7 @@ public class Order : BaseEntity
 
     public SalesList? SalesList { get; set; }
     public OrderSource Source { get; set; } = OrderSource.SalesListInvoice;
+    public bool IsInventory { get; set; }
     public Guid? InvoiceIssuanceBatchId { get; set; }
     public InvoiceIssuanceBatch? InvoiceIssuanceBatch { get; set; }
     public ICollection<Shipment> Shipments { get; set; }

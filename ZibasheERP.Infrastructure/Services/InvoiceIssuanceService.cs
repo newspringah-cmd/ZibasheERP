@@ -678,6 +678,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             Id = Guid.NewGuid(), CreatedAt = now, CustomerId = customer.Id,
             OrderNumber = await GenerateOrderNumberAsync(now, cancellationToken),
             Status = OrderStatus.Registered, RegisteredAt = now, Source = OrderSource.ManualInvoice,
+            IsInventory = isInventory,
             Notes = $"فاکتور دستی توسط {issuedByTelegramUserId.Trim()}" +
                     (giftRecipient is null ? string.Empty : $" | هدیه برای {giftRecipient.Username ?? giftRecipient.TelegramId}")
         };
