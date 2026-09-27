@@ -214,6 +214,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         {
             var pdfPath = Path.Combine(tempRoot, "source.pdf");
             await File.WriteAllBytesAsync(pdfPath, pdf, ct);
+            var expectedTrackingCodes = await ExtractTrackingCodesFromPdfAsync(pdfPath, tempRoot, ct);
             var prefix = Path.Combine(tempRoot, "page");
             var render = await RunProcessAsync("pdftoppm",
                 $"-jpeg -r 150 -jpegopt quality=88,progressive=n \"{pdfPath}\" \"{prefix}\"", tempRoot, ct);
@@ -241,13 +242,22 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             {
                 try
                 {
-                    var read = await RecognizePostRowsAsync(pages, ct);
+                    var read = await RecognizePostRowsAsync(pages, expectedTrackingCodes, ct);
                     if (read.Count > 100)
                         return new TrackingImportParseResult(false, [],
                             "حداکثر ۱۰۰ مرسوله را در هر مرحله وارد کنید.");
                     if (read.Count == 0)
                     {
                         _logger.LogWarning("Iran Post recognition attempt {Attempt} returned no rows.", attempt);
+                        continue;
+                    }
+
+                    if (expectedTrackingCodes.Count > 0 &&
+                        !PostReadContainsExpectedCodes(read, expectedTrackingCodes))
+                    {
+                        _logger.LogWarning(
+                            "Iran Post recognition attempt {Attempt} did not return the deterministic PDF code set. Expected={Expected}, Actual={Actual}.",
+                            attempt, expectedTrackingCodes.Count, read.Count);
                         continue;
                     }
 
@@ -303,10 +313,12 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, Clean(row.RecipientName), Clean(row.Destination), null,
                         await BuildPostCardAsync(recipientCrop, trackingCrop, tempRoot, ct),
-                        row.Confidence >= .90 && verifiedRow.Confidence >= .90,
-                        row.Confidence >= .90 && verifiedRow.Confidence >= .90
+                        row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
+                        PostRecipientNamesAgree(row, verifiedRow),
+                        row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
+                        PostRecipientNamesAgree(row, verifiedRow)
                             ? null
-                            : $"اطمینان خواندن ردیف پایین است (بار اول {row.Confidence:P0}، بازبینی {verifiedRow.Confidence:P0})"));
+                            : $"نام گیرنده یا اطمینان خواندن نیازمند بررسی است (بار اول {row.Confidence:P0}، بازبینی {verifiedRow.Confidence:P0})"));
                 }
                 catch (Exception exception)
                 {
@@ -426,16 +438,25 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     }
 
     private async Task<IReadOnlyCollection<PostRecognizedRow>> RecognizePostRowsAsync(
-        IReadOnlyCollection<string> pagePaths, CancellationToken ct)
+        IReadOnlyCollection<string> pagePaths,
+        IReadOnlyCollection<string> expectedTrackingCodes,
+        CancellationToken ct)
     {
+        var deterministicCodeInstruction = expectedTrackingCodes.Count == 0
+            ? ""
+            : $"""
+
+               کدهای رهگیری زیر مستقیماً و بدون OCR از متن خود PDF استخراج شده‌اند و فهرست قطعی جدول اصلی هستند. خروجی باید برای هر کد دقیقاً یک ردیف و در مجموع دقیقاً {expectedTrackingCodes.Count} ردیف داشته باشد. کد دیگری اضافه نکن و هیچ‌کدام را حذف نکن. اگر همان کد را در جدول بیمه دیدی، آن را نادیده بگیر و فقط ردیف جدول اصلی را که نام گیرنده دارد استفاده کن:
+               {string.Join("\n", expectedTrackingCodes)}
+               """;
         var content = new List<object>
         {
             new
             {
                 type = "input_text",
                 text = """
-                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات نوشته نام گیرنده و نوشته کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به صفحه مربوط به همان نوشته بده. کادر را تا حد ممکن دور خود حروف و ارقام بگیر و خطوط جدول، حاشیه سلول و نوشته ستون‌های مجاور را داخل آن نیاور. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان نوشته اصلی PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
-                    """
+                    این صفحات خروجی رسید انبوه پست ایران هستند. فقط ردیف‌های جدول اصلی مرسولات را بخوان؛ جدول بیمه یا جدول‌های تکرارشده در صفحات بعدی را کاملاً نادیده بگیر. برای هر ردیف، نام گیرنده و کد رهگیری همان ردیف را استخراج کن. ممکن است یک ردیف در مرز دو صفحه شکسته شده باشد؛ مثلاً کد در انتهای یک صفحه و نام گیرنده در ابتدای صفحه بعد باشد. در این حالت دو بخش را یک مرسوله واحد در نظر بگیر، page را صفحه شروع ردیف، trackingPage را صفحه کد و recipientPage را صفحه نام قرار بده. هرگز دو بخش یک ردیف شکسته را دو مرسوله جدا حساب نکن. مختصات نوشته نام گیرنده و نوشته کد رهگیری را به صورت [x1,y1,x2,y2] در مقیاس صفر تا 1000 نسبت به صفحه مربوط به همان نوشته بده. کادر را تا حد ممکن دور خود حروف و ارقام بگیر و خطوط جدول، حاشیه سلول و نوشته ستون‌های مجاور را داخل آن نیاور. کد را با رقم لاتین برگردان، اما تصویر نهایی از روی همان نوشته اصلی PDF بریده خواهد شد. rowOrder ترتیب منطقی ردیف‌ها از بالا به پایین است. اگر درباره نام ردیفی مطمئن نیستی آن را حذف نکن و confidence را پایین‌تر بده.
+                    """ + deterministicCodeInstruction
             }
         };
         var pageNumber = 0;
@@ -784,6 +805,40 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return Math.Max(receiverScore, Math.Max(customerScore, rawAddressScore));
     }
 
+    private static async Task<IReadOnlyCollection<string>> ExtractTrackingCodesFromPdfAsync(
+        string pdfPath,
+        string tempRoot,
+        CancellationToken ct)
+    {
+        var textPath = Path.Combine(tempRoot, "source.txt");
+        var extraction = await RunProcessAsync("pdftotext",
+            $"-layout -enc UTF-8 \"{pdfPath}\" \"{textPath}\"", tempRoot, ct);
+        if (extraction.ExitCode != 0 || !File.Exists(textPath))
+            return [];
+
+        var text = await File.ReadAllTextAsync(textPath, ct);
+        return LongDigitSequencePattern().Matches(text)
+            .Select(match => NormalizeDigits(match.Value))
+            .Where(value => value.Length is >= 20 and <= 30)
+            .Distinct(StringComparer.Ordinal)
+            .Take(100)
+            .ToArray();
+    }
+
+    private static bool PostReadContainsExpectedCodes(
+        IReadOnlyCollection<PostRecognizedRow> read,
+        IReadOnlyCollection<string> expectedTrackingCodes)
+    {
+        var actual = read.Select(value => NormalizeDigits(value.TrackingCode)).ToArray();
+        return actual.Length == expectedTrackingCodes.Count &&
+               actual.Distinct(StringComparer.Ordinal).Count() == actual.Length &&
+               actual.ToHashSet(StringComparer.Ordinal)
+                   .SetEquals(expectedTrackingCodes);
+    }
+
+    private static bool PostRecipientNamesAgree(PostRecognizedRow first, PostRecognizedRow second) =>
+        NameScore(NormalizeName(first.RecipientName), NormalizeName(second.RecipientName)) >= .90;
+
     private static bool PostReadsAgree(
         IReadOnlyCollection<PostRecognizedRow> first,
         IReadOnlyCollection<PostRecognizedRow> second)
@@ -800,10 +855,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             return false;
         foreach (var group in left)
         {
-            if (!right.TryGetValue(group.Key, out var matches) ||
-                NameScore(
-                    NormalizeName(group.Single().RecipientName),
-                    NormalizeName(matches[0].RecipientName)) < .90)
+            if (!right.TryGetValue(group.Key, out _))
                 return false;
         }
         return true;
@@ -851,6 +903,9 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
 
     [GeneratedRegex(@"https?://krch\.ir/[^\s\]\)]+", RegexOptions.IgnoreCase)]
     private static partial Regex ChaparUrlPattern();
+
+    [GeneratedRegex(@"(?<!\d)[0-9۰-۹٠-٩]{20,30}(?!\d)")]
+    private static partial Regex LongDigitSequencePattern();
 
     private sealed record Candidate(Guid CustomerId, Guid? ShippingRequestId, string ReceiverName,
         string City, string FullAddress, string CustomerFullName, DateTime Date, bool IsActive);
