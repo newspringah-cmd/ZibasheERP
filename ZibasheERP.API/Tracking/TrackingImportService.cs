@@ -231,51 +231,69 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             if (Directory.GetFiles(tempRoot, "page-*.jpg").Length > 12)
                 return new TrackingImportParseResult(false, [], "PDF بیش از ۱۲ صفحه است؛ آن را به چند بخش تقسیم کنید.");
 
-            IReadOnlyCollection<PostRecognizedRow> recognized;
-            try
+            // Postal digits are safety-critical. Two agreeing reads are required, but page and
+            // row metadata are deliberately not part of consensus because rows may span pages.
+            // A third read is made only when one read is empty/fails or the first two disagree.
+            var reads = new List<IReadOnlyCollection<PostRecognizedRow>>(3);
+            (IReadOnlyCollection<PostRecognizedRow> Primary,
+                IReadOnlyCollection<PostRecognizedRow> Verification)? consensus = null;
+            for (var attempt = 1; attempt <= 3 && consensus is null; attempt++)
             {
-                recognized = await RecognizePostRowsAsync(pages, ct);
-            }
-            catch (Exception exception)
-            {
-                _logger.LogError(exception, "Primary Iran Post table recognition failed.");
-                return new TrackingImportParseResult(false, [],
-                    "مرحله خواندن جدول اصلی PDF پست ناموفق بود؛ اتصال API یا کیفیت فایل را بررسی کنید. هیچ پیامی ارسال نشد.");
-            }
-            if (recognized.Count == 0)
-                return new TrackingImportParseResult(false, [], "هیچ ردیف مرسوله‌ای در جدول اصلی PDF پیدا نشد.");
-            if (recognized.Count > 100)
-                return new TrackingImportParseResult(false, [], "حداکثر ۱۰۰ مرسوله را در هر مرحله وارد کنید.");
+                try
+                {
+                    var read = await RecognizePostRowsAsync(pages, ct);
+                    if (read.Count > 100)
+                        return new TrackingImportParseResult(false, [],
+                            "حداکثر ۱۰۰ مرسوله را در هر مرحله وارد کنید.");
+                    if (read.Count == 0)
+                    {
+                        _logger.LogWarning("Iran Post recognition attempt {Attempt} returned no rows.", attempt);
+                        continue;
+                    }
 
-            // A second independent read is intentional: postal digits are safety-critical and
-            // a single OCR/model pass must never be enough to authorize delivery.
-            IReadOnlyCollection<PostRecognizedRow> verification;
-            try
-            {
-                verification = await RecognizePostRowsAsync(pages, ct);
+                    reads.Add(read);
+                    consensus = FindAgreeingPostReads(reads);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    _logger.LogError(exception,
+                        "Iran Post table recognition attempt {Attempt} failed.", attempt);
+                }
             }
-            catch (Exception exception)
+
+            if (consensus is null)
             {
-                _logger.LogError(exception, "Secondary Iran Post verification failed.");
+                if (reads.Count == 0)
+                    return new TrackingImportParseResult(false, [],
+                        "پس از سه بار بررسی، هیچ ردیف مرسوله‌ای در جدول اصلی PDF پیدا نشد؛ کیفیت یا ساختار فایل را بررسی کنید. هیچ پیامی ارسال نشد.");
+                if (reads.Count == 1)
+                    return new TrackingImportParseResult(false, [],
+                        "فقط یک بار خواندن معتبر از PDF به دست آمد و امکان تأیید مستقل کدها نبود؛ هیچ پیامی ارسال نشد.");
                 return new TrackingImportParseResult(false, [],
-                    "مرحله بازبینی دوم PDF پست ناموفق بود؛ برای ایمنی هیچ پیامی ارسال نشد.");
+                    "سه بار خواندن PDF به نتیجه مشترک نرسید؛ برای جلوگیری از ارسال اشتباه، هیچ پیامی ارسال نشد.");
             }
-            if (!PostReadsAgree(recognized, verification))
-                return new TrackingImportParseResult(false, [],
-                    "دو بار خواندن PDF نتیجه یکسان نداشت؛ برای جلوگیری از ارسال اشتباه، کل سری متوقف شد.");
+
+            var recognized = consensus.Value.Primary;
+            var verification = consensus.Value.Verification;
 
             var items = new List<TrackingImportItem>();
-            var verifiedRows = verification.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
+            var verifiedRows = verification.ToDictionary(
+                value => NormalizeDigits(value.TrackingCode),
+                StringComparer.Ordinal);
             var orderedRows = recognized.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
-            for (var rowIndex = 0; rowIndex < orderedRows.Length; rowIndex++)
+            foreach (var row in orderedRows)
             {
-                var row = orderedRows[rowIndex];
                 if (row.Page < 1 || row.Page > pages.Length ||
                     row.RecipientPage < 1 || row.RecipientPage > pages.Length ||
                     row.TrackingPage < 1 || row.TrackingPage > pages.Length)
                     continue;
                 var code = NormalizeDigits(row.TrackingCode);
                 if (code.Length is < 15 or > 30 || string.IsNullOrWhiteSpace(row.RecipientName)) continue;
+                if (!verifiedRows.TryGetValue(code, out var verifiedRow)) continue;
                 try
                 {
                     var recipientCrop = await CropNormalizedAsync(
@@ -285,10 +303,10 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, Clean(row.RecipientName), Clean(row.Destination), null,
                         await BuildPostCardAsync(recipientCrop, trackingCrop, tempRoot, ct),
-                        row.Confidence >= .90 && verifiedRows[rowIndex].Confidence >= .90,
-                        row.Confidence >= .90 && verifiedRows[rowIndex].Confidence >= .90
+                        row.Confidence >= .90 && verifiedRow.Confidence >= .90,
+                        row.Confidence >= .90 && verifiedRow.Confidence >= .90
                             ? null
-                            : $"اطمینان خواندن ردیف پایین است (بار اول {row.Confidence:P0}، بازبینی {verifiedRows[rowIndex].Confidence:P0})"));
+                            : $"اطمینان خواندن ردیف پایین است (بار اول {row.Confidence:P0}، بازبینی {verifiedRow.Confidence:P0})"));
                 }
                 catch (Exception exception)
                 {
@@ -771,18 +789,35 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         IReadOnlyCollection<PostRecognizedRow> second)
     {
         if (first.Count != second.Count) return false;
-        var left = first.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
-        var right = second.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
-        for (var index = 0; index < left.Length; index++)
+        var left = first
+            .GroupBy(value => NormalizeDigits(value.TrackingCode), StringComparer.Ordinal)
+            .ToArray();
+        var right = second
+            .GroupBy(value => NormalizeDigits(value.TrackingCode), StringComparer.Ordinal)
+            .ToDictionary(value => value.Key, value => value.ToArray(), StringComparer.Ordinal);
+        if (left.Any(value => string.IsNullOrWhiteSpace(value.Key) || value.Count() != 1) ||
+            right.Any(value => string.IsNullOrWhiteSpace(value.Key) || value.Value.Length != 1))
+            return false;
+        foreach (var group in left)
         {
-            if (left[index].Page != right[index].Page ||
-                left[index].RecipientPage != right[index].RecipientPage ||
-                left[index].TrackingPage != right[index].TrackingPage ||
-                NormalizeDigits(left[index].TrackingCode) != NormalizeDigits(right[index].TrackingCode) ||
-                NameScore(NormalizeName(left[index].RecipientName), NormalizeName(right[index].RecipientName)) < .90)
+            if (!right.TryGetValue(group.Key, out var matches) ||
+                NameScore(
+                    NormalizeName(group.Single().RecipientName),
+                    NormalizeName(matches[0].RecipientName)) < .90)
                 return false;
         }
         return true;
+    }
+
+    private static (IReadOnlyCollection<PostRecognizedRow> Primary,
+        IReadOnlyCollection<PostRecognizedRow> Verification)? FindAgreeingPostReads(
+        IReadOnlyList<IReadOnlyCollection<PostRecognizedRow>> reads)
+    {
+        for (var left = 0; left < reads.Count; left++)
+        for (var right = left + 1; right < reads.Count; right++)
+            if (PostReadsAgree(reads[left], reads[right]))
+                return (reads[left], reads[right]);
+        return null;
     }
 
     private static int Levenshtein(string left, string right)
