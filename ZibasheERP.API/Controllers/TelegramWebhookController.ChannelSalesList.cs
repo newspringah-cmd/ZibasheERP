@@ -602,6 +602,7 @@ public sealed partial class TelegramWebhookController
                 IsGift = old.IsGift,
                 GiftRecipientTelegramUserId = old.GiftRecipientTelegramUserId,
                 GiftRecipientTelegramUsername = old.GiftRecipientTelegramUsername,
+                AdminNotes = old.AdminNotes,
                 IsBottleOwner = index == 0,
                 VolumeMl = old.VolumeMl, PerfumePricePerMl = nextList.PricePerMl,
                 Kind = index == 0 ? SalesListRequestKind.CurrentBottle : SalesListRequestKind.NextBottle,
@@ -824,6 +825,7 @@ public sealed partial class TelegramWebhookController
                 ? request.TelegramUsername
                 : $"@{request.TelegramUsername.TrimStart('@')}") +
         (request.IsGift ? $" for {GiftRecipientLabel(request)}" : string.Empty) +
+        (!string.IsNullOrWhiteSpace(request.AdminNotes) ? $" {request.AdminNotes.Trim()}" : string.Empty) +
         (request.IsBottleOwner ? " 👑" : string.Empty) +
         FancyBottleMarker(request.Bottle) +
         (request.OmitIdentityOnLabel ? " B Id" :

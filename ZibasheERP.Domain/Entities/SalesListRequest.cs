@@ -35,6 +35,7 @@ public sealed class SalesListRequest : BaseEntity
     public bool IsComplimentaryBottle { get; set; }
     public bool OmitIdentityOnLabel { get; set; }
     public string? LabelIdentityText { get; set; }
+    public string? AdminNotes { get; set; }
     public int VolumeMl { get; set; }
     public Guid? BottleId { get; set; }
     public Bottle? Bottle { get; set; }

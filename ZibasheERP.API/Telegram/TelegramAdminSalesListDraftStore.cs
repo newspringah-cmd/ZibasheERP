@@ -188,6 +188,7 @@ public sealed class TelegramAdminRequestDraft
     public string SalesListName { get; set; } = string.Empty;
     public TelegramAdminRequestStage Stage { get; set; } = TelegramAdminRequestStage.AwaitingListSearch;
     public string Identity { get; set; } = string.Empty;
+    public string RequestNotes { get; set; } = string.Empty;
     public bool IsGift { get; set; }
     public string GiftRecipientIdentity { get; set; } = string.Empty;
     public bool IsBottleOwner { get; set; }

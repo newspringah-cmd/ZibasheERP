@@ -3724,8 +3724,8 @@ public sealed partial class TelegramWebhookController
             }
             await ReplyAsync(chatId,
                 draft.Kind == TelegramAdminRequestKind.GiftRequest
-                    ? "شناسه هدیه‌دهنده را به‌صورت @username یا Telegram ID وارد کنید:"
-                    : "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید.", ct);
+                    ? "یوزرنیم هدیه‌دهنده را وارد کنید. متن بعد از یوزرنیم به‌عنوان توضیحات آیتم ثبت می‌شود.\nمثال: @username شیشه کوتاه"
+                    : "یوزرنیم مشتری را وارد کنید. متن بعد از یوزرنیم به‌عنوان توضیحات آیتم ثبت می‌شود.\nمثال: @username سر قرمز", ct);
             return;
         }
 
@@ -4570,31 +4570,17 @@ public sealed partial class TelegramWebhookController
                 await SendBulkCustomerRemovalConfirmationAsync(draft, activeRequests, ct);
                 return true;
             }
-            var identities = System.Text.RegularExpressions.Regex.Split(
-                input, "\\s+for\\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            var giver = identities[0].Trim();
-            var giverUsername = giver.StartsWith('@') ? NormalizeAdminRequestUsername(giver) : null;
-            if (identities.Length > 2 || giverUsername is null || giverUsername.Length < 5)
+            if (!TryParseAdminRequestIdentityAndNotes(
+                    input, out var giverUsername, out var inlineRecipient, out var requestNotes))
             {
-                await ReplyAsync(message.Chat.Id, "برای ثبت آیتم جدید، @username معتبر مشتری الزامی است.", ct);
+                await ReplyAsync(message.Chat.Id,
+                    "برای ثبت آیتم جدید، ابتدا @username معتبر و سپس توضیحات اختیاری را وارد کنید.\nمثال: @username سر قرمز", ct);
                 return true;
             }
             draft.Identity = $"@{giverUsername}";
-            draft.IsGift = draft.Kind == TelegramAdminRequestKind.GiftRequest || identities.Length == 2;
-            draft.GiftRecipientIdentity = identities.Length == 2 ? identities[1].Trim() : string.Empty;
-            if (identities.Length == 2)
-            {
-                var inlineRecipient = draft.GiftRecipientIdentity.StartsWith('@')
-                    ? NormalizeAdminRequestUsername(draft.GiftRecipientIdentity)
-                    : null;
-                if (inlineRecipient is null || inlineRecipient.Length < 5)
-                {
-                    await ReplyAsync(message.Chat.Id,
-                        "برای هدیه‌گیرنده نیز @username معتبر الزامی است.", ct);
-                    return true;
-                }
-                draft.GiftRecipientIdentity = $"@{inlineRecipient}";
-            }
+            draft.RequestNotes = requestNotes;
+            draft.IsGift = draft.Kind == TelegramAdminRequestKind.GiftRequest || inlineRecipient is not null;
+            draft.GiftRecipientIdentity = inlineRecipient is null ? string.Empty : $"@{inlineRecipient}";
             if (draft.Kind == TelegramAdminRequestKind.GiftRequest)
             {
                 draft.GiftRecipientIdentity = string.Empty;
@@ -4708,9 +4694,12 @@ public sealed partial class TelegramWebhookController
         var bottle = draft.IsBottleOwner ? "\nنوع: صاحب باتل — شیشه رایگان" :
             draft.IsComplimentaryBottle ? "\nنوع شیشه: رایگان (غیر صاحب باتل)" : draft.BottleType is null ? "" :
             $"\nنوع شیشه: {(draft.BottleType == BottleType.Normal ? "نرمال" : "فانتزی")}";
+        var notes = string.IsNullOrWhiteSpace(draft.RequestNotes)
+            ? string.Empty
+            : $"\nتوضیحات: {draft.RequestNotes}";
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
             $"پیش‌نمایش ثبت {kind}:\n\nلیست: {draft.PublicCode} — {draft.SalesListName}\n" +
-            $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\nمقدار: {draft.VolumeMl} میل{bottle}",
+            $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\nمقدار: {draft.VolumeMl} میل{bottle}{notes}",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[]
@@ -5182,6 +5171,7 @@ public sealed partial class TelegramWebhookController
             IsGift = draft.IsGift,
             GiftRecipientTelegramUsername = giftRecipientUsername,
             GiftRecipientTelegramUserId = giftRecipientTelegramId,
+            AdminNotes = string.IsNullOrWhiteSpace(draft.RequestNotes) ? null : draft.RequestNotes,
             IsBottleOwner = effectiveIsBottleOwner,
             IsComplimentaryBottle = effectiveIsComplimentaryBottle,
             BottleId = bottle?.Id, PerfumePricePerMl = list.PricePerMl,
@@ -5238,6 +5228,7 @@ public sealed partial class TelegramWebhookController
                 $"عطر: {list.EnglishName}\n" +
                 $"مقدار: {draft.VolumeMl} میل\n" +
                 $"شیشه: {bottleLabel}\n" +
+                (string.IsNullOrWhiteSpace(draft.RequestNotes) ? string.Empty : $"توضیحات: {draft.RequestNotes}\n") +
                 $"مبلغ کل: {total:N0} تومان\n" +
                 SalesListAuditPostLine(list), ct);
         }
@@ -5251,6 +5242,7 @@ public sealed partial class TelegramWebhookController
                 $"کد لیست: {list.DisplayCode}\n" +
                 $"عطر: {list.EnglishName}\n" +
                 $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل\n" +
+                (string.IsNullOrWhiteSpace(draft.RequestNotes) ? string.Empty : $"توضیحات: {draft.RequestNotes}\n") +
                 SalesListAuditPostLine(list), ct);
         }
         _adminRequestDrafts.Remove(chatId, callback.From.Id);
@@ -5519,6 +5511,48 @@ public sealed partial class TelegramWebhookController
         return normalized.Length > 0 && normalized.Any(char.IsLetter)
             ? normalized.ToLowerInvariant()
             : null;
+    }
+
+    private static bool TryParseAdminRequestIdentityAndNotes(
+        string value,
+        out string username,
+        out string? giftRecipientUsername,
+        out string notes)
+    {
+        username = string.Empty;
+        giftRecipientUsername = null;
+        notes = string.Empty;
+        var match = System.Text.RegularExpressions.Regex.Match(
+            value.Trim(), @"^(?<username>@\S+)(?:\s+(?<remainder>.*))?$",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (!match.Success ||
+            NormalizeAdminRequestUsername(match.Groups["username"].Value) is not { Length: >= 5 } parsedUsername)
+            return false;
+
+        username = parsedUsername;
+        var remainder = match.Groups["remainder"].Value.Trim();
+        if (remainder.Length == 0)
+            return true;
+
+        var giftMatch = System.Text.RegularExpressions.Regex.Match(
+            remainder, @"^for\s+(?<recipient>@\S+)(?:\s+(?<notes>.*))?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (giftMatch.Success)
+        {
+            giftRecipientUsername = NormalizeAdminRequestUsername(giftMatch.Groups["recipient"].Value);
+            if (giftRecipientUsername is not { Length: >= 5 })
+                return false;
+            notes = giftMatch.Groups["notes"].Value.Trim();
+        }
+        else
+        {
+            notes = remainder;
+        }
+
+        if (notes.Length > 300)
+            notes = notes[..300].TrimEnd();
+        return true;
     }
 
     private static decimal AdjustedPrice(decimal price, decimal percent) =>

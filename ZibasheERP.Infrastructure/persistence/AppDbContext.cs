@@ -375,6 +375,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SalesListRequest>().Property(value => value.GiftRecipientTelegramUserId).HasMaxLength(50);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.GiftRecipientTelegramUsername).HasMaxLength(100);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.LabelIdentityText).HasMaxLength(80);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.AdminNotes).HasMaxLength(300);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.ExternalReference).HasMaxLength(100);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.PerfumePricePerMl).HasPrecision(18, 2);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.BottlePrice).HasPrecision(18, 2);
