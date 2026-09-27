@@ -473,8 +473,10 @@ public sealed partial class TelegramWebhookController
                 .Include(value => value.Order).ThenInclude(value => value!.Customer)
                 .Include(value => value.SalesList)
                 .Include(value => value.Perfume)
-                .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
-                    salesListIds.Contains(value.SalesListId.Value) &&
+                .Where(value => !value.IsDeleted &&
+                    ((value.SalesListId.HasValue && salesListIds.Contains(value.SalesListId.Value)) ||
+                     (status == OrderItemFulfillmentStatus.DecantedReadyToShip &&
+                      !value.SalesListId.HasValue && value.Order != null && value.Order.IsInventory)) &&
                     statuses.Contains(value.FulfillmentStatus))
                 .OrderBy(value => value.UpdatedAt ?? value.CreatedAt)
                 .ToArrayAsync(ct);
@@ -520,7 +522,9 @@ public sealed partial class TelegramWebhookController
         CancellationToken ct)
     {
         var groups = items
-            .GroupBy(item => item.SalesListId)
+            .GroupBy(item => item.SalesListId.HasValue
+                ? $"list:{item.SalesListId.Value:N}"
+                : $"inventory:{item.ManualDescription?.Trim().ToLowerInvariant()}")
             .OrderBy(group => group.First().SalesList?.PersianName ??
                               group.First().Perfume?.Name ??
                               group.First().ManualDescription ?? "عطر")
@@ -531,7 +535,7 @@ public sealed partial class TelegramWebhookController
             var first = group.First();
             var list = first.SalesList;
             var name = list?.PersianName ?? first.Perfume?.Name ?? first.ManualDescription ?? "عطر";
-            var code = list is null ? string.Empty : $"\nکد لیست: <code>{list.DisplayCode}</code>";
+            var code = list is null ? "\n🔴 موجودی" : $"\nکد لیست: <code>{list.DisplayCode}</code>";
             TelegramSendResult heading;
             if (!string.IsNullOrWhiteSpace(list?.TelegramPhotoFileId))
             {
@@ -553,7 +557,10 @@ public sealed partial class TelegramWebhookController
             }
 
             var lines = group.Select((item, index) =>
-                $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — {item.RequestedVolumeMl} میل");
+                $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — {item.RequestedVolumeMl} میل" +
+                (item.Order?.IsInventory == true || item.SalesList?.IsInventoryOffer == true
+                    ? " — 🔴 موجودی"
+                    : string.Empty));
             var details = $"فهرست آیتم‌های {name}\nتعداد: {group.Count()}\n\n{string.Join("\n", lines)}";
             foreach (var part in SplitTelegramMessage(details))
                 await ReplyAsync(chatId, part, ct);

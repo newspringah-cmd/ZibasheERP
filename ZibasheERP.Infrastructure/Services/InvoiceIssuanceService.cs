@@ -694,7 +694,10 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 Quantity = 1, PerfumePricePerMl = line.UnitAmount,
                 PerfumeAmount = perfumeAmount, BottlePrice = line.BottleAmount,
                 LineTotal = perfumeAmount + line.BottleAmount, RowNumber = row,
-                FulfillmentStatus = OrderItemFulfillmentStatus.WaitingForArrivalInIran
+                FulfillmentStatus = isInventory
+                    ? OrderItemFulfillmentStatus.DecantedReadyToShip
+                    : OrderItemFulfillmentStatus.WaitingForArrivalInIran,
+                DecantedAt = isInventory ? now : null
             });
         }
         order.PerfumeTotal = order.Items.Sum(item => item.PerfumeAmount);
