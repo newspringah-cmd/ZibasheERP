@@ -222,19 +222,19 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             var expectedTrackingCodes = trackingLocations.Keys.ToArray();
             var prefix = Path.Combine(tempRoot, "page");
             var render = await RunProcessAsync("pdftoppm",
-                $"-jpeg -r 150 -jpegopt quality=88,progressive=n \"{pdfPath}\" \"{prefix}\"", tempRoot, ct);
+                $"-png -r 300 \"{pdfPath}\" \"{prefix}\"", tempRoot, ct);
             if (render.ExitCode != 0)
             {
                 _logger.LogError("PDF rendering failed: {Error}", render.Error);
                 return new TrackingImportParseResult(false, [],
                     "مرحله تبدیل PDF پست به تصویر ناموفق بود؛ فایل ممکن است خراب یا رمزدار باشد. هیچ پیامی ارسال نشد.");
             }
-            var pages = Directory.GetFiles(tempRoot, "page-*.jpg")
+            var pages = Directory.GetFiles(tempRoot, "page-*.png")
                 .OrderBy(NaturalPageNumber).Take(12).ToArray();
             if (pages.Length == 0)
                 return new TrackingImportParseResult(false, [],
                     "مرحله تبدیل PDF ناموفق بود: هیچ صفحه‌ای از فایل ساخته نشد؛ هیچ پیامی ارسال نشد.");
-            if (Directory.GetFiles(tempRoot, "page-*.jpg").Length > 12)
+            if (Directory.GetFiles(tempRoot, "page-*.png").Length > 12)
                 return new TrackingImportParseResult(false, [], "PDF بیش از ۱۲ صفحه است؛ آن را به چند بخش تقسیم کنید.");
 
             // Postal digits are safety-critical. Two agreeing reads are required, but page and
@@ -866,15 +866,16 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         await File.WriteAllBytesAsync(trackingPath, trackingNumberCrop, ct);
 
         var nameLayerResult = await RunProcessAsync("convert",
-            $"\"{recipientPath}\" -colorspace Gray -contrast-stretch 1%x1% -morphology Dilate Octagon:1 " +
-            "-fuzz 14% -transparent white -trim +repage " +
+            $"\"{recipientPath}\" -colorspace Gray -contrast-stretch 1%x1% -threshold 82% " +
+            "-morphology Erode Diamond:1 -transparent white -trim +repage " +
             "-resize \"620x140\" -gravity center -background none -extent 630x145 " +
             $"\"{recipientLayer}\"", tempRoot, ct);
         if (nameLayerResult.ExitCode != 0)
             throw new InvalidOperationException($"Recipient layer generation failed: {nameLayerResult.Error}");
 
         var codeLayerResult = await RunProcessAsync("convert",
-            $"\"{trackingPath}\" -colorspace Gray -contrast-stretch 1%x1% -fuzz 14% -transparent white -trim +repage " +
+            $"\"{trackingPath}\" -colorspace Gray -contrast-stretch 1%x1% -threshold 82% " +
+            "-transparent white -trim +repage " +
             "-resize \"660x135\" -gravity center -background none -extent 670x140 " +
             $"\"{trackingLayer}\"", tempRoot, ct);
         if (codeLayerResult.ExitCode != 0)

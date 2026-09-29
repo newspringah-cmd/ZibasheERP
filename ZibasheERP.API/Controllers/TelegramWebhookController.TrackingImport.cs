@@ -393,8 +393,119 @@ public sealed partial class TelegramWebhookController
             }
             return true;
         }
+        try
+        {
+            await ReportUnmatchedTrackingDispatchesAsync(message.Chat.Id, batch.Id, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception,
+                "Reporting unmatched tracking recipients failed for batch {BatchId}; preview processing will continue.",
+                batch.Id);
+            try
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "⚠️ ارسال گزارش گیرنده‌های پیدانشده به گروه «خطا فاکتور نرسیده» با خطای فنی روبه‌رو شد؛ پیش‌نمایش و پردازش فایل ادامه پیدا می‌کند.", ct);
+            }
+            catch (Exception notificationException)
+            {
+                _logger.LogWarning(notificationException,
+                    "Could not notify source chat about unmatched tracking report failure for batch {BatchId}.",
+                    batch.Id);
+            }
+        }
         await SendTrackingBatchPreviewAsync(message.Chat.Id, batch.Id, true, ct, duplicateCount);
         return true;
+    }
+
+    private async Task ReportUnmatchedTrackingDispatchesAsync(
+        long sourceChatId, Guid batchId, CancellationToken ct)
+    {
+        var failureChatId = string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
+            ? _options.AdminChatId.Trim()
+            : _options.InvoiceFailureChatId.Trim();
+        if (string.IsNullOrWhiteSpace(failureChatId))
+        {
+            _logger.LogWarning(
+                "Unmatched tracking recipients in batch {BatchId} could not be reported because no invoice failure chat is configured.",
+                batchId);
+            await ReplyAsync(sourceChatId,
+                "⚠️ گیرنده یک یا چند کد رهگیری پیدا نشد، اما گروه «خطا فاکتور نرسیده» تنظیم نشده است.", ct);
+            return;
+        }
+
+        var unmatched = await _db.TrackingDispatches.AsNoTracking()
+            .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
+                value.Status == TrackingDispatchStatus.NeedsReview && !value.CustomerId.HasValue)
+            .OrderBy(value => value.RecipientName)
+            .ToArrayAsync(ct);
+        if (unmatched.Length == 0) return;
+
+        var failedReports = 0;
+        foreach (var dispatch in unmatched)
+        {
+            try
+            {
+                var carrier = dispatch.Carrier switch
+                {
+                    TrackingCarrier.IranPost => "پست",
+                    TrackingCarrier.IranPostExpress => "پست ویژه",
+                    TrackingCarrier.Chapar => "چاپار",
+                    _ => "نامشخص"
+                };
+                var caption =
+                    $"⚠️ گیرنده کد رهگیری پیدا نشد\n\n" +
+                    $"نام خوانده‌شده: {dispatch.RecipientName}\n" +
+                    $"کد رهگیری: {dispatch.TrackingCode}\n" +
+                    $"شرکت ارسال: {carrier}" +
+                    (string.IsNullOrWhiteSpace(dispatch.Destination)
+                        ? ""
+                        : $"\nمقصد: {dispatch.Destination}") +
+                    $"\nعلت: {dispatch.MatchNotes}\n" +
+                    $"شناسه داخلی: {dispatch.Id:N}";
+                TelegramSendResult report;
+                if (dispatch.CardImage is { Length: > 0 })
+                {
+                    report = await _sender.SendPhotoBytesWithKeyboardAsync(
+                        failureChatId, dispatch.CardImage,
+                        $"tracking-unmatched-{dispatch.TrackingCode}.png", caption,
+                        BuildTrackingDispatchButtons(dispatch), ct);
+                }
+                else
+                {
+                    report = await _sender.SendInlineKeyboardAsync(
+                        failureChatId, caption, BuildTrackingDispatchButtons(dispatch), ct);
+                }
+
+                if (!report.IsSuccessful)
+                {
+                    failedReports++;
+                    _logger.LogWarning(
+                        "Unmatched tracking recipient report failed for dispatch {DispatchId}: {Error}",
+                        dispatch.Id, report.Error);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                failedReports++;
+                _logger.LogError(exception,
+                    "Unmatched tracking recipient report failed for dispatch {DispatchId}.", dispatch.Id);
+            }
+        }
+
+        if (failedReports > 0)
+        {
+            await ReplyAsync(sourceChatId,
+                $"⚠️ گیرنده {unmatched.Length} کد رهگیری پیدا نشد؛ گزارش {failedReports} مورد به گروه «خطا فاکتور نرسیده» هم ناموفق بود. پیش‌نمایش‌ها حفظ شده‌اند.", ct);
+        }
     }
 
     private async Task SendTrackingBatchPreviewAsync(
