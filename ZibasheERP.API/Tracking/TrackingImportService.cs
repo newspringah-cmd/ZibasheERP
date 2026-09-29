@@ -277,20 +277,25 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 }
             }
 
-            if (consensus is null)
+            var singleReadFallback = consensus is null && reads.Count == 1 && expectedTrackingCodes.Count > 0;
+            if (consensus is null && !singleReadFallback)
             {
                 if (reads.Count == 0)
                     return new TrackingImportParseResult(false, [],
                         "پس از سه بار بررسی، هیچ ردیف مرسوله‌ای در جدول اصلی PDF پیدا نشد؛ کیفیت یا ساختار فایل را بررسی کنید. هیچ پیامی ارسال نشد.");
                 if (reads.Count == 1)
                     return new TrackingImportParseResult(false, [],
-                        "فقط یک بار خواندن معتبر از PDF به دست آمد و امکان تأیید مستقل کدها نبود؛ هیچ پیامی ارسال نشد.");
+                        "فقط یک بار خواندن معتبر از PDF به دست آمد و کدهای قطعی از متن PDF نیز قابل استخراج نبود؛ هیچ پیامی ارسال نشد.");
                 return new TrackingImportParseResult(false, [],
                     "سه بار خواندن PDF به نتیجه مشترک نرسید؛ برای جلوگیری از ارسال اشتباه، هیچ پیامی ارسال نشد.");
             }
 
-            var recognized = consensus.Value.Primary;
-            var verification = consensus.Value.Verification;
+            var recognized = singleReadFallback ? reads[0] : consensus!.Value.Primary;
+            var verification = singleReadFallback ? reads[0] : consensus!.Value.Verification;
+            if (singleReadFallback)
+                _logger.LogWarning(
+                    "Iran Post PDF continued with one valid vision read because all {Count} tracking codes were independently extracted from PDF text. Every row remains blocked for admin review.",
+                    expectedTrackingCodes.Count);
 
             var items = new List<TrackingImportItem>();
             var verifiedRows = verification.ToDictionary(
@@ -318,10 +323,12 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, recipientName, Clean(row.Destination), null,
                         await BuildPostCardAsync(recipientCrop, trackingNumberCrop, tempRoot, ct),
-                        row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
+                        !singleReadFallback && row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
                         PostRecipientNamesAgree(row, verifiedRow),
-                        row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
-                        PostRecipientNamesAgree(row, verifiedRow)
+                        singleReadFallback
+                            ? "فقط یک خواندن تصویری معتبر بود؛ کد با متن PDF کنترل شد اما نام گیرنده باید با «ساخت مجدد» بازبینی شود"
+                            : row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
+                              PostRecipientNamesAgree(row, verifiedRow)
                             ? null
                             : $"نام گیرنده یا اطمینان خواندن نیازمند بررسی است (بار اول {row.Confidence:P0}، بازبینی {verifiedRow.Confidence:P0})"));
                 }
