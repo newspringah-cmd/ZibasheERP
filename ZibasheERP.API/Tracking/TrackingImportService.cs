@@ -247,7 +247,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             {
                 try
                 {
-                    var read = await RecognizePostRowsAsync(pages, expectedTrackingCodes, ct);
+                    var read = await RecognizePostRecipientCropsAsync(
+                        pages, trackingLocations, tempRoot, ct);
                     if (read.Count > 100)
                         return new TrackingImportParseResult(false, [],
                             "حداکثر ۱۰۰ مرسوله را در هر مرحله وارد کنید.");
@@ -632,6 +633,126 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                                      value.TrackingBox.Any(coordinate => coordinate is < 0 or > 1000)))
             throw new InvalidOperationException("One or more postal rows have invalid crop coordinates.");
         return parsed.Rows;
+    }
+
+    private async Task<IReadOnlyCollection<PostRecognizedRow>> RecognizePostRecipientCropsAsync(
+        IReadOnlyList<string> pagePaths,
+        IReadOnlyDictionary<string, PdfTrackingLocation> trackingLocations,
+        string tempRoot,
+        CancellationToken ct)
+    {
+        var ordered = trackingLocations
+            .OrderBy(value => value.Value.Page)
+            .ThenBy(value => value.Value.TrackingNumberBox[1])
+            .ToArray();
+        var content = new List<object>
+        {
+            new
+            {
+                type = "input_text",
+                text = $"""
+                    این تصاویر فقط برش ستون نام گیرنده از {ordered.Length} ردیف قطعی جدول اصلی پست ایران هستند. قبل از هر تصویر، کد رهگیری قطعی همان ردیف نوشته شده است. فقط نام فارسی گیرنده داخل تصویر را بخوان و همان کد را بدون هیچ تغییری در خروجی برگردان. عنوان، خط جدول، نام فرستنده یا متن دیگری اضافه نکن. برای هر کد دقیقاً یک خروجی بده. اگر نام واضح نیست رشته خالی و confidence پایین بده؛ هرگز نام ردیف دیگری را حدس نزن.
+                    """
+            }
+        };
+        foreach (var entry in ordered)
+        {
+            var location = entry.Value;
+            if (location.Page < 1 || location.Page > pagePaths.Count)
+                continue;
+            var crop = await CropNormalizedAsync(
+                pagePaths[location.Page - 1], location.RecipientBox, 0, tempRoot, ct);
+            content.Add(new
+            {
+                type = "input_text",
+                text = $"کد رهگیری قطعی این تصویر: {entry.Key}"
+            });
+            content.Add(new
+            {
+                type = "input_image",
+                image_url = $"data:image/png;base64,{Convert.ToBase64String(crop)}"
+            });
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "responses")
+        {
+            Content = JsonContent.Create(new
+            {
+                model = _options.OpenAiModel,
+                input = new[] { new { role = "user", content = content.ToArray() } },
+                text = new
+                {
+                    format = new
+                    {
+                        type = "json_schema",
+                        name = "iran_post_recipient_crops",
+                        strict = true,
+                        schema = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                rows = new
+                                {
+                                    type = "array",
+                                    items = new
+                                    {
+                                        type = "object",
+                                        properties = new
+                                        {
+                                            trackingCode = new { type = "string" },
+                                            recipientName = new { type = "string" },
+                                            confidence = new { type = "number" }
+                                        },
+                                        required = new[] { "trackingCode", "recipientName", "confidence" },
+                                        additionalProperties = false
+                                    }
+                                }
+                            },
+                            required = new[] { "rows" },
+                            additionalProperties = false
+                        }
+                    }
+                }
+            })
+        };
+        using var response = await _httpClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"OpenAI recipient-crop recognition returned HTTP {(int)response.StatusCode}: {body[..Math.Min(500, body.Length)]}");
+        using var document = JsonDocument.Parse(body);
+        var outputText = document.RootElement.GetProperty("output").EnumerateArray()
+            .Where(value => value.TryGetProperty("content", out _))
+            .SelectMany(value => value.GetProperty("content").EnumerateArray())
+            .First(value => value.TryGetProperty("type", out var type) && type.GetString() == "output_text")
+            .GetProperty("text").GetString();
+        var parsed = JsonSerializer.Deserialize<PostRecipientRowsResponse>(outputText!, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        }) ?? throw new InvalidOperationException("OpenAI returned an empty recipient-crop result.");
+
+        var rowsByCode = parsed.Rows
+            .GroupBy(value => NormalizeDigits(value.TrackingCode), StringComparer.Ordinal)
+            .Where(value => value.Count() == 1)
+            .ToDictionary(value => value.Key, value => value.Single(), StringComparer.Ordinal);
+        var result = new List<PostRecognizedRow>(ordered.Length);
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var entry = ordered[index];
+            if (!rowsByCode.TryGetValue(entry.Key, out var row))
+                continue;
+            var location = entry.Value;
+            var recipientName = string.IsNullOrWhiteSpace(row.RecipientName)
+                ? "نام گیرنده خوانده نشد"
+                : Clean(row.RecipientName);
+            result.Add(new PostRecognizedRow(
+                location.Page, location.Page, location.Page, index + 1,
+                recipientName, entry.Key, string.Empty,
+                location.RecipientBox, location.TrackingNumberBox,
+                string.IsNullOrWhiteSpace(row.RecipientName) ? 0 : row.Confidence));
+        }
+        return result;
     }
 
     private async Task<PostExpressRow[]> RecognizePostExpressRowsAsync(string sourceText, CancellationToken ct)
@@ -1052,6 +1173,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     private sealed record Candidate(Guid CustomerId, Guid? ShippingRequestId, string ReceiverName,
         string City, string FullAddress, string CustomerFullName, DateTime Date, bool IsActive);
     private sealed record PostRowsResponse(PostRecognizedRow[] Rows);
+    private sealed record PostRecipientRowsResponse(PostRecipientRow[] Rows);
+    private sealed record PostRecipientRow(string TrackingCode, string RecipientName, double Confidence);
     private sealed record PostExpressRowsResponse(PostExpressRow[] Rows);
     private sealed record PostExpressRow(
         string RecipientName, string TrackingCode, string Destination, double Confidence);
