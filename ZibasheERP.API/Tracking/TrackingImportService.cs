@@ -44,6 +44,8 @@ public interface ITrackingImportService
     Task<TrackingImportParseResult> ParseIranPostExpressAsync(string text, CancellationToken ct);
     Task<TrackingImportParseResult> ParseIranPostPdfAsync(byte[] pdf, CancellationToken ct);
     Task<TrackingMatch> MatchAsync(string recipientName, string destination, CancellationToken ct);
+    Task<string?> RecheckRecipientNameAsync(byte[] cardImage, CancellationToken ct);
+    byte[] BuildCard(TrackingCarrier carrier, string recipientName, string trackingCode, string? trackingUrl);
 }
 
 public sealed partial class TrackingImportService : ITrackingImportService, IDisposable
@@ -306,15 +308,16 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 if (!verifiedRows.TryGetValue(code, out var verifiedRow)) continue;
                 try
                 {
+                    var recipientName = Clean(row.RecipientName);
                     var recipientBox = CreatePostRecipientCropBox(row.RecipientBox);
-                    var trackingBox = CreatePostTrackingCropBox(row.TrackingBox);
+                    var trackingNumberBox = CreatePostTrackingNumberCropBox(row.TrackingBox);
                     var recipientCrop = await CropNormalizedAsync(
                         pages[row.RecipientPage - 1], recipientBox, 0, tempRoot, ct);
-                    var trackingCrop = await CropNormalizedAsync(
-                        pages[row.TrackingPage - 1], trackingBox, 0, tempRoot, ct);
+                    var trackingNumberCrop = await CropNormalizedAsync(
+                        pages[row.TrackingPage - 1], trackingNumberBox, 0, tempRoot, ct);
                     items.Add(new TrackingImportItem(
-                        TrackingCarrier.IranPost, code, Clean(row.RecipientName), Clean(row.Destination), null,
-                        await BuildPostCardAsync(recipientCrop, trackingCrop, tempRoot, ct),
+                        TrackingCarrier.IranPost, code, recipientName, Clean(row.Destination), null,
+                        await BuildPostCardAsync(recipientCrop, trackingNumberCrop, tempRoot, ct),
                         row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
                         PostRecipientNamesAgree(row, verifiedRow),
                         row.Confidence >= .90 && verifiedRow.Confidence >= .90 &&
@@ -328,7 +331,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                         "Iran Post crop/card generation failed for page {Page}, recipient page {RecipientPage}, tracking page {TrackingPage}, row {Row}, tracking {TrackingCode}.",
                         row.Page, row.RecipientPage, row.TrackingPage, row.RowOrder, code);
                     return new TrackingImportParseResult(false, [],
-                        $"مرحله برش نام و کد یا ساخت تصویر برای ردیف {row.RowOrder} بین صفحه‌های {row.TrackingPage} و {row.RecipientPage} ناموفق بود؛ هیچ پیامی ارسال نشد.");
+                        $"مرحله برش نام و عدد کد یا ساخت تصویر برای ردیف {row.RowOrder} بین صفحه‌های {row.TrackingPage} و {row.RecipientPage} ناموفق بود؛ هیچ پیامی ارسال نشد.");
                 }
             }
 
@@ -406,6 +409,88 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         var oldResult = SelectUnique(target, destination, old, requireExact: true);
         return oldResult ?? new TrackingMatch(null, null, TrackingDispatchStatus.NeedsReview,
             "تطبیق یکتا پیدا نشد؛ نیازمند بررسی ادمین");
+    }
+
+    public byte[] BuildCard(
+        TrackingCarrier carrier, string recipientName, string trackingCode, string? trackingUrl) =>
+        carrier switch
+        {
+            TrackingCarrier.Chapar => BuildChaparCard(recipientName, trackingCode, trackingUrl),
+            TrackingCarrier.IranPostExpress => BuildPostExpressCard(recipientName, trackingCode),
+            TrackingCarrier.IranPost => throw new InvalidOperationException(
+                "Iran Post cards must keep the original cropped PDF text."),
+            _ => throw new ArgumentOutOfRangeException(nameof(carrier), carrier, "Unsupported tracking carrier.")
+        };
+
+    public async Task<string?> RecheckRecipientNameAsync(byte[] cardImage, CancellationToken ct)
+    {
+        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.OpenAiApiKey) || cardImage.Length == 0)
+            return null;
+        using var request = new HttpRequestMessage(HttpMethod.Post, "responses")
+        {
+            Content = JsonContent.Create(new
+            {
+                model = _options.OpenAiModel,
+                input = new[]
+                {
+                    new
+                    {
+                        role = "user",
+                        content = new object[]
+                        {
+                            new
+                            {
+                                type = "input_text",
+                                text = "فقط نام گیرنده‌ای را که داخل کادر نام این کارت رهگیری دیده می‌شود بخوان. عنوان‌ها، نام زیباشی، کد رهگیری و متن‌های قالب را وارد نکن. اگر نام واضح نیست confidence را پایین اعلام کن."
+                            },
+                            new
+                            {
+                                type = "input_image",
+                                image_url = $"data:image/png;base64,{Convert.ToBase64String(cardImage)}"
+                            }
+                        }
+                    }
+                },
+                text = new
+                {
+                    format = new
+                    {
+                        type = "json_schema",
+                        name = "tracking_recipient_recheck",
+                        strict = true,
+                        schema = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                recipientName = new { type = "string" },
+                                confidence = new { type = "number" }
+                            },
+                            required = new[] { "recipientName", "confidence" },
+                            additionalProperties = false
+                        }
+                    }
+                }
+            })
+        };
+        using var response = await _httpClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"OpenAI recipient recheck returned HTTP {(int)response.StatusCode}: {body[..Math.Min(500, body.Length)]}");
+        using var document = JsonDocument.Parse(body);
+        var outputText = document.RootElement.GetProperty("output").EnumerateArray()
+            .Where(value => value.TryGetProperty("content", out _))
+            .SelectMany(value => value.GetProperty("content").EnumerateArray())
+            .First(value => value.TryGetProperty("type", out var type) && type.GetString() == "output_text")
+            .GetProperty("text").GetString();
+        var parsed = JsonSerializer.Deserialize<RecipientRecheckResponse>(outputText!, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+        return parsed is { Confidence: >= .90 } && !string.IsNullOrWhiteSpace(parsed.RecipientName)
+            ? Clean(parsed.RecipientName)
+            : null;
     }
 
     private static TrackingMatch? SelectUnique(
@@ -648,18 +733,17 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         ];
     }
 
-    private static int[] CreatePostTrackingCropBox(int[] detectedBox)
+    private static int[] CreatePostTrackingNumberCropBox(int[] detectedBox)
     {
-        // Keep barcode + printed number, while excluding the row-number column on the right.
-        var detectedHeight = detectedBox[3] - detectedBox[1];
-        var center = (detectedBox[1] + detectedBox[3]) / 2;
-        var top = detectedHeight >= 35 ? detectedBox[1] - 3 : center - 45;
-        var bottom = detectedHeight >= 35 ? detectedBox[3] + 3 : center + 14;
-        return [821, Math.Clamp(top, 0, 999), 929, Math.Clamp(bottom, 1, 1000)];
+        // The detected box covers the barcode and its printed number. Keep only the lower
+        // printed-number band, and exclude the row-number column on the right.
+        var height = Math.Max(1, detectedBox[3] - detectedBox[1]);
+        var top = detectedBox[1] + (int)Math.Round(height * .58, MidpointRounding.AwayFromZero);
+        return [821, Math.Clamp(top, 0, 999), 929, Math.Clamp(detectedBox[3] + 4, 1, 1000)];
     }
 
     private async Task<byte[]> BuildPostCardAsync(
-        byte[] recipientCrop, byte[] trackingCrop, string tempRoot, CancellationToken ct)
+        byte[] recipientCrop, byte[] trackingNumberCrop, string tempRoot, CancellationToken ct)
     {
         var template = Path.Combine(
             _environment.ContentRootPath, "Assets", "Tracking", "iran-post-template.jpg");
@@ -672,17 +756,18 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         var trackingLayer = Path.Combine(tempRoot, $"tracking-layer-{Guid.NewGuid():N}.png");
         var output = Path.Combine(tempRoot, $"post-card-{Guid.NewGuid():N}.png");
         await File.WriteAllBytesAsync(recipientPath, recipientCrop, ct);
-        await File.WriteAllBytesAsync(trackingPath, trackingCrop, ct);
+        await File.WriteAllBytesAsync(trackingPath, trackingNumberCrop, ct);
 
         var nameLayerResult = await RunProcessAsync("convert",
-            $"\"{recipientPath}\" -fuzz 14% -transparent white -trim +repage " +
+            $"\"{recipientPath}\" -colorspace Gray -contrast-stretch 1%x1% -morphology Dilate Octagon:1 " +
+            "-fuzz 14% -transparent white -trim +repage " +
             "-resize \"620x140\" -gravity center -background none -extent 630x145 " +
             $"\"{recipientLayer}\"", tempRoot, ct);
         if (nameLayerResult.ExitCode != 0)
             throw new InvalidOperationException($"Recipient layer generation failed: {nameLayerResult.Error}");
 
         var codeLayerResult = await RunProcessAsync("convert",
-            $"\"{trackingPath}\" -fuzz 14% -transparent white -trim +repage " +
+            $"\"{trackingPath}\" -colorspace Gray -contrast-stretch 1%x1% -fuzz 14% -transparent white -trim +repage " +
             "-resize \"660x135\" -gravity center -background none -extent 670x140 " +
             $"\"{trackingLayer}\"", tempRoot, ct);
         if (codeLayerResult.ExitCode != 0)
@@ -716,11 +801,12 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 column.Item().Height(37, Unit.Millimetre);
                 column.Item().Height(16, Unit.Millimetre).PaddingLeft(44, Unit.Millimetre)
                     .PaddingRight(14, Unit.Millimetre).AlignCenter().AlignMiddle()
-                    .Text(name).FontSize(name.Length > 28 ? 16 : 20).FontColor(Colors.Grey.Darken4);
+                    .Text(name).FontSize(name.Length > 28 ? 18 : 23).ExtraBold()
+                    .FontColor(Colors.Grey.Darken4);
                 column.Item().Height(11, Unit.Millimetre);
                 column.Item().Height(15, Unit.Millimetre).PaddingLeft(41, Unit.Millimetre)
                     .PaddingRight(14, Unit.Millimetre).ContentFromLeftToRight()
-                    .AlignCenter().AlignMiddle().Text(code).FontSize(code.Length > 20 ? 17 : 20)
+                    .AlignCenter().AlignMiddle().Text(code).FontSize(code.Length > 20 ? 18 : 22).ExtraBold()
                     .FontColor(Colors.Grey.Darken4);
             });
         }));
@@ -749,12 +835,12 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             {
                 column.Item().Height(53, Unit.Millimetre);
                 column.Item().Height(10, Unit.Millimetre).PaddingHorizontal(20, Unit.Millimetre)
-                    .AlignCenter().AlignMiddle().Text(name).FontSize(name.Length > 28 ? 16 : 20)
+                    .AlignCenter().AlignMiddle().Text(name).FontSize(name.Length > 28 ? 18 : 23).ExtraBold()
                     .FontColor(Colors.Grey.Darken4);
                 column.Item().Height(3, Unit.Millimetre);
                 column.Item().Height(12, Unit.Millimetre).PaddingHorizontal(23, Unit.Millimetre)
                     .ContentFromLeftToRight().AlignCenter().AlignMiddle().Text(code)
-                    .FontSize(code.Length > 20 ? 17 : 20).FontColor(Colors.Grey.Darken4);
+                    .FontSize(code.Length > 20 ? 18 : 22).ExtraBold().FontColor(Colors.Grey.Darken4);
             });
         }));
         return document.GenerateImages(new ImageGenerationSettings
@@ -794,6 +880,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     }
 
     private static string Clean(string value) => Regex.Replace(value.Trim(), @"\s+", " ");
+
+    private sealed record RecipientRecheckResponse(string RecipientName, double Confidence);
     private static string NormalizeDigits(string value) => new(value.Select(character => character switch
     {
         >= '\u06F0' and <= '\u06F9' => (char)('0' + character - '\u06F0'),

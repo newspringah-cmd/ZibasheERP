@@ -90,6 +90,11 @@ public interface ITelegramMessageSender
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> EditPhotoBytesWithKeyboardAsync(
+        string chatId, long messageId, byte[] photo, string fileName, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> DeleteMessageAsync(
         string chatId, long messageId, CancellationToken cancellationToken = default);
 
@@ -445,6 +450,31 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                     inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
                 }
             }, cancellationToken);
+
+    public async Task<TelegramSendResult> EditPhotoBytesWithKeyboardAsync(
+        string chatId, long messageId, byte[] photo, string fileName, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default)
+    {
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(chatId, Encoding.UTF8), "chat_id");
+        content.Add(new StringContent(messageId.ToString(System.Globalization.CultureInfo.InvariantCulture), Encoding.UTF8),
+            "message_id");
+        content.Add(new StringContent(JsonSerializer.Serialize(new
+        {
+            type = "photo",
+            media = "attach://replacement",
+            caption
+        }), Encoding.UTF8, "application/json"), "media");
+        content.Add(new StringContent(JsonSerializer.Serialize(new
+        {
+            inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
+        }), Encoding.UTF8, "application/json"), "reply_markup");
+        var file = new ByteArrayContent(photo);
+        file.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        content.Add(file, "replacement", fileName);
+        return await SendMultipartRequestAsync("editMessageMedia", content, cancellationToken);
+    }
 
     public async Task<TelegramSendResult> DeleteMessageAsync(
         string chatId, long messageId, CancellationToken cancellationToken = default) =>

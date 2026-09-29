@@ -44,6 +44,9 @@ public sealed partial class TelegramWebhookController
 
         switch (callback.Data)
         {
+            case "trackingimport:noop":
+                await _sender.AnswerCallbackAsync(callback.Id, "این کد قبلاً ارسال شده است.", ct);
+                return true;
             case "trackingimport:menu":
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
                 await _sender.SendInlineKeyboardAsync(callback.Message.Chat.Id.ToString(),
@@ -75,6 +78,28 @@ public sealed partial class TelegramWebhookController
                 await ReplyAsync(callback.Message.Chat.Id,
                     "متن کامل پیام‌های پست ویژه را یکجا ارسال کنید. خروجی با قالب قرمز پست ساخته می‌شود. /cancel برای لغو", ct);
                 return true;
+        }
+
+        if (TryParseTrackingDispatchCallback(callback.Data, "send", out var sendDispatchId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id,
+                "ارسال این کد آغاز شد؛ ارسال تکراری انجام نمی‌شود.", ct);
+            await ConfirmTrackingDispatchAsync(
+                callback.Message.Chat.Id, callback.Message.MessageId, sendDispatchId, ct);
+            return true;
+        }
+        if (TryParseTrackingDispatchCallback(callback.Data, "rebuild", out var rebuildDispatchId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, "در حال بازبینی تطبیق و ساخت مجدد…", ct);
+            await RebuildTrackingDispatchAsync(
+                callback.Message.Chat.Id, callback.Message.MessageId, rebuildDispatchId, ct);
+            return true;
+        }
+        if (TryParseTrackingDispatchCallback(callback.Data, "delete", out var deleteDispatchId))
+        {
+            await DeleteTrackingDispatchAsync(
+                callback.Id, callback.Message.Chat.Id, callback.Message.MessageId, deleteDispatchId, ct);
+            return true;
         }
 
         if (callback.Data.StartsWith("trackingimport:confirm:", StringComparison.Ordinal) &&
@@ -365,7 +390,8 @@ public sealed partial class TelegramWebhookController
                 var preview = await _sender.SendPhotoBytesWithKeyboardAsync(chatId.ToString(), dispatch.CardImage!,
                     $"tracking-{dispatch.TrackingCode}.png",
                     $"{(dispatch.Status == TrackingDispatchStatus.Ready ? "✅" : "⚠️")} {dispatch.RecipientName}\n" +
-                    $"کد: {dispatch.TrackingCode}\n{dispatch.MatchNotes}", [], ct);
+                    $"کد: {dispatch.TrackingCode}\n{dispatch.MatchNotes}",
+                    BuildTrackingDispatchButtons(dispatch), ct);
                 if (!preview.IsSuccessful)
                 {
                     _logger.LogWarning("Tracking preview delivery failed for {TrackingCode}: {Error}",
@@ -435,7 +461,8 @@ public sealed partial class TelegramWebhookController
         return updated;
     }
 
-    private async Task ConfirmTrackingBatchAsync(long adminChatId, Guid batchId, CancellationToken ct)
+    private async Task ConfirmTrackingBatchAsync(
+        long adminChatId, Guid batchId, CancellationToken ct, Guid? onlyDispatchId = null)
     {
         var batch = await _db.TrackingImportBatches.FirstOrDefaultAsync(value => value.Id == batchId && !value.IsDeleted, ct);
         if (batch is null)
@@ -449,6 +476,7 @@ public sealed partial class TelegramWebhookController
 
         var ids = await _db.TrackingDispatches.AsNoTracking()
             .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
+                (!onlyDispatchId.HasValue || value.Id == onlyDispatchId.Value) &&
                 (value.Status == TrackingDispatchStatus.Ready || value.Status == TrackingDispatchStatus.Failed))
             .Select(value => value.Id).ToArrayAsync(ct);
         var sentCount = 0;
@@ -605,9 +633,152 @@ public sealed partial class TelegramWebhookController
             }
         }
         await ReplyAsync(adminChatId,
-            $"نتیجه ارسال کد رهگیری:\n✅ موفق: {sentCount}\n⚠️ ناموفق: {failedCount}\n" +
+            $"{(onlyDispatchId.HasValue ? "نتیجه ارسال این کد رهگیری:" : "نتیجه ارسال کد رهگیری:")}\n✅ موفق: {sentCount}\n⚠️ ناموفق: {failedCount}\n" +
             "موارد مبهم و تکراری ارسال نشدند." +
             (failureDetails.Count == 0 ? "" : $"\n\nجزئیات خطا:\n{string.Join("\n", failureDetails.Take(15).Select(value => $"• {value}"))}"), ct);
+    }
+
+    private async Task ConfirmTrackingDispatchAsync(
+        long adminChatId, long previewMessageId, Guid dispatchId, CancellationToken ct)
+    {
+        var dispatch = await _db.TrackingDispatches.AsNoTracking()
+            .FirstOrDefaultAsync(value => value.Id == dispatchId && !value.IsDeleted, ct);
+        if (dispatch is null)
+        {
+            await ReplyAsync(adminChatId, "این کد رهگیری حذف شده یا پیدا نشد.", ct);
+            return;
+        }
+        if (dispatch.Status == TrackingDispatchStatus.NeedsReview)
+        {
+            await ReplyAsync(adminChatId,
+                "⚠️ این مورد هنوز نیازمند بررسی است؛ ابتدا «ساخت مجدد» را بزنید.", ct);
+            return;
+        }
+        if (dispatch.Status == TrackingDispatchStatus.Sent)
+        {
+            await _sender.EditReplyMarkupAsync(adminChatId.ToString(), previewMessageId,
+                BuildTrackingDispatchButtons(dispatch), ct);
+            await ReplyAsync(adminChatId, "این کد قبلاً ارسال شده و دوباره ارسال نشد.", ct);
+            return;
+        }
+
+        await ConfirmTrackingBatchAsync(adminChatId, dispatch.ImportBatchId, ct, dispatch.Id);
+        _db.ChangeTracker.Clear();
+        dispatch = await _db.TrackingDispatches.AsNoTracking()
+            .FirstOrDefaultAsync(value => value.Id == dispatchId, ct);
+        if (dispatch is not null)
+            await _sender.EditReplyMarkupAsync(adminChatId.ToString(), previewMessageId,
+                BuildTrackingDispatchButtons(dispatch), ct);
+    }
+
+    private async Task RebuildTrackingDispatchAsync(
+        long adminChatId, long previewMessageId, Guid dispatchId, CancellationToken ct)
+    {
+        var dispatch = await _db.TrackingDispatches.Include(value => value.Deliveries)
+            .FirstOrDefaultAsync(value => value.Id == dispatchId && !value.IsDeleted, ct);
+        if (dispatch is null)
+        {
+            await ReplyAsync(adminChatId, "این کد رهگیری حذف شده یا پیدا نشد.", ct);
+            return;
+        }
+        if (dispatch.Status == TrackingDispatchStatus.Sent || dispatch.Deliveries.Any(value => value.SentAt.HasValue))
+        {
+            await ReplyAsync(adminChatId, "این کد قبلاً ارسال شده و قابل ساخت مجدد نیست.", ct);
+            return;
+        }
+
+        var recheckedName = await _trackingImportService.RecheckRecipientNameAsync(
+            dispatch.CardImage ?? [], ct);
+        var nameWasCorrected = !string.IsNullOrWhiteSpace(recheckedName) &&
+                               !string.Equals(dispatch.RecipientName, recheckedName, StringComparison.Ordinal);
+        if (nameWasCorrected)
+            dispatch.RecipientName = recheckedName!;
+        var match = await _trackingImportService.MatchAsync(
+            dispatch.RecipientName, dispatch.Destination, ct);
+        var hasUncertainAttempt = dispatch.Deliveries.Any(value => value.AttemptedAt.HasValue && !value.SentAt.HasValue);
+        dispatch.CustomerId = match.CustomerId;
+        dispatch.ShippingRequestId = match.ShippingRequestId;
+        dispatch.Status = hasUncertainAttempt
+            ? TrackingDispatchStatus.Failed
+            : match.Status;
+        dispatch.MatchNotes = hasUncertainAttempt
+            ? "تلاش قبلی نتیجه قطعی ندارد؛ برای جلوگیری از ارسال تکراری، ارسال مجدد مسدود است"
+            : $"{match.Notes} — بازبینی مجدد" + (nameWasCorrected ? " و اصلاح نام گیرنده" : "");
+        dispatch.LastError = hasUncertainAttempt ? dispatch.MatchNotes : null;
+        if (dispatch.Carrier != TrackingCarrier.IranPost)
+        {
+            dispatch.CardImage = _trackingImportService.BuildCard(
+                dispatch.Carrier, dispatch.RecipientName, dispatch.TrackingCode, dispatch.TrackingUrl);
+        }
+        dispatch.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        var caption = $"{(dispatch.Status == TrackingDispatchStatus.Ready ? "✅" : "⚠️")} {dispatch.RecipientName}\n" +
+                      $"کد: {dispatch.TrackingCode}\n{dispatch.MatchNotes}";
+        var previewUpdate = await _sender.EditPhotoBytesWithKeyboardAsync(
+            adminChatId.ToString(), previewMessageId, dispatch.CardImage!,
+            $"tracking-{dispatch.TrackingCode}.png", caption,
+            BuildTrackingDispatchButtons(dispatch), ct);
+        if (!previewUpdate.IsSuccessful)
+            _logger.LogWarning("Rebuilt tracking preview update failed for {DispatchId}: {Error}",
+                dispatch.Id, previewUpdate.Error);
+        await ReplyAsync(adminChatId,
+            dispatch.Status == TrackingDispatchStatus.Ready
+                ? "✅ تطبیق دوباره بررسی شد و این مورد آماده ارسال است."
+                : $"⚠️ بازبینی انجام شد اما هنوز قابل ارسال امن نیست: {dispatch.MatchNotes}", ct);
+    }
+
+    private async Task DeleteTrackingDispatchAsync(
+        string callbackId, long adminChatId, long previewMessageId, Guid dispatchId, CancellationToken ct)
+    {
+        var dispatch = await _db.TrackingDispatches.Include(value => value.Deliveries)
+            .FirstOrDefaultAsync(value => value.Id == dispatchId && !value.IsDeleted, ct);
+        if (dispatch is null)
+        {
+            await _sender.AnswerCallbackAsync(callbackId, "این مورد قبلاً حذف شده است.", ct, true);
+            return;
+        }
+        if (dispatch.Status == TrackingDispatchStatus.Sent || dispatch.Deliveries.Any(value => value.SentAt.HasValue))
+        {
+            await _sender.AnswerCallbackAsync(callbackId,
+                "کد ارسال‌شده قابل حذف نیست.", ct, true);
+            return;
+        }
+
+        dispatch.IsDeleted = true;
+        dispatch.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        await _sender.AnswerCallbackAsync(callbackId, "کد رهگیری حذف شد.", ct);
+        var deleted = await _sender.DeleteMessageAsync(
+            adminChatId.ToString(), previewMessageId, ct);
+        if (!deleted.IsSuccessful)
+            await _sender.EditReplyMarkupAsync(adminChatId.ToString(), previewMessageId, [], ct);
+    }
+
+    private static bool TryParseTrackingDispatchCallback(
+        string callbackData, string action, out Guid dispatchId)
+    {
+        var prefix = $"trackingimport:{action}:";
+        dispatchId = Guid.Empty;
+        return callbackData.StartsWith(prefix, StringComparison.Ordinal) &&
+               Guid.TryParseExact(callbackData[prefix.Length..], "N", out dispatchId);
+    }
+
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildTrackingDispatchButtons(
+        TrackingDispatch dispatch)
+    {
+        if (dispatch.IsDeleted) return [];
+        if (dispatch.Status == TrackingDispatchStatus.Sent)
+            return [new[] { new TelegramInlineButton("☑️ ارسال شد", "trackingimport:noop") }];
+        return
+        [
+            new[]
+            {
+                new TelegramInlineButton("✅ تأیید و ارسال", $"trackingimport:send:{dispatch.Id:N}"),
+                new TelegramInlineButton("🔄 ساخت مجدد", $"trackingimport:rebuild:{dispatch.Id:N}"),
+                new TelegramInlineButton("🗑 حذف", $"trackingimport:delete:{dispatch.Id:N}")
+            }
+        ];
     }
 
     private async Task<string[]> ResolveTrackingDestinationChatIdsAsync(
