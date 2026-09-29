@@ -300,6 +300,7 @@ public sealed partial class TelegramWebhookController
                 .Where(value => value.ImportBatchId == existingBatch.Id)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(value => value.IsDeleted, true)
+                    .SetProperty(value => value.ShippingRequestId, (Guid?)null)
                     .SetProperty(value => value.UpdatedAt, now), ct);
             await _db.TrackingImportBatches
                 .Where(value => value.Id == existingBatch.Id)
@@ -365,6 +366,43 @@ public sealed partial class TelegramWebhookController
             {
                 dispatch.Status = TrackingDispatchStatus.NeedsReview;
                 dispatch.MatchNotes = "بیش از یک کد به یک درخواست پست تطبیق داده شد";
+                dispatch.ShippingRequestId = null;
+            }
+        }
+
+        var candidateShippingRequestIds = batch.Dispatches
+            .Where(value => value.Status == TrackingDispatchStatus.Ready && value.ShippingRequestId.HasValue)
+            .Select(value => value.ShippingRequestId!.Value)
+            .Distinct()
+            .ToArray();
+        if (candidateShippingRequestIds.Length > 0)
+        {
+            // The unique database index intentionally prevents two active tracking codes from
+            // claiming one shipping request. Deleted, never-sent previews must release that claim.
+            await _db.TrackingDispatches
+                .Where(value => value.IsDeleted && value.ShippingRequestId.HasValue &&
+                    candidateShippingRequestIds.Contains(value.ShippingRequestId.Value))
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(value => value.ShippingRequestId, (Guid?)null)
+                    .SetProperty(value => value.UpdatedAt, DateTime.UtcNow), ct);
+
+            var alreadyClaimedShippingRequestIds = await _db.TrackingDispatches.AsNoTracking()
+                .Where(value => !value.IsDeleted && value.ShippingRequestId.HasValue &&
+                    candidateShippingRequestIds.Contains(value.ShippingRequestId.Value) &&
+                    (value.Status == TrackingDispatchStatus.Ready ||
+                     value.Status == TrackingDispatchStatus.Sending ||
+                     value.Status == TrackingDispatchStatus.Sent))
+                .Select(value => value.ShippingRequestId!.Value)
+                .Distinct()
+                .ToArrayAsync(ct);
+
+            foreach (var dispatch in batch.Dispatches.Where(value =>
+                         value.ShippingRequestId.HasValue &&
+                         alreadyClaimedShippingRequestIds.Contains(value.ShippingRequestId.Value)))
+            {
+                dispatch.Status = TrackingDispatchStatus.NeedsReview;
+                dispatch.MatchNotes =
+                    "این درخواست ارسال قبلاً به کد رهگیری دیگری متصل شده است؛ برای جلوگیری از ارسال اشتباه نیازمند بررسی است";
                 dispatch.ShippingRequestId = null;
             }
         }
