@@ -218,11 +218,15 @@ public sealed partial class TelegramWebhookController
             var deliveryText = knownDestinations > 0
                 ? $" | مقصد موفق: {successfulDestinations}/{knownDestinations}"
                 : "";
-            var errorText = dispatch.Status == TrackingDispatchStatus.Failed &&
-                            !string.IsNullOrWhiteSpace(dispatch.LastError)
-                ? $" | {dispatch.LastError}"
-                : "";
-            lines.Add($"{state} | {dispatch.RecipientName} | {dispatch.TrackingCode}{deliveryText}{errorText}");
+            var detailText = dispatch.Status switch
+            {
+                TrackingDispatchStatus.Failed when !string.IsNullOrWhiteSpace(dispatch.LastError) =>
+                    $" | علت: {dispatch.LastError}",
+                TrackingDispatchStatus.NeedsReview when !string.IsNullOrWhiteSpace(dispatch.MatchNotes) =>
+                    $" | علت: {dispatch.MatchNotes}",
+                _ => ""
+            };
+            lines.Add($"{state} | {dispatch.RecipientName} | {dispatch.TrackingCode}{deliveryText}{detailText}");
         }
 
         var parts = SplitTelegramMessage(string.Join("\n", lines)).ToArray();
@@ -541,7 +545,7 @@ public sealed partial class TelegramWebhookController
         }
         try
         {
-            await ReportUnmatchedTrackingDispatchesAsync(message.Chat.Id, batch.Id, ct);
+            await ReportReviewTrackingDispatchesAsync(message.Chat.Id, batch.Id, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -550,17 +554,17 @@ public sealed partial class TelegramWebhookController
         catch (Exception exception)
         {
             _logger.LogError(exception,
-                "Reporting unmatched tracking recipients failed for batch {BatchId}; preview processing will continue.",
+                "Reporting tracking recipients needing review failed for batch {BatchId}; preview processing will continue.",
                 batch.Id);
             try
             {
                 await ReplyAsync(message.Chat.Id,
-                    "⚠️ ارسال گزارش گیرنده‌های پیدانشده به گروه «خطا فاکتور نرسیده» با خطای فنی روبه‌رو شد؛ پیش‌نمایش و پردازش فایل ادامه پیدا می‌کند.", ct);
+                    "⚠️ ارسال موارد نیازمند بررسی به گروه «خطا فاکتور نرسیده» با خطای فنی روبه‌رو شد؛ پیش‌نمایش و پردازش فایل ادامه پیدا می‌کند.", ct);
             }
             catch (Exception notificationException)
             {
                 _logger.LogWarning(notificationException,
-                    "Could not notify source chat about unmatched tracking report failure for batch {BatchId}.",
+                    "Could not notify source chat about tracking review report failure for batch {BatchId}.",
                     batch.Id);
             }
         }
@@ -568,8 +572,9 @@ public sealed partial class TelegramWebhookController
         return true;
     }
 
-    private async Task ReportUnmatchedTrackingDispatchesAsync(
-        long sourceChatId, Guid batchId, CancellationToken ct)
+    private async Task ReportReviewTrackingDispatchesAsync(
+        long sourceChatId, Guid batchId, CancellationToken ct,
+        IReadOnlyCollection<Guid>? onlyDispatchIds = null)
     {
         var failureChatId = string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
             ? _options.AdminChatId.Trim()
@@ -577,22 +582,26 @@ public sealed partial class TelegramWebhookController
         if (string.IsNullOrWhiteSpace(failureChatId))
         {
             _logger.LogWarning(
-                "Unmatched tracking recipients in batch {BatchId} could not be reported because no invoice failure chat is configured.",
+                "Tracking recipients needing review in batch {BatchId} could not be reported because no invoice failure chat is configured.",
                 batchId);
             await ReplyAsync(sourceChatId,
-                "⚠️ گیرنده یک یا چند کد رهگیری پیدا نشد، اما گروه «خطا فاکتور نرسیده» تنظیم نشده است.", ct);
+                "⚠️ یک یا چند کد رهگیری نیازمند بررسی است، اما گروه «خطا فاکتور نرسیده» تنظیم نشده است.", ct);
             return;
         }
 
-        var unmatched = await _db.TrackingDispatches.AsNoTracking()
+        var reviewQuery = _db.TrackingDispatches.AsNoTracking()
             .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
-                value.Status == TrackingDispatchStatus.NeedsReview && !value.CustomerId.HasValue)
+                (value.Status == TrackingDispatchStatus.NeedsReview ||
+                 value.Status == TrackingDispatchStatus.Failed));
+        if (onlyDispatchIds is { Count: > 0 })
+            reviewQuery = reviewQuery.Where(value => onlyDispatchIds.Contains(value.Id));
+        var reviewItems = await reviewQuery
             .OrderBy(value => value.RecipientName)
             .ToArrayAsync(ct);
-        if (unmatched.Length == 0) return;
+        if (reviewItems.Length == 0) return;
 
         var failedReports = 0;
-        foreach (var dispatch in unmatched)
+        foreach (var dispatch in reviewItems)
         {
             try
             {
@@ -603,22 +612,30 @@ public sealed partial class TelegramWebhookController
                     TrackingCarrier.Chapar => "چاپار",
                     _ => "نامشخص"
                 };
+                var title = dispatch.Status == TrackingDispatchStatus.Failed
+                    ? "❌ ارسال کد رهگیری ناموفق بود"
+                    : dispatch.CustomerId.HasValue
+                        ? "⚠️ کد رهگیری نیازمند بررسی است"
+                        : "⚠️ گیرنده کد رهگیری پیدا نشد";
+                var reason = dispatch.Status == TrackingDispatchStatus.Failed
+                    ? dispatch.LastError
+                    : dispatch.MatchNotes;
                 var caption =
-                    $"⚠️ گیرنده کد رهگیری پیدا نشد\n\n" +
+                    $"{title}\n\n" +
                     $"نام خوانده‌شده: {dispatch.RecipientName}\n" +
                     $"کد رهگیری: {dispatch.TrackingCode}\n" +
                     $"شرکت ارسال: {carrier}" +
                     (string.IsNullOrWhiteSpace(dispatch.Destination)
                         ? ""
                         : $"\nمقصد: {dispatch.Destination}") +
-                    $"\nعلت: {dispatch.MatchNotes}\n" +
+                    $"\nعلت: {reason}\n" +
                     $"شناسه داخلی: {dispatch.Id:N}";
                 TelegramSendResult report;
                 if (dispatch.CardImage is { Length: > 0 })
                 {
                     report = await _sender.SendPhotoBytesWithKeyboardAsync(
                         failureChatId, dispatch.CardImage,
-                        $"tracking-unmatched-{dispatch.TrackingCode}.png", caption,
+                        $"tracking-review-{dispatch.TrackingCode}.png", caption,
                         BuildTrackingDispatchButtons(dispatch), ct);
                 }
                 else
@@ -631,7 +648,7 @@ public sealed partial class TelegramWebhookController
                 {
                     failedReports++;
                     _logger.LogWarning(
-                        "Unmatched tracking recipient report failed for dispatch {DispatchId}: {Error}",
+                        "Tracking review report failed for dispatch {DispatchId}: {Error}",
                         dispatch.Id, report.Error);
                 }
             }
@@ -643,14 +660,14 @@ public sealed partial class TelegramWebhookController
             {
                 failedReports++;
                 _logger.LogError(exception,
-                    "Unmatched tracking recipient report failed for dispatch {DispatchId}.", dispatch.Id);
+                    "Tracking review report failed for dispatch {DispatchId}.", dispatch.Id);
             }
         }
 
         if (failedReports > 0)
         {
             await ReplyAsync(sourceChatId,
-                $"⚠️ گیرنده {unmatched.Length} کد رهگیری پیدا نشد؛ گزارش {failedReports} مورد به گروه «خطا فاکتور نرسیده» هم ناموفق بود. پیش‌نمایش‌ها حفظ شده‌اند.", ct);
+                $"⚠️ تعداد {reviewItems.Length} کد رهگیری نیازمند بررسی بود؛ گزارش {failedReports} مورد به گروه «خطا فاکتور نرسیده» هم ناموفق بود. پیش‌نمایش‌ها حفظ شده‌اند.", ct);
         }
     }
 
@@ -753,16 +770,18 @@ public sealed partial class TelegramWebhookController
         batch.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 
-        var ids = await _db.TrackingDispatches.AsNoTracking()
+        var candidates = await _db.TrackingDispatches.AsNoTracking()
             .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
                 (!onlyDispatchId.HasValue || value.Id == onlyDispatchId.Value) &&
                 (value.Status == TrackingDispatchStatus.Ready || value.Status == TrackingDispatchStatus.Failed))
-            .Select(value => value.Id).ToArrayAsync(ct);
+            .Select(value => new { value.Id, value.Status }).ToArrayAsync(ct);
         var sentCount = 0;
         var failedCount = 0;
         var failureDetails = new List<string>();
-        foreach (var id in ids)
+        var newlyFailedIds = new List<Guid>();
+        foreach (var candidate in candidates)
         {
+            var id = candidate.Id;
             try
             {
             var claimed = await _db.TrackingDispatches
@@ -782,6 +801,7 @@ public sealed partial class TelegramWebhookController
                 dispatch.LastError = "اطلاعات مشتری یا تصویر کارت ناقص است";
                 await _db.SaveChangesAsync(ct);
                 failedCount++;
+                if (candidate.Status != TrackingDispatchStatus.Failed) newlyFailedIds.Add(dispatch.Id);
                 failureDetails.Add($"{dispatch.RecipientName}: مرحله آماده‌سازی ارسال — اطلاعات مشتری یا تصویر کارت ناقص است");
                 continue;
             }
@@ -793,6 +813,7 @@ public sealed partial class TelegramWebhookController
                 dispatch.LastError = "گروه فعال مشتری پیدا نشد";
                 await _db.SaveChangesAsync(ct);
                 failedCount++;
+                if (candidate.Status != TrackingDispatchStatus.Failed) newlyFailedIds.Add(dispatch.Id);
                 failureDetails.Add($"{dispatch.RecipientName}: مرحله یافتن مقصد — گروه فعال مشتری پیدا نشد");
                 continue;
             }
@@ -870,6 +891,7 @@ public sealed partial class TelegramWebhookController
                 dispatch.Status = TrackingDispatchStatus.Failed;
                 dispatch.LastError = "ارسال به همه گروه‌های فعال مشتری کامل نشد";
                 failedCount++;
+                if (candidate.Status != TrackingDispatchStatus.Failed) newlyFailedIds.Add(dispatch.Id);
                 var deliveryErrors = await _db.TrackingDispatchDeliveries.AsNoTracking()
                     .Where(value => value.TrackingDispatchId == dispatch.Id &&
                         !value.SentAt.HasValue && chatIds.Contains(value.TelegramChatId))
@@ -908,7 +930,25 @@ public sealed partial class TelegramWebhookController
                         "Could not persist tracking dispatch failure for {DispatchId}.", id);
                 }
                 failedCount++;
+                if (candidate.Status != TrackingDispatchStatus.Failed) newlyFailedIds.Add(id);
                 failureDetails.Add($"شناسه {id:N}: {technicalError}");
+            }
+        }
+        if (newlyFailedIds.Count > 0)
+        {
+            try
+            {
+                await ReportReviewTrackingDispatchesAsync(
+                    adminChatId, batchId, ct, newlyFailedIds.Distinct().ToArray());
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception,
+                    "Reporting failed tracking dispatches failed for batch {BatchId}.", batchId);
             }
         }
         await ReplyAsync(adminChatId,
