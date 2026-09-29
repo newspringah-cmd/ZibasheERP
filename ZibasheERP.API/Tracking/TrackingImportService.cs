@@ -312,13 +312,14 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 if (code.Length is < 15 or > 30 || string.IsNullOrWhiteSpace(row.RecipientName)) continue;
                 if (!verifiedRows.TryGetValue(code, out var verifiedRow)) continue;
                 if (!trackingLocations.TryGetValue(code, out var location) ||
-                    location.Page < 1 || location.Page > pages.Length)
+                    location.Page < 1 || location.Page > pages.Length ||
+                    location.RecipientPage < 1 || location.RecipientPage > pages.Length)
                     continue;
                 try
                 {
                     var recipientName = Clean(row.RecipientName);
                     var recipientCrop = await CropNormalizedAsync(
-                        pages[location.Page - 1], location.RecipientBox, 0, tempRoot, ct);
+                        pages[location.RecipientPage - 1], location.RecipientBox, 0, tempRoot, ct);
                     var trackingNumberCrop = await CropNormalizedAsync(
                         pages[location.Page - 1], location.TrackingNumberBox, 0, tempRoot, ct);
                     items.Add(new TrackingImportItem(
@@ -337,9 +338,10 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 {
                     _logger.LogError(exception,
                         "Iran Post crop/card generation failed for page {Page}, recipient page {RecipientPage}, tracking page {TrackingPage}, row {Row}, tracking {TrackingCode}.",
-                        location.Page, location.Page, location.Page, row.RowOrder, code);
+                        Math.Min(location.Page, location.RecipientPage), location.RecipientPage,
+                        location.Page, row.RowOrder, code);
                     return new TrackingImportParseResult(false, [],
-                        $"مرحله برش قطعی نام و عدد کد یا ساخت تصویر برای کد {code} در صفحه {location.Page} ناموفق بود؛ هیچ پیامی ارسال نشد.");
+                        $"مرحله برش قطعی نام و عدد کد یا ساخت تصویر برای کد {code} در صفحات {location.RecipientPage} و {location.Page} ناموفق بود؛ هیچ پیامی ارسال نشد.");
                 }
             }
 
@@ -658,10 +660,11 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         foreach (var entry in ordered)
         {
             var location = entry.Value;
-            if (location.Page < 1 || location.Page > pagePaths.Count)
+            if (location.Page < 1 || location.Page > pagePaths.Count ||
+                location.RecipientPage < 1 || location.RecipientPage > pagePaths.Count)
                 continue;
             var crop = await CropNormalizedAsync(
-                pagePaths[location.Page - 1], location.RecipientBox, 0, tempRoot, ct);
+                pagePaths[location.RecipientPage - 1], location.RecipientBox, 0, tempRoot, ct);
             content.Add(new
             {
                 type = "input_text",
@@ -747,7 +750,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 ? "نام گیرنده خوانده نشد"
                 : Clean(row.RecipientName);
             result.Add(new PostRecognizedRow(
-                location.Page, location.Page, location.Page, index + 1,
+                Math.Min(location.Page, location.RecipientPage), location.RecipientPage,
+                location.Page, index + 1,
                 recipientName, entry.Key, string.Empty,
                 location.RecipientBox, location.TrackingNumberBox,
                 string.IsNullOrWhiteSpace(row.RecipientName) ? 0 : row.Confidence));
@@ -1069,11 +1073,27 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 var numberLeft = Math.Clamp((int)Math.Floor(xMin / width * 1000d) - 1, 0, 998);
                 var numberRight = Math.Clamp((int)Math.Ceiling(xMax / width * 1000d) + 1,
                     numberLeft + 1, 1000);
+                var recipientTop = numberTop - 35;
+                var recipientPage = pageNumber;
+                int[] recipientBox;
+                if (recipientTop < 0 && pageNumber > 1)
+                {
+                    // A postal table row can be split by a page break: the recipient name is
+                    // printed at the bottom of the previous page while its barcode/number starts
+                    // at the top of the next page. Keep the two source pages independently.
+                    recipientPage = pageNumber - 1;
+                    recipientBox = [626, 900, 718, 1000];
+                }
+                else
+                {
+                    recipientBox = [626, Math.Clamp(recipientTop, 0, 998), 718,
+                        Math.Clamp(numberTop - 5, 1, 1000)];
+                }
                 var location = new PdfTrackingLocation(
                     pageNumber,
+                    recipientPage,
                     [numberLeft, numberTop, numberRight, numberBottom],
-                    [626, Math.Clamp(numberTop - 35, 0, 998), 718,
-                        Math.Clamp(numberTop - 5, 1, 1000)]);
+                    recipientBox);
                 // Every code is repeated in the insurance table. The shipment table is the
                 // right-most occurrence, so select it deterministically without relying on a
                 // fixed page or row number.
@@ -1180,7 +1200,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     private sealed record PostExpressRow(
         string RecipientName, string TrackingCode, string Destination, double Confidence);
     private sealed record PdfTrackingLocation(
-        int Page, int[] TrackingNumberBox, int[] RecipientBox);
+        int Page, int RecipientPage, int[] TrackingNumberBox, int[] RecipientBox);
     private sealed record PostRecognizedRow(int Page, int RecipientPage, int TrackingPage, int RowOrder, string RecipientName,
         string TrackingCode, string Destination, int[] RecipientBox, int[] TrackingBox, double Confidence);
 }

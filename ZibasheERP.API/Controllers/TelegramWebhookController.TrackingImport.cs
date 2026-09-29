@@ -56,8 +56,13 @@ public sealed partial class TelegramWebhookController
                         new[] { new TelegramInlineButton("📮 PDF پست", "trackingimport:post") },
                         new[] { new TelegramInlineButton("🚀 متن پست ویژه", "trackingimport:postexpress") },
                         new[] { new TelegramInlineButton("🚚 متن چاپار", "trackingimport:chapar") },
+                        new[] { new TelegramInlineButton("📊 گزارش ارسال سری آخر", "trackingimport:lastreport") },
                         new[] { new TelegramInlineButton("↩️ بازگشت", "invoiceadmin:menu:main") }
                     }, ct);
+                return true;
+            case "trackingimport:lastreport":
+                await _sender.AnswerCallbackAsync(callback.Id, "در حال تهیه گزارش سری آخر…", ct);
+                await SendLatestTrackingBatchReportAsync(callback.Message.Chat.Id, ct);
                 return true;
             case "trackingimport:post":
                 _trackingImportDrafts.Set(callback.Message.Chat.Id, callback.From.Id, TrackingCarrier.IranPost);
@@ -144,6 +149,109 @@ public sealed partial class TelegramWebhookController
 
         await _sender.AnswerCallbackAsync(callback.Id, "گزینه نامعتبر است.", ct, true);
         return true;
+    }
+
+    private async Task SendLatestTrackingBatchReportAsync(long chatId, CancellationToken ct)
+    {
+        var batch = await _db.TrackingImportBatches.AsNoTracking()
+            .Where(value => !value.IsDeleted)
+            .OrderByDescending(value => value.CreatedAt)
+            .Include(value => value.Dispatches)
+            .ThenInclude(value => value.Deliveries)
+            .FirstOrDefaultAsync(ct);
+        if (batch is null)
+        {
+            await ReplyAsync(chatId, "هنوز هیچ سری کد رهگیری ثبت نشده است.", ct);
+            return;
+        }
+
+        var active = batch.Dispatches.Where(value => !value.IsDeleted)
+            .OrderBy(value => value.RecipientName)
+            .ThenBy(value => value.TrackingCode)
+            .ToArray();
+        var deletedCount = batch.Dispatches.Count(value => value.IsDeleted);
+        var sent = active.Count(value => value.Status == TrackingDispatchStatus.Sent);
+        var ready = active.Count(value => value.Status == TrackingDispatchStatus.Ready);
+        var review = active.Count(value => value.Status == TrackingDispatchStatus.NeedsReview);
+        var sending = active.Count(value => value.Status == TrackingDispatchStatus.Sending);
+        var failed = active.Count(value => value.Status == TrackingDispatchStatus.Failed);
+        var allSent = active.Length > 0 && sent == active.Length;
+        var carrier = batch.Carrier switch
+        {
+            TrackingCarrier.IranPost => "پست",
+            TrackingCarrier.IranPostExpress => "پست ویژه",
+            TrackingCarrier.Chapar => "چاپار",
+            _ => "نامشخص"
+        };
+
+        var lines = new List<string>
+        {
+            "📊 گزارش ارسال سری آخر کدهای رهگیری",
+            "",
+            $"شرکت ارسال: {carrier}",
+            $"زمان ثبت: {batch.CreatedAt.AddHours(3.5):yyyy/MM/dd HH:mm}",
+            $"نتیجه کلی: {(allSent ? "✅ همه کدها ارسال شده‌اند" : "⚠️ همه کدها ارسال نشده‌اند")}",
+            "",
+            $"کل فعال: {active.Length}",
+            $"✅ ارسال‌شده: {sent}",
+            $"⏳ آماده ارسال: {ready}",
+            $"⚠️ نیازمند بررسی: {review}",
+            $"🔄 در حال ارسال: {sending}",
+            $"❌ ناموفق: {failed}",
+            $"🗑 حذف‌شده: {deletedCount}",
+            "",
+            "جزئیات:"
+        };
+        foreach (var dispatch in active)
+        {
+            var successfulDestinations = dispatch.Deliveries.Count(value => value.SentAt.HasValue);
+            var knownDestinations = dispatch.Deliveries.Count;
+            var state = dispatch.Status switch
+            {
+                TrackingDispatchStatus.Sent => "✅ رسیده",
+                TrackingDispatchStatus.Ready => "⏳ ارسال‌نشده",
+                TrackingDispatchStatus.NeedsReview => "⚠️ نیازمند بررسی",
+                TrackingDispatchStatus.Sending => "🔄 در حال ارسال",
+                TrackingDispatchStatus.Failed => "❌ ناموفق",
+                _ => "❔ نامشخص"
+            };
+            var deliveryText = knownDestinations > 0
+                ? $" | مقصد موفق: {successfulDestinations}/{knownDestinations}"
+                : "";
+            var errorText = dispatch.Status == TrackingDispatchStatus.Failed &&
+                            !string.IsNullOrWhiteSpace(dispatch.LastError)
+                ? $" | {dispatch.LastError}"
+                : "";
+            lines.Add($"{state} | {dispatch.RecipientName} | {dispatch.TrackingCode}{deliveryText}{errorText}");
+        }
+
+        var parts = SplitTelegramMessage(string.Join("\n", lines)).ToArray();
+        for (var index = 0; index < parts.Length; index++)
+        {
+            TelegramSendResult result;
+            if (index == parts.Length - 1)
+            {
+                result = await _sender.SendInlineKeyboardAsync(chatId.ToString(), parts[index],
+                    new IReadOnlyCollection<TelegramInlineButton>[]
+                    {
+                        new[] { new TelegramInlineButton("🔄 بروزرسانی گزارش", "trackingimport:lastreport") },
+                        new[] { new TelegramInlineButton("↩️ بازگشت", "trackingimport:menu") }
+                    }, ct);
+            }
+            else
+            {
+                result = await _sender.SendAsync(chatId.ToString(), parts[index], ct);
+            }
+
+            if (!result.IsSuccessful)
+            {
+                _logger.LogWarning("Latest tracking batch report delivery failed for batch {BatchId}: {Error}",
+                    batch.Id, result.Error);
+                await ReplyAsync(chatId,
+                    $"⚠️ ارسال گزارش سری آخر کامل نشد: {FriendlyTelegramError(result.Error)}", ct);
+                return;
+            }
+        }
     }
 
     private async Task<bool> TryHandleTrackingImportMessageAsync(TelegramMessage message, CancellationToken ct)
