@@ -279,13 +279,35 @@ public sealed partial class TelegramWebhookController
             .FirstOrDefaultAsync(value => value.SourceHash == sourceHash && !value.IsDeleted, ct);
         if (existingBatch is not null)
         {
-            var reevaluated = await ReevaluateTrackingBatchMatchesAsync(existingBatch.Id, ct);
+            var hasDeliveryAttempt = await _db.TrackingDispatches.AsNoTracking()
+                .Where(value => value.ImportBatchId == existingBatch.Id)
+                .AnyAsync(value => value.Status == TrackingDispatchStatus.Sent ||
+                    value.Status == TrackingDispatchStatus.Sending ||
+                    value.Deliveries.Any(delivery => delivery.AttemptedAt.HasValue), ct);
+            if (hasDeliveryAttempt)
+            {
+                var reevaluated = await ReevaluateTrackingBatchMatchesAsync(existingBatch.Id, ct);
+                await ReplyAsync(message.Chat.Id,
+                    reevaluated > 0
+                        ? $"ℹ️ این ورودی قبلاً ثبت شده بود؛ بدون ثبت یا ارسال تکراری، تطبیق {reevaluated} مورد دوباره بررسی شد."
+                        : "⚠️ این فایل/متن قبلاً وارد شده و حداقل یک تلاش ارسال دارد؛ برای جلوگیری از ارسال تکراری دوباره پردازش نشد.", ct);
+                await SendTrackingBatchPreviewAsync(message.Chat.Id, existingBatch.Id, false, ct);
+                return true;
+            }
+
+            var now = DateTime.UtcNow;
+            await _db.TrackingDispatches
+                .Where(value => value.ImportBatchId == existingBatch.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(value => value.IsDeleted, true)
+                    .SetProperty(value => value.UpdatedAt, now), ct);
+            await _db.TrackingImportBatches
+                .Where(value => value.Id == existingBatch.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(value => value.IsDeleted, true)
+                    .SetProperty(value => value.UpdatedAt, now), ct);
             await ReplyAsync(message.Chat.Id,
-                reevaluated > 0
-                    ? $"ℹ️ این ورودی قبلاً ثبت شده بود؛ بدون ثبت یا ارسال تکراری، تطبیق {reevaluated} مورد دوباره بررسی شد."
-                    : "⚠️ این فایل/متن قبلاً وارد شده است؛ برای جلوگیری از ارسال تکراری دوباره پردازش نشد.", ct);
-            await SendTrackingBatchPreviewAsync(message.Chat.Id, existingBatch.Id, false, ct);
-            return true;
+                "ℹ️ نسخه قبلی این فایل که هنوز ارسال نشده بود کنار گذاشته شد؛ پیش‌نمایش‌ها با برش قطعی PDF دوباره ساخته می‌شوند.", ct);
         }
 
         var batch = new TrackingImportBatch

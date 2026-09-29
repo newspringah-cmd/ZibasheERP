@@ -6,6 +6,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using QuestPDF.Fluent;
@@ -216,7 +218,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         {
             var pdfPath = Path.Combine(tempRoot, "source.pdf");
             await File.WriteAllBytesAsync(pdfPath, pdf, ct);
-            var expectedTrackingCodes = await ExtractTrackingCodesFromPdfAsync(pdfPath, tempRoot, ct);
+            var trackingLocations = await ExtractTrackingCodeLocationsFromPdfAsync(pdfPath, tempRoot, ct);
+            var expectedTrackingCodes = trackingLocations.Keys.ToArray();
             var prefix = Path.Combine(tempRoot, "page");
             var render = await RunProcessAsync("pdftoppm",
                 $"-jpeg -r 150 -jpegopt quality=88,progressive=n \"{pdfPath}\" \"{prefix}\"", tempRoot, ct);
@@ -254,12 +257,12 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                         continue;
                     }
 
-                    if (expectedTrackingCodes.Count > 0 &&
+                    if (expectedTrackingCodes.Length > 0 &&
                         !PostReadContainsExpectedCodes(read, expectedTrackingCodes))
                     {
                         _logger.LogWarning(
                             "Iran Post recognition attempt {Attempt} did not return the deterministic PDF code set. Expected={Expected}, Actual={Actual}.",
-                            attempt, expectedTrackingCodes.Count, read.Count);
+                            attempt, expectedTrackingCodes.Length, read.Count);
                         continue;
                     }
 
@@ -277,7 +280,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 }
             }
 
-            var singleReadFallback = consensus is null && reads.Count == 1 && expectedTrackingCodes.Count > 0;
+            var singleReadFallback = consensus is null && reads.Count == 1 && expectedTrackingCodes.Length > 0;
             if (consensus is null && !singleReadFallback)
             {
                 if (reads.Count == 0)
@@ -295,7 +298,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             if (singleReadFallback)
                 _logger.LogWarning(
                     "Iran Post PDF continued with one valid vision read because all {Count} tracking codes were independently extracted from PDF text. Every row remains blocked for admin review.",
-                    expectedTrackingCodes.Count);
+                    expectedTrackingCodes.Length);
 
             var items = new List<TrackingImportItem>();
             var verifiedRows = verification.ToDictionary(
@@ -304,22 +307,19 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             var orderedRows = recognized.OrderBy(value => value.Page).ThenBy(value => value.RowOrder).ToArray();
             foreach (var row in orderedRows)
             {
-                if (row.Page < 1 || row.Page > pages.Length ||
-                    row.RecipientPage < 1 || row.RecipientPage > pages.Length ||
-                    row.TrackingPage < 1 || row.TrackingPage > pages.Length)
-                    continue;
                 var code = NormalizeDigits(row.TrackingCode);
                 if (code.Length is < 15 or > 30 || string.IsNullOrWhiteSpace(row.RecipientName)) continue;
                 if (!verifiedRows.TryGetValue(code, out var verifiedRow)) continue;
+                if (!trackingLocations.TryGetValue(code, out var location) ||
+                    location.Page < 1 || location.Page > pages.Length)
+                    continue;
                 try
                 {
                     var recipientName = Clean(row.RecipientName);
-                    var recipientBox = CreatePostRecipientCropBox(row.RecipientBox);
-                    var trackingNumberBox = CreatePostTrackingNumberCropBox(row.TrackingBox);
                     var recipientCrop = await CropNormalizedAsync(
-                        pages[row.RecipientPage - 1], recipientBox, 0, tempRoot, ct);
+                        pages[location.Page - 1], location.RecipientBox, 0, tempRoot, ct);
                     var trackingNumberCrop = await CropNormalizedAsync(
-                        pages[row.TrackingPage - 1], trackingNumberBox, 0, tempRoot, ct);
+                        pages[location.Page - 1], location.TrackingNumberBox, 0, tempRoot, ct);
                     items.Add(new TrackingImportItem(
                         TrackingCarrier.IranPost, code, recipientName, Clean(row.Destination), null,
                         await BuildPostCardAsync(recipientCrop, trackingNumberCrop, tempRoot, ct),
@@ -336,9 +336,9 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 {
                     _logger.LogError(exception,
                         "Iran Post crop/card generation failed for page {Page}, recipient page {RecipientPage}, tracking page {TrackingPage}, row {Row}, tracking {TrackingCode}.",
-                        row.Page, row.RecipientPage, row.TrackingPage, row.RowOrder, code);
+                        location.Page, location.Page, location.Page, row.RowOrder, code);
                     return new TrackingImportParseResult(false, [],
-                        $"مرحله برش نام و عدد کد یا ساخت تصویر برای ردیف {row.RowOrder} بین صفحه‌های {row.TrackingPage} و {row.RecipientPage} ناموفق بود؛ هیچ پیامی ارسال نشد.");
+                        $"مرحله برش قطعی نام و عدد کد یا ساخت تصویر برای کد {code} در صفحه {location.Page} ناموفق بود؛ هیچ پیامی ارسال نشد.");
                 }
             }
 
@@ -728,27 +728,6 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return await File.ReadAllBytesAsync(output, ct);
     }
 
-    private static int[] CreatePostRecipientCropBox(int[] detectedBox)
-    {
-        // Landscape A4 bulk receipt: isolate recipient and exclude the sender column.
-        return
-        [
-            626,
-            Math.Clamp(detectedBox[1] - 7, 0, 999),
-            718,
-            Math.Clamp(detectedBox[3] + 7, 1, 1000)
-        ];
-    }
-
-    private static int[] CreatePostTrackingNumberCropBox(int[] detectedBox)
-    {
-        // The detected box covers the barcode and its printed number. Keep only the lower
-        // printed-number band, and exclude the row-number column on the right.
-        var height = Math.Max(1, detectedBox[3] - detectedBox[1]);
-        var top = detectedBox[1] + (int)Math.Round(height * .58, MidpointRounding.AwayFromZero);
-        return [821, Math.Clamp(top, 0, 999), 929, Math.Clamp(detectedBox[3] + 4, 1, 1000)];
-    }
-
     private async Task<byte[]> BuildPostCardAsync(
         byte[] recipientCrop, byte[] trackingNumberCrop, string tempRoot, CancellationToken ct)
     {
@@ -924,25 +903,72 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         return Math.Max(receiverScore, Math.Max(customerScore, rawAddressScore));
     }
 
-    private static async Task<IReadOnlyCollection<string>> ExtractTrackingCodesFromPdfAsync(
+    private static async Task<IReadOnlyDictionary<string, PdfTrackingLocation>> ExtractTrackingCodeLocationsFromPdfAsync(
         string pdfPath,
         string tempRoot,
         CancellationToken ct)
     {
-        var textPath = Path.Combine(tempRoot, "source.txt");
+        var textPath = Path.Combine(tempRoot, "source-bbox.html");
         var extraction = await RunProcessAsync("pdftotext",
-            $"-layout -enc UTF-8 \"{pdfPath}\" \"{textPath}\"", tempRoot, ct);
+            $"-bbox -enc UTF-8 \"{pdfPath}\" \"{textPath}\"", tempRoot, ct);
         if (extraction.ExitCode != 0 || !File.Exists(textPath))
-            return [];
+            return new Dictionary<string, PdfTrackingLocation>(StringComparer.Ordinal);
 
-        var text = await File.ReadAllTextAsync(textPath, ct);
-        return LongDigitSequencePattern().Matches(text)
-            .Select(match => NormalizeDigits(match.Value))
-            .Where(value => value.Length is >= 20 and <= 30)
-            .Distinct(StringComparer.Ordinal)
-            .Take(100)
-            .ToArray();
+        await using var stream = File.OpenRead(textPath);
+        using var reader = XmlReader.Create(stream, new XmlReaderSettings
+        {
+            Async = true,
+            DtdProcessing = DtdProcessing.Ignore,
+            XmlResolver = null
+        });
+        var document = await XDocument.LoadAsync(reader, LoadOptions.None, ct);
+        var candidates = new Dictionary<string, (double X, PdfTrackingLocation Location)>(StringComparer.Ordinal);
+        var pageNumber = 0;
+        foreach (var page in document.Descendants().Where(value => value.Name.LocalName == "page"))
+        {
+            pageNumber++;
+            if (!TryReadDouble(page, "width", out var width) ||
+                !TryReadDouble(page, "height", out var height) || width <= 0 || height <= 0)
+                continue;
+            foreach (var word in page.Descendants().Where(value => value.Name.LocalName == "word"))
+            {
+                var code = NormalizeDigits(word.Value);
+                if (code.Length is < 20 or > 30 || !code.All(char.IsDigit) ||
+                    !TryReadDouble(word, "xMin", out var xMin) ||
+                    !TryReadDouble(word, "xMax", out var xMax) ||
+                    !TryReadDouble(word, "yMin", out var yMin) ||
+                    !TryReadDouble(word, "yMax", out var yMax))
+                    continue;
+
+                var normalizedX = xMin / width * 1000d;
+                var numberTop = Math.Clamp((int)Math.Floor(yMin / height * 1000d) - 1, 0, 998);
+                var numberBottom = Math.Clamp((int)Math.Ceiling(yMax / height * 1000d) + 1,
+                    numberTop + 1, 1000);
+                var numberLeft = Math.Clamp((int)Math.Floor(xMin / width * 1000d) - 1, 0, 998);
+                var numberRight = Math.Clamp((int)Math.Ceiling(xMax / width * 1000d) + 1,
+                    numberLeft + 1, 1000);
+                var location = new PdfTrackingLocation(
+                    pageNumber,
+                    [numberLeft, numberTop, numberRight, numberBottom],
+                    [626, Math.Clamp(numberTop - 35, 0, 998), 718,
+                        Math.Clamp(numberTop - 5, 1, 1000)]);
+                // Every code is repeated in the insurance table. The shipment table is the
+                // right-most occurrence, so select it deterministically without relying on a
+                // fixed page or row number.
+                if (!candidates.TryGetValue(code, out var current) || normalizedX > current.X)
+                    candidates[code] = (normalizedX, location);
+            }
+        }
+        var result = candidates.ToDictionary(
+            value => value.Key, value => value.Value.Location, StringComparer.Ordinal);
+        return result.Count <= 100
+            ? result
+            : result.Take(100).ToDictionary(value => value.Key, value => value.Value, StringComparer.Ordinal);
     }
+
+    private static bool TryReadDouble(XElement element, string attributeName, out double value) =>
+        double.TryParse(element.Attribute(attributeName)?.Value, NumberStyles.Float,
+            CultureInfo.InvariantCulture, out value);
 
     private static bool PostReadContainsExpectedCodes(
         IReadOnlyCollection<PostRecognizedRow> read,
@@ -1023,15 +1049,14 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     [GeneratedRegex(@"https?://krch\.ir/[^\s\]\)]+", RegexOptions.IgnoreCase)]
     private static partial Regex ChaparUrlPattern();
 
-    [GeneratedRegex(@"(?<!\d)[0-9۰-۹٠-٩]{20,30}(?!\d)")]
-    private static partial Regex LongDigitSequencePattern();
-
     private sealed record Candidate(Guid CustomerId, Guid? ShippingRequestId, string ReceiverName,
         string City, string FullAddress, string CustomerFullName, DateTime Date, bool IsActive);
     private sealed record PostRowsResponse(PostRecognizedRow[] Rows);
     private sealed record PostExpressRowsResponse(PostExpressRow[] Rows);
     private sealed record PostExpressRow(
         string RecipientName, string TrackingCode, string Destination, double Confidence);
+    private sealed record PdfTrackingLocation(
+        int Page, int[] TrackingNumberBox, int[] RecipientBox);
     private sealed record PostRecognizedRow(int Page, int RecipientPage, int TrackingPage, int RowOrder, string RecipientName,
         string TrackingCode, string Destination, int[] RecipientBox, int[] TrackingBox, double Confidence);
 }
