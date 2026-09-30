@@ -97,8 +97,8 @@ public sealed class IssueInvoiceCommandHandler
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
-                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                    PerfumePersianName = InvoicePersianName(item),
+                    PerfumeEnglishName = InvoiceEnglishName(item),
                     PerfumeBrand = item.Perfume?.Brand,
                     item.RequestedVolumeMl,
                     item.PerfumeAmount,
@@ -157,8 +157,8 @@ public sealed class IssueInvoiceCommandHandler
                          {
                              item.SalesListId,
                              FileId = item.SalesList!.TelegramPhotoFileId!,
-                             PersianName = item.Perfume?.Name ?? item.ManualDescription,
-                             EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                             PersianName = InvoicePersianName(item),
+                             EnglishName = InvoiceEnglishName(item)
                          })
                          .GroupBy(value => value.SalesListId.HasValue
                              ? $"list:{value.SalesListId.Value:N}"
@@ -246,8 +246,8 @@ public sealed class IssueInvoiceCommandHandler
                 Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                 {
                     item.RowNumber,
-                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                    PerfumePersianName = InvoicePersianName(item),
+                    PerfumeEnglishName = InvoiceEnglishName(item),
                     PerfumeBrand = item.Perfume?.Brand,
                     item.RequestedVolumeMl,
                     item.PerfumePricePerMl,
@@ -281,4 +281,23 @@ public sealed class IssueInvoiceCommandHandler
 
         throw new InvalidOperationException("تولید شماره فاکتور یکتا ناموفق بود.");
     }
+
+    private static string InvoicePersianName(OrderItem item) =>
+        FirstNonEmpty(
+            item.SalesList?.PersianName,
+            item.SalesList?.EnglishName,
+            item.Perfume?.Name,
+            item.Perfume?.EnglishName,
+            item.ManualDescription) ?? "عطر";
+
+    private static string InvoiceEnglishName(OrderItem item) =>
+        FirstNonEmpty(
+            item.SalesList?.EnglishName,
+            item.SalesList?.PersianName,
+            item.Perfume?.EnglishName,
+            item.Perfume?.Name,
+            item.ManualDescription) ?? "Perfume";
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ZibasheERP.Application.Features.Invoices.IssueInvoice;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
@@ -96,6 +97,54 @@ public sealed class IssueInvoiceCommandHandlerTests
         Assert.Contains("MB_Sama", invoiceEvent.Payload);
         Assert.False(outbox.AddedNotifications.Any(
             value => value.EventType == "InvoicePerfumePhoto"));
+    }
+
+    [Fact]
+    public async Task Handle_SalesListItem_UsesSalesListNameInsteadOfCatalogOrNotesValue()
+    {
+        var customer = new Customer
+        {
+            Id = Guid.NewGuid(), FullName = "Sales List Customer", Mobile = "09120000002",
+            TelegramId = "1002"
+        };
+        var perfume = new Perfume
+        {
+            Id = Guid.NewGuid(), Name = "ترنج، فلفل صورتی", EnglishName = "Wrong catalog value"
+        };
+        var salesList = new SalesList
+        {
+            Id = Guid.NewGuid(), PerfumeId = perfume.Id, Perfume = perfume,
+            PersianName = "نام صحیح عطر", EnglishName = "Correct Perfume Name",
+            TopNotes = "ترنج، فلفل صورتی"
+        };
+        var order = new Order
+        {
+            Id = Guid.NewGuid(), Customer = customer, CustomerId = customer.Id,
+            OrderNumber = "ZS-LIST-NAME-TEST", FinalAmount = 100_000,
+            Items =
+            {
+                new OrderItem
+                {
+                    Id = Guid.NewGuid(), RequestedVolumeMl = 2,
+                    Perfume = perfume, PerfumeId = perfume.Id,
+                    SalesList = salesList, SalesListId = salesList.Id
+                }
+            }
+        };
+        var repository = new InvoiceRepositoryStub(order);
+        var outbox = new NotificationOutboxRepositoryStub();
+        var handler = new IssueInvoiceCommandHandler(repository, outbox, new PaymentAccountRepositoryStub());
+
+        var result = await handler.Handle(new IssueInvoiceCommand(order.Id), CancellationToken.None);
+
+        Assert.Equal("نام صحیح عطر", result.Items.Single().PerfumeName);
+        var invoiceEvent = outbox.AddedNotifications.Single(value =>
+            value.Channel == "N8n" && value.EventType == "InvoiceIssued");
+        using var payload = JsonDocument.Parse(invoiceEvent.Payload);
+        var item = payload.RootElement.GetProperty("Items")[0];
+        Assert.Equal("نام صحیح عطر", item.GetProperty("PerfumePersianName").GetString());
+        Assert.Equal("Correct Perfume Name", item.GetProperty("PerfumeEnglishName").GetString());
+        Assert.NotEqual(salesList.TopNotes, item.GetProperty("PerfumePersianName").GetString());
     }
 
     private sealed class InvoiceRepositoryStub(Order order) : IInvoiceRepository

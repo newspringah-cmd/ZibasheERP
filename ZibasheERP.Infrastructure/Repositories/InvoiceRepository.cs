@@ -74,5 +74,8 @@ public sealed class InvoiceRepository : IInvoiceRepository
                 .ThenInclude(item => item.Perfume)
         .Include(invoice => invoice.Order)
             .ThenInclude(order => order!.Items.Where(item => !item.IsDeleted))
-                .ThenInclude(item => item.Bottle);
+                .ThenInclude(item => item.Bottle)
+        .Include(invoice => invoice.Order)
+            .ThenInclude(order => order!.Items.Where(item => !item.IsDeleted))
+                .ThenInclude(item => item.SalesList);
 }

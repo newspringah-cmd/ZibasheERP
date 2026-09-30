@@ -379,8 +379,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 PerfumePricePerMl = request.SalesList!.PricePerMl,
                 request.BottlePrice,
                 ListCode = request.SalesList!.StablePublicCode ?? request.SalesList.PublicCode,
-                PerfumeName = request.SalesList.Perfume != null
-                    ? request.SalesList.Perfume.Name
+                PerfumeName = request.SalesList.PersianName != ""
+                    ? request.SalesList.PersianName
                     : request.SalesList.EnglishName
             })
             .ToArrayAsync(cancellationToken);
@@ -537,8 +537,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     {
                         item.SalesListId,
                         FileId = item.SalesList.TelegramPhotoFileId,
-                        PersianName = item.Perfume?.Name ?? item.ManualDescription,
-                        EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                        PersianName = InvoicePersianName(item),
+                        EnglishName = InvoiceEnglishName(item)
                     })
                 }, cancellationToken);
             }
@@ -554,8 +554,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     IssuedAt = now,
                     GiverUsername = NormalizeCustomerUsername(request.TelegramUsername),
                     GiverTelegramId = request.TelegramUserId,
-                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                    PerfumePersianName = InvoicePersianName(item),
+                    PerfumeEnglishName = InvoiceEnglishName(item),
                     item.RequestedVolumeMl,
                     TotalAmount = 0
                 })
@@ -586,8 +586,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         new
                         {
                             RowNumber = item.RowNumber,
-                            PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                            PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                            PerfumePersianName = InvoicePersianName(item),
+                            PerfumeEnglishName = InvoiceEnglishName(item),
                             PerfumeBrand = item.Perfume?.Brand,
                             item.RequestedVolumeMl,
                             item.PerfumePricePerMl,
@@ -1158,4 +1158,23 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         string.IsNullOrWhiteSpace(NormalizeCustomerUsername(request.TelegramUsername))
             ? $"کاربر {request.TelegramUserId}"
             : $"@{NormalizeCustomerUsername(request.TelegramUsername)}";
+
+    private static string InvoicePersianName(OrderItem item) =>
+        FirstNonEmpty(
+            item.SalesList?.PersianName,
+            item.SalesList?.EnglishName,
+            item.Perfume?.Name,
+            item.Perfume?.EnglishName,
+            item.ManualDescription) ?? "عطر";
+
+    private static string InvoiceEnglishName(OrderItem item) =>
+        FirstNonEmpty(
+            item.SalesList?.EnglishName,
+            item.SalesList?.PersianName,
+            item.Perfume?.EnglishName,
+            item.Perfume?.Name,
+            item.ManualDescription) ?? "Perfume";
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
 }

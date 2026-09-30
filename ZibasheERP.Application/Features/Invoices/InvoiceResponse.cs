@@ -41,7 +41,7 @@ public sealed record InvoiceResponse(
                 .OrderBy(item => item.RowNumber)
                 .Select(item => new InvoiceLineResponse(
                     item.Id,
-                    item.Perfume?.Name ?? item.ManualDescription ?? string.Empty,
+                    InvoicePerfumeName(item),
                     item.Perfume?.Brand ?? string.Empty,
                     item.RequestedVolumeMl,
                     item.PerfumePricePerMl,
@@ -52,6 +52,16 @@ public sealed record InvoiceResponse(
                     item.LineTotal))
                 .ToArray());
     }
+
+    private static string InvoicePerfumeName(OrderItem item) =>
+        new[]
+        {
+            item.SalesList?.PersianName,
+            item.SalesList?.EnglishName,
+            item.Perfume?.Name,
+            item.Perfume?.EnglishName,
+            item.ManualDescription
+        }.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 }
 
 public sealed record InvoiceCustomerResponse(
