@@ -144,6 +144,7 @@ builder.Services.AddOptions<AddressLabelOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IAddressLabelService, AddressLabelService>();
 builder.Services.AddSingleton<IPerfumeRecommendationService, PerfumeRecommendationService>();
+builder.Services.AddSingleton<IAccountantReplacementService, AccountantReplacementService>();
 builder.Services.AddSingleton<IPerfumeLabelPdfService, PerfumeLabelPdfService>();
 builder.Services.AddScoped<ITrackingImportService, TrackingImportService>();
 builder.Services.AddSingleton<TrackingImportDraftStore>();

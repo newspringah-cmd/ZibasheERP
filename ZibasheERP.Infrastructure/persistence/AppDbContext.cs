@@ -26,6 +26,8 @@ public class AppDbContext : DbContext
     public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
     public DbSet<TelegramProcessedUpdate> TelegramProcessedUpdates => Set<TelegramProcessedUpdate>();
     public DbSet<TelegramBlockedUsername> TelegramBlockedUsernames => Set<TelegramBlockedUsername>();
+    public DbSet<TelegramAccountantLearningMessage> TelegramAccountantLearningMessages => Set<TelegramAccountantLearningMessage>();
+    public DbSet<TelegramAccountantLearningSetting> TelegramAccountantLearningSettings => Set<TelegramAccountantLearningSetting>();
     public DbSet<CustomerTelegramGroup> CustomerTelegramGroups => Set<CustomerTelegramGroup>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
@@ -59,6 +61,7 @@ public class AppDbContext : DbContext
         ConfigureTelegramOrderDraft(modelBuilder);
         ConfigureTelegramProcessedUpdate(modelBuilder);
         ConfigureTelegramBlockedUsername(modelBuilder);
+        ConfigureTelegramAccountantLearning(modelBuilder);
         ConfigureCustomerTelegramGroup(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
@@ -117,6 +120,16 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<TelegramBlockedUsername>()
             .HasIndex(value => value.NormalizedUsername)
             .IsUnique();
+    }
+
+    private static void ConfigureTelegramAccountantLearning(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TelegramAccountantLearningMessage>()
+            .HasIndex(value => new { value.ChatId, value.MessageId })
+            .IsUnique();
+
+        modelBuilder.Entity<TelegramAccountantLearningMessage>()
+            .HasIndex(value => value.CreatedAt);
     }
 
     private static void ConfigureInvoiceTelegramSetting(ModelBuilder modelBuilder)

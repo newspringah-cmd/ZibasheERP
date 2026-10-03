@@ -79,6 +79,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly IPerfumeLabelPdfService _perfumeLabelPdfService;
     private readonly ITrackingImportService _trackingImportService;
     private readonly IPerfumeRecommendationService _perfumeRecommendationService;
+    private readonly IAccountantReplacementService _accountantReplacementService;
     private readonly TrackingImportDraftStore _trackingImportDrafts;
     private readonly IHostApplicationLifetime _applicationLifetime;
 
@@ -116,6 +117,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         IPerfumeLabelPdfService perfumeLabelPdfService,
         ITrackingImportService trackingImportService,
         IPerfumeRecommendationService perfumeRecommendationService,
+        IAccountantReplacementService accountantReplacementService,
         TrackingImportDraftStore trackingImportDrafts,
         IHostApplicationLifetime applicationLifetime,
         AppDbContext db,
@@ -154,6 +156,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _perfumeLabelPdfService = perfumeLabelPdfService;
         _trackingImportService = trackingImportService;
         _perfumeRecommendationService = perfumeRecommendationService;
+        _accountantReplacementService = accountantReplacementService;
         _trackingImportDrafts = trackingImportDrafts;
         _applicationLifetime = applicationLifetime;
         _db = db;
@@ -889,6 +892,10 @@ public sealed partial class TelegramWebhookController : ControllerBase
         // Telegram can occasionally omit or delay the membership update after a re-add.
         await RecoverObservedGroupLinkAsync(message.Chat, cancellationToken);
 
+        // Store eligible non-sensitive conversation turns for the optional accountant-style
+        // assistant. Collection must never interrupt normal group processing.
+        await CaptureAccountantLearningMessageAsync(message, cancellationToken);
+
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;
 
@@ -931,6 +938,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return;
 
         if (await TryHandlePerfumeGuidanceQuestionAsync(message, cancellationToken))
+            return;
+
+        if (await TryHandleAccountantReplacementQuestionAsync(message, cancellationToken))
             return;
 
         if (!TryParseConnectCommand(message.Text, out var invoiceNumber))

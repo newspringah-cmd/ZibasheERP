@@ -28,6 +28,20 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
+        if (data == "orderflow:no-bottle-owner")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendListsWithoutBottleOwnerReportAsync(chatId, 0, ct);
+            return;
+        }
+        if (data.StartsWith("orderflow:no-bottle-owner-page:", StringComparison.Ordinal) &&
+            int.TryParse(data["orderflow:no-bottle-owner-page:".Length..], out var ownerReportPage))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendListsWithoutBottleOwnerReportAsync(chatId, Math.Max(0, ownerReportPage), ct);
+            return;
+        }
+
         if (data == "orderflow:arrival")
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -188,6 +202,7 @@ public sealed partial class TelegramWebhookController
             .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
             .Select(value => value.SalesListId).Distinct().CountAsync(ct);
+        var listsWithoutBottleOwnerCount = await ListsWithoutBottleOwnerQuery().CountAsync(ct);
         var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>
         {
             new[] { new TelegramInlineButton($"📝 انتظار تکمیل لیست ({listCounts.GetValueOrDefault(SalesListStatus.Open)})", "orderflow:summary:open") },
@@ -200,11 +215,127 @@ public sealed partial class TelegramWebhookController
             new[] { new TelegramInlineButton($"📦 آماده ارسال ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.DecantedReadyToShip)})", "orderflow:itemstatus:9") },
             new[] { new TelegramInlineButton($"🚚 ارسال‌شده ({itemCounts.GetValueOrDefault(OrderItemFulfillmentStatus.Shipped)})", "orderflow:itemstatus:10") }
         };
+        buttons.Add(new[]
+        {
+            new TelegramInlineButton(
+                $"👑 گزارش لیست‌های بدون صاحب باتل ({listsWithoutBottleOwnerCount})",
+                "orderflow:no-bottle-owner")
+        });
         buttons.Add(new[] { new TelegramInlineButton("↩️ بازگشت به منوی اصلی", "invoiceadmin:menu:main") });
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
             "📦 وضعیت سفارش‌ها از ثبت تا ارسال\n\nوضعیت پرداخت مستقل است و از دکمه‌های زیر فاکتور مدیریت می‌شود.",
             buttons, ct);
     }
+
+    private IQueryable<SalesList> ListsWithoutBottleOwnerQuery()
+    {
+        var actionableStatuses = new[]
+        {
+            SalesListStatus.Open,
+            SalesListStatus.Full,
+            SalesListStatus.Purchased,
+            SalesListStatus.QueuedForInvoice,
+            SalesListStatus.AwaitingAvailability
+        };
+        var validOwnerStatuses = new[]
+        {
+            SalesListRequestStatus.Confirmed,
+            SalesListRequestStatus.Promoted,
+            SalesListRequestStatus.QueuedForInvoice,
+            SalesListRequestStatus.Invoiced
+        };
+        return _db.SalesLists.AsNoTracking().Where(list =>
+            !list.IsDeleted &&
+            actionableStatuses.Contains(list.Status) &&
+            !list.HasBottleOwner &&
+            list.BottleOwnerCustomerId == null &&
+            !list.Requests.Any(request =>
+                !request.IsDeleted &&
+                request.Kind == SalesListRequestKind.CurrentBottle &&
+                request.IsBottleOwner &&
+                validOwnerStatuses.Contains(request.Status)));
+    }
+
+    private async Task SendListsWithoutBottleOwnerReportAsync(
+        long chatId,
+        int page,
+        CancellationToken ct)
+    {
+        const int pageSize = 50;
+        var query = ListsWithoutBottleOwnerQuery()
+            .OrderBy(list => list.Status)
+            .ThenBy(list => list.OpenDate)
+            .ThenBy(list => list.PublicCode);
+        var total = await query.CountAsync(ct);
+        var maxPage = total == 0 ? 0 : (total - 1) / pageSize;
+        page = Math.Min(page, maxPage);
+        var lists = await query.Skip(page * pageSize).Take(pageSize).ToArrayAsync(ct);
+
+        foreach (var list in lists)
+        {
+            var name = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
+            var caption =
+                $"👑 <b>{Html(name)}</b>\n" +
+                $"کد لیست: <code>{list.DisplayCode}</code>\n" +
+                $"وضعیت: {Html(SalesListStatusLabel(list.Status))}\n" +
+                $"رزروشده: {list.ReservedVolume} از {list.TotalVolume} میل\n" +
+                "⚠️ صاحب باتل ثبت نشده است.";
+            var postUrl = BuildCustomerListUrl(list.TelegramChannelId, list.TelegramMessageId);
+            var buttons = string.IsNullOrWhiteSpace(postUrl)
+                ? Array.Empty<IReadOnlyCollection<TelegramInlineButton>>()
+                : new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("🔗 مشاهده پست کانال", Url: postUrl) }
+                };
+            TelegramSendResult sent;
+            if (!string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
+                sent = buttons.Length > 0
+                    ? await _sender.SendPhotoWithKeyboardAsync(
+                        chatId.ToString(CultureInfo.InvariantCulture),
+                        list.TelegramPhotoFileId!, caption, buttons, ct)
+                    : await _sender.SendPhotoHtmlAsync(
+                        chatId.ToString(CultureInfo.InvariantCulture),
+                        list.TelegramPhotoFileId!, caption, ct);
+            else
+                sent = buttons.Length > 0
+                    ? await _sender.SendInlineKeyboardAsync(
+                        chatId.ToString(CultureInfo.InvariantCulture), caption, buttons, ct)
+                    : await _sender.SendHtmlAsync(
+                        chatId.ToString(CultureInfo.InvariantCulture), caption, ct);
+            if (!sent.IsSuccessful)
+                await ReplyAsync(chatId,
+                    $"⚠️ نمایش لیست {list.DisplayCode} ناموفق بود: {sent.Error ?? "خطای نامشخص"}", ct);
+        }
+
+        var navigation = new List<TelegramInlineButton>();
+        if (page > 0)
+            navigation.Add(new TelegramInlineButton(
+                "◀️ صفحه قبل", $"orderflow:no-bottle-owner-page:{page - 1}"));
+        if (page < maxPage)
+            navigation.Add(new TelegramInlineButton(
+                "صفحه بعد ▶️", $"orderflow:no-bottle-owner-page:{page + 1}"));
+        var summaryButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (navigation.Count > 0)
+            summaryButtons.Add(navigation);
+        summaryButtons.Add(new[] { new TelegramInlineButton("↩️ وضعیت سفارش‌ها", "orderflow:dashboard") });
+        var summary = total == 0
+            ? "👑 گزارش لیست‌های بدون صاحب باتل\n\nموردی وجود ندارد."
+            : $"👑 گزارش لیست‌های بدون صاحب باتل\n" +
+              $"تعداد کل: {total}\nصفحه {page + 1} از {maxPage + 1}\n" +
+              $"{lists.Length} عطر در کارت‌های بالا نمایش داده شد.";
+        await _sender.SendInlineKeyboardAsync(
+            chatId.ToString(CultureInfo.InvariantCulture), summary, summaryButtons, ct);
+    }
+
+    private static string SalesListStatusLabel(SalesListStatus status) => status switch
+    {
+        SalesListStatus.Open => "در انتظار تکمیل",
+        SalesListStatus.Full => "تکمیل‌شده",
+        SalesListStatus.Purchased => "خرید شده",
+        SalesListStatus.QueuedForInvoice => "آماده صدور فاکتور",
+        SalesListStatus.AwaitingAvailability => "در انتظار موجودشدن برای خرید",
+        _ => status.ToString()
+    };
 
     private async Task SendArrivalSelectionAsync(
         long chatId,

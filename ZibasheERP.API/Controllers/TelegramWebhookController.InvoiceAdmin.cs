@@ -59,7 +59,7 @@ public sealed partial class TelegramWebhookController
         if (string.Equals(command, "/admin", StringComparison.OrdinalIgnoreCase))
         {
             ClearAdminWorkflowDrafts(message.Chat.Id, message.From.Id);
-            await SendInvoiceAdminMenuAsync(message.Chat.Id, null, ct);
+            await SendInvoiceAdminMenuAsync(message.Chat.Id, null, ct, message.From.Username);
             return true;
         }
 
@@ -331,14 +331,35 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data == "invoiceadmin:assistant:toggle-learning")
+        {
+            await ToggleAccountantLearningAsync(callback, ct);
+            return true;
+        }
+
+        if (callback.Data == "invoiceadmin:assistant:toggle-replies")
+        {
+            await ToggleAccountantReplacementReplyAsync(callback, ct);
+            return true;
+        }
+
+        if (callback.Data == "invoiceadmin:assistant-settings")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendAccountantAssistantSettingsAsync(callback.Message.Chat.Id, callback.From, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("invoiceadmin:menu:", StringComparison.Ordinal))
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             var section = callback.Data["invoiceadmin:menu:".Length..];
             if (section == "main")
-                await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id, null, ct);
+                await SendInvoiceAdminMenuAsync(
+                    callback.Message.Chat.Id, null, ct, callback.From.Username);
             else
-                await SendInvoiceAdminSectionAsync(callback.Message.Chat.Id, section, callback.From.Id, ct);
+                await SendInvoiceAdminSectionAsync(
+                    callback.Message.Chat.Id, section, callback.From.Id, ct, callback.From.Username);
             return true;
         }
 
@@ -1608,11 +1629,15 @@ public sealed partial class TelegramWebhookController
         }
     }
 
-    private async Task SendInvoiceAdminMenuAsync(long chatId, string? notice, CancellationToken ct)
+    private async Task SendInvoiceAdminMenuAsync(
+        long chatId,
+        string? notice,
+        CancellationToken ct,
+        string? actorUsername = null)
     {
         var message = (notice is null ? "" : notice + "\n\n") +
             "⚙️ مدیریت زیباشی\n\nبخش موردنظر را انتخاب کنید:";
-        IReadOnlyCollection<TelegramInlineButton>[] buttons =
+        var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>
         {
             new[]
             {
@@ -1639,10 +1664,20 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("🔎 گزارش وضعیت عطر مشتری", "invoiceadmin:customer-perfume-status")
             }
         };
+        if (IsAccountantLearningManager(actorUsername))
+            buttons.Add(new[]
+            {
+                new TelegramInlineButton("🤖 دستیار جایگزین حسابدار", "invoiceadmin:assistant-settings")
+            });
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
     }
 
-    private async Task SendInvoiceAdminSectionAsync(long chatId, string section, long userId, CancellationToken ct)
+    private async Task SendInvoiceAdminSectionAsync(
+        long chatId,
+        string section,
+        long userId,
+        CancellationToken ct,
+        string? actorUsername = null)
     {
         var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>();
         string message;
