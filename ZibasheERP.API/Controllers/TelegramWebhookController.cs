@@ -182,6 +182,13 @@ public sealed partial class TelegramWebhookController : ControllerBase
 
         if (update.CallbackQuery is not null)
         {
+            if (update.CallbackQuery.Message is { } callbackMessage &&
+                IsGroup(callbackMessage.Chat.Type))
+            {
+                await RecoverObservedGroupLinkAsync(
+                    callbackMessage.Chat,
+                    cancellationToken);
+            }
             await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
             return Ok();
         }
@@ -877,6 +884,11 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
+        // Receiving a message proves that Telegram is delivering updates for this chat.
+        // Recover an existing inactive mapping here as well as in my_chat_member because
+        // Telegram can occasionally omit or delay the membership update after a re-add.
+        await RecoverObservedGroupLinkAsync(message.Chat, cancellationToken);
+
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;
 
@@ -1015,6 +1027,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandlePerfumeLogoMessageAsync(message, cancellationToken))
             return true;
 
+        if (await TryHandleCustomerPerfumeStatusReportMessageAsync(message, cancellationToken))
+            return true;
+
         if (await TryHandleBlockedUsernameMessageAsync(message, cancellationToken))
             return true;
 
@@ -1031,6 +1046,24 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return true;
 
         return await TryHandleAdminSalesListMessageAsync(message, cancellationToken);
+    }
+
+    private async Task RecoverObservedGroupLinkAsync(
+        TelegramChat chat,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await EnsureActiveCustomerGroupLinkAsync(chat, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            // Recovery must never prevent /help, /ad or an existing callback from being handled.
+            _logger.LogWarning(
+                exception,
+                "Telegram customer-group recovery failed for observed chat {TelegramGroupChatId}.",
+                chat.Id);
+        }
     }
 
     private static string FormatQueuedDeliveryNotice(int invoiceCount, int decantPhotoCount)

@@ -23,6 +23,7 @@ public sealed partial class TelegramWebhookController
     private static readonly ConcurrentDictionary<(long ChatId, long UserId), TelegramSalesListImportEditDraft> ImportEditDrafts = new();
     private static readonly ConcurrentDictionary<(long ChatId, long UserId), DateTime> CompletedListResendDrafts = new();
     private static readonly ConcurrentDictionary<(long ChatId, long UserId), CompletedListEditDraft> CompletedListEditDrafts = new();
+    private static readonly ConcurrentDictionary<(long ChatId, long UserId), DateTime> CustomerPerfumeStatusReportDrafts = new();
 
     private async Task<bool> TryHandleAdminCommandAsync(TelegramMessage message, CancellationToken ct)
     {
@@ -338,6 +339,18 @@ public sealed partial class TelegramWebhookController
                 await SendInvoiceAdminMenuAsync(callback.Message.Chat.Id, null, ct);
             else
                 await SendInvoiceAdminSectionAsync(callback.Message.Chat.Id, section, callback.From.Id, ct);
+            return true;
+        }
+
+        if (callback.Data == "invoiceadmin:customer-perfume-status")
+        {
+            ClearAdminWorkflowDrafts(callback.Message.Chat.Id, callback.From.Id);
+            CustomerPerfumeStatusReportDrafts[(callback.Message.Chat.Id, callback.From.Id)] = DateTime.UtcNow;
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await _sender.SendForceReplyAsync(
+                callback.Message.Chat.Id.ToString(),
+                "یوزرنیم مشتری را با یا بدون @ وارد کنید؛ مثال: @zahraa_frj",
+                ct);
             return true;
         }
 
@@ -1620,6 +1633,10 @@ public sealed partial class TelegramWebhookController
             {
                 new TelegramInlineButton("📍 ثبت دستی آدرس", "shipping:manualaddress"),
                 new TelegramInlineButton("📬 ورود کد رهگیری", "trackingimport:menu")
+            },
+            new[]
+            {
+                new TelegramInlineButton("🔎 گزارش وضعیت عطر مشتری", "invoiceadmin:customer-perfume-status")
             }
         };
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
@@ -4148,6 +4165,248 @@ public sealed partial class TelegramWebhookController
         PerfumeLogoDrafts.TryRemove((chatId, userId), out _);
         CompletedListResendDrafts.TryRemove((chatId, userId), out _);
         ImportEditDrafts.TryRemove((chatId, userId), out _);
+        CustomerPerfumeStatusReportDrafts.TryRemove((chatId, userId), out _);
+    }
+
+    private async Task<bool> TryHandleCustomerPerfumeStatusReportMessageAsync(
+        TelegramMessage message,
+        CancellationToken ct)
+    {
+        if (message.From is null ||
+            !CustomerPerfumeStatusReportDrafts.TryGetValue(
+                (message.Chat.Id, message.From.Id),
+                out var startedAt))
+            return false;
+
+        if (startedAt <= DateTime.UtcNow.AddMinutes(-15))
+        {
+            CustomerPerfumeStatusReportDrafts.TryRemove(
+                (message.Chat.Id, message.From.Id), out _);
+            return false;
+        }
+
+        if (!await IsAuthorizedInvoiceAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            CustomerPerfumeStatusReportDrafts.TryRemove(
+                (message.Chat.Id, message.From.Id), out _);
+            return false;
+        }
+
+        var text = message.Text?.Trim();
+        if (string.Equals(text, "/cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            CustomerPerfumeStatusReportDrafts.TryRemove(
+                (message.Chat.Id, message.From.Id), out _);
+            await ReplyAsync(message.Chat.Id, "گزارش وضعیت عطر مشتری لغو شد.", ct);
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(text) && text.StartsWith('/'))
+        {
+            CustomerPerfumeStatusReportDrafts.TryRemove(
+                (message.Chat.Id, message.From.Id), out _);
+            return false;
+        }
+
+        var username = text?.Trim().TrimStart('@');
+        if (string.IsNullOrWhiteSpace(username) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(
+                username,
+                "^[A-Za-z0-9_]{5,32}$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        {
+            await ReplyAsync(
+                message.Chat.Id,
+                "یوزرنیم معتبر نیست. آن را با یا بدون @ و بدون فاصله وارد کنید؛ مثال: @zahraa_frj",
+                ct);
+            return true;
+        }
+
+        await SendCustomerPerfumeStatusReportAsync(message.Chat.Id, username, ct);
+        CustomerPerfumeStatusReportDrafts.TryRemove(
+            (message.Chat.Id, message.From.Id), out _);
+        return true;
+    }
+
+    private async Task SendCustomerPerfumeStatusReportAsync(
+        long chatId,
+        string username,
+        CancellationToken ct)
+    {
+        var normalizedUsername = username.Trim().TrimStart('@');
+        var normalizedLower = normalizedUsername.ToLowerInvariant();
+        var requestIdentities = await _db.SalesListRequests
+            .AsNoTracking()
+            .Where(request =>
+                !request.IsDeleted &&
+                ((request.TelegramUsername != null &&
+                  (request.TelegramUsername.ToLower() == normalizedLower ||
+                   request.TelegramUsername.ToLower() == "@" + normalizedLower)) ||
+                 (request.GiftRecipientTelegramUsername != null &&
+                  (request.GiftRecipientTelegramUsername.ToLower() == normalizedLower ||
+                   request.GiftRecipientTelegramUsername.ToLower() == "@" + normalizedLower))))
+            .Select(request => new
+            {
+                request.TelegramUsername,
+                request.TelegramUserId,
+                request.GiftRecipientTelegramUsername,
+                request.GiftRecipientTelegramUserId
+            })
+            .ToArrayAsync(ct);
+        var knownTelegramIds = requestIdentities
+            .SelectMany(value => new[]
+            {
+                string.Equals(
+                    value.TelegramUsername?.Trim().TrimStart('@'),
+                    normalizedUsername,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? value.TelegramUserId
+                    : null,
+                string.Equals(
+                    value.GiftRecipientTelegramUsername?.Trim().TrimStart('@'),
+                    normalizedUsername,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? value.GiftRecipientTelegramUserId
+                    : null
+            })
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var customers = await _db.Customers
+            .AsNoTracking()
+            .Where(value =>
+                !value.IsDeleted &&
+                ((value.Username != null &&
+                  (value.Username.ToLower() == normalizedLower ||
+                   value.Username.ToLower() == "@" + normalizedLower)) ||
+                 (value.TelegramId != null && knownTelegramIds.Contains(value.TelegramId))))
+            .Select(value => new { value.Id, value.TelegramId })
+            .ToArrayAsync(ct);
+        var customerIds = customers.Select(value => value.Id).ToArray();
+        var telegramIds = customers
+            .Select(value => value.TelegramId)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Concat(knownTelegramIds)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var rows = customerIds.Length == 0
+            ? new List<CustomerItemStatusRow>()
+            : await _db.OrderItems
+                .AsNoTracking()
+                .Where(item =>
+                    !item.IsDeleted &&
+                    item.Order != null &&
+                    !item.Order.IsDeleted &&
+                    customerIds.Contains(item.Order.CustomerId) &&
+                    item.Order.Status != OrderStatus.Cancelled)
+                .OrderByDescending(item => item.UpdatedAt ?? item.CreatedAt)
+                .Take(250)
+                .Select(item => new CustomerItemStatusRow(
+                    item.Id,
+                    item.SalesListId,
+                    item.PerfumeId,
+                    item.SalesList != null
+                        ? item.SalesList.StablePublicCode ?? item.SalesList.PublicCode
+                        : null,
+                    item.SalesList != null ? item.SalesList.PersianName : null,
+                    item.SalesList != null ? item.SalesList.EnglishName : null,
+                    item.Perfume != null ? item.Perfume.Name : null,
+                    item.Perfume != null ? item.Perfume.EnglishName : null,
+                    item.ManualDescription,
+                    item.FulfillmentStatus,
+                    item.UpdatedAt ?? item.CreatedAt))
+                .ToListAsync(ct);
+
+        var requestRows = await _db.SalesListRequests
+            .AsNoTracking()
+            .Where(request =>
+                !request.IsDeleted &&
+                request.SalesList.Status != SalesListStatus.Cancelled &&
+                request.Status != SalesListRequestStatus.PendingConfirmation &&
+                request.Status != SalesListRequestStatus.Cancelled &&
+                request.Status != SalesListRequestStatus.Expired &&
+                ((request.TelegramUsername != null &&
+                  (request.TelegramUsername.ToLower() == normalizedLower ||
+                   request.TelegramUsername.ToLower() == "@" + normalizedLower)) ||
+                 (telegramIds.Length > 0 && telegramIds.Contains(request.TelegramUserId)) ||
+                 (request.IsGift &&
+                  ((request.GiftRecipientTelegramUsername != null &&
+                    (request.GiftRecipientTelegramUsername.ToLower() == normalizedLower ||
+                     request.GiftRecipientTelegramUsername.ToLower() == "@" + normalizedLower)) ||
+                   (request.GiftRecipientTelegramUserId != null &&
+                    telegramIds.Length > 0 &&
+                    telegramIds.Contains(request.GiftRecipientTelegramUserId))))))
+            .OrderByDescending(request => request.UpdatedAt ?? request.CreatedAt)
+            .Take(250)
+            .Select(request => new
+            {
+                request.Id,
+                request.SalesListId,
+                request.SalesList.PerfumeId,
+                PublicCode = request.SalesList.StablePublicCode ?? request.SalesList.PublicCode,
+                request.SalesList.PersianName,
+                request.SalesList.EnglishName,
+                PerfumeName = request.SalesList.Perfume.Name,
+                PerfumeEnglishName = request.SalesList.Perfume.EnglishName,
+                request.SalesList.Status,
+                ChangedAt = request.UpdatedAt ?? request.CreatedAt
+            })
+            .ToListAsync(ct);
+        rows.AddRange(requestRows.Select(request => new CustomerItemStatusRow(
+            request.Id,
+            request.SalesListId,
+            request.PerfumeId,
+            request.PublicCode,
+            request.PersianName,
+            request.EnglishName,
+            request.PerfumeName,
+            request.PerfumeEnglishName,
+            null,
+            SalesListFulfillmentStatus(request.Status),
+            request.ChangedAt)));
+
+        var products = rows
+            .GroupBy(ItemIdentity)
+            .Select(grouping => grouping
+                .OrderByDescending(value => value.Status)
+                .ThenByDescending(value => value.ChangedAt)
+                .First())
+            .OrderBy(value => value.Status == OrderItemFulfillmentStatus.Shipped)
+            .ThenByDescending(value => value.ChangedAt)
+            .Take(200)
+            .ToArray();
+        if (products.Length == 0)
+        {
+            await ReplyAsync(
+                chatId,
+                $"برای @{normalizedUsername} هیچ عطر یا آیتم ثبت‌شده‌ای پیدا نشد.",
+                ct);
+            return;
+        }
+
+        var lines = products.Select(item =>
+            $"• {ItemDisplayName(item)}{FormatListCode(item.PublicCode)} — " +
+            OrderItemFulfillmentStatusLabel(item.Status)).ToArray();
+        var header = $"🔎 گزارش وضعیت عطرهای @{normalizedUsername}\n\n";
+        var chunks = new List<string>();
+        var builder = new System.Text.StringBuilder(header);
+        foreach (var line in lines)
+        {
+            if (builder.Length + line.Length + 1 > 3500)
+            {
+                chunks.Add(builder.ToString().TrimEnd());
+                builder.Clear();
+                builder.Append($"🔎 ادامه گزارش @{normalizedUsername}\n\n");
+            }
+            builder.AppendLine(line);
+        }
+        builder.Append($"\nتعداد عطرها: {products.Length}");
+        chunks.Add(builder.ToString().TrimEnd());
+        foreach (var chunk in chunks)
+            await ReplyAsync(chatId, chunk, ct);
     }
 
     private async Task<bool> TryHandleAdminRequestMessageAsync(TelegramMessage message, CancellationToken ct)

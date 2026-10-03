@@ -602,15 +602,48 @@ public sealed partial class TelegramWebhookController
         if (exactLinks.Length > 0)
         {
             var now = DateTime.UtcNow;
+            var changed = false;
             foreach (var link in exactLinks)
             {
-                link.IsActive = true;
-                link.LastSeenAt = now;
-                link.UpdatedAt = now;
-                if (!string.IsNullOrWhiteSpace(chat.Title)) link.Title = chat.Title.Trim();
-                if (!string.IsNullOrWhiteSpace(chat.Username)) link.Username = chat.Username.Trim().TrimStart('@');
+                var linkChanged = false;
+                if (!link.IsActive)
+                {
+                    link.IsActive = true;
+                    link.LastSeenAt = now;
+                    linkChanged = true;
+                }
+
+                var title = chat.Title?.Trim();
+                if (!string.IsNullOrWhiteSpace(title) &&
+                    !string.Equals(link.Title, title, StringComparison.Ordinal))
+                {
+                    link.Title = title;
+                    linkChanged = true;
+                }
+
+                var username = chat.Username?.Trim().TrimStart('@');
+                if (!string.IsNullOrWhiteSpace(username) &&
+                    !string.Equals(link.Username, username, StringComparison.OrdinalIgnoreCase))
+                {
+                    link.Username = username;
+                    linkChanged = true;
+                }
+
+                if (linkChanged)
+                {
+                    link.UpdatedAt = now;
+                    changed = true;
+                }
             }
-            await _db.SaveChangesAsync(ct);
+
+            if (changed)
+            {
+                await _db.SaveChangesAsync(ct);
+                _logger.LogInformation(
+                    "Recovered Telegram customer-group mapping after observing a message from chat {TelegramGroupChatId}; mappings={MappingCount}.",
+                    chatId,
+                    exactLinks.Length);
+            }
             return true;
         }
 

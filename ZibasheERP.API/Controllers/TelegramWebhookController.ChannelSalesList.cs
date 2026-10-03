@@ -409,6 +409,11 @@ public sealed partial class TelegramWebhookController
                 var version = SalesListRefreshVersions[salesListId];
                 var salesList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
                     ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
+                // The same scoped DbContext can already be tracking this list while a
+                // concurrent admin update saves newer presentation metadata. Always
+                // refresh scalar values so captions and rollover use the latest saved
+                // URL, notes, accords and names instead of a stale tracked instance.
+                await _db.Entry(salesList).ReloadAsync(cancellationToken);
                 if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
                     return;
                 var requests = includeCompletedRequests
@@ -528,6 +533,11 @@ public sealed partial class TelegramWebhookController
     private async Task CompleteAndRollSalesListAsync(
         SalesList completed, IReadOnlyCollection<SalesListRequest> requests, CancellationToken ct)
     {
+        // Rollover is the permanent boundary between list cycles. Reload once more at
+        // this boundary so every presentation field below is copied from the latest
+        // database revision, even if an edit raced with the final reservation.
+        await _db.Entry(completed).ReloadAsync(ct);
+
         var completedPages = FormatChannelSalesListPages(completed, requests);
         var finalCaption = "✅ لیست فروش تکمیل شد\n\n" + completedPages.Main;
         var completedListsChatId = string.IsNullOrWhiteSpace(_options.CompletedSalesListsChatId)
