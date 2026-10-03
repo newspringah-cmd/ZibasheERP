@@ -558,16 +558,16 @@ public sealed partial class TelegramWebhookController
         completed.UpdatedAt = DateTime.UtcNow;
         var retainedChannelId = completed.TelegramChannelId;
         var retainedMessageId = completed.TelegramMessageId;
+        var retainedDiscussionMessageId = completed.TelegramDiscussionMessageId;
 
         if (!string.IsNullOrWhiteSpace(completed.TelegramChannelId))
         {
-            if (completed.TelegramDiscussionMessageId.HasValue)
-                await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramDiscussionMessageId.Value, ct);
             if (completed.TelegramContinuationMessageId.HasValue)
                 await _sender.DeleteMessageAsync(completed.TelegramChannelId, completed.TelegramContinuationMessageId.Value, ct);
         }
-        // The channel post is deliberately retained. Its ownership is transferred to the
-        // next cycle below so its public Telegram URL never changes.
+        // The channel post and its discussion are deliberately retained. Their ownership
+        // is transferred to the next cycle so the public URL and all existing comments
+        // remain stable across bottle cycles.
         completed.TelegramChannelId = null;
         completed.TelegramMessageId = null;
         completed.TelegramDiscussionMessageId = null;
@@ -600,6 +600,7 @@ public sealed partial class TelegramWebhookController
                 ? SalesListStatus.Full : SalesListStatus.Open,
             OpenDate = now, TelegramChannelId = retainedChannelId ?? _options.SalesChannelId,
             TelegramMessageId = retainedMessageId,
+            TelegramDiscussionMessageId = retainedDiscussionMessageId,
             TelegramPhotoFileId = completed.TelegramPhotoFileId, Notes = completed.Notes
         };
         await _salesListRepository.AddAsync(nextList, ct);
@@ -654,12 +655,17 @@ public sealed partial class TelegramWebhookController
                 $"لیست جدید ساخته شد اما بازنشانی پست کانال ناموفق بود: {post.Error}", ct);
             return;
         }
-        var discussionText =
-            $"💬 هر سؤالی در رابطه با عطر «{nextList.EnglishName}» دارید، اینجا بپرسید.\n" +
-            "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.";
-        var discussion = await _sender.SendReplyAsync(
-            nextList.TelegramChannelId!, discussionText, nextList.TelegramMessageId.Value, ct);
-        if (discussion.IsSuccessful) nextList.TelegramDiscussionMessageId = discussion.MessageId;
+        if (!nextList.TelegramDiscussionMessageId.HasValue)
+        {
+            _logger.LogWarning(
+                "Sales-list rollover retained no Telegram discussion for list {SalesListId}, channel message {MessageId}; no replacement discussion was created.",
+                nextList.Id,
+                nextList.TelegramMessageId);
+            await ReplyAsync(
+                long.Parse(_options.AdminChatId),
+                $"⚠️ پست لیست {nextList.DisplayCode} بازنشانی شد اما Discussion ثابتی برای انتقال ثبت نشده بود؛ Discussion جدید ساخته نشد.",
+                ct);
+        }
         await _salesListRepository.UpdateAsync(nextList, ct);
         await _salesListRepository.SaveChangesAsync(ct);
         await ReplyAsync(long.Parse(_options.AdminChatId),

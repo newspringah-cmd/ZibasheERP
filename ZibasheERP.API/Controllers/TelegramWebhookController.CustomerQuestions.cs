@@ -56,7 +56,7 @@ public sealed partial class TelegramWebhookController
         if (!isFinancialQuestion && !IsCustomerStatusQuestion(message.Text))
             return false;
 
-        var group = await _db.CustomerTelegramGroups
+        var groupLinks = await _db.CustomerTelegramGroups
             .AsNoTracking()
             .Where(value =>
                 !value.IsDeleted &&
@@ -68,9 +68,27 @@ public sealed partial class TelegramWebhookController
                 value.Customer.TelegramId,
                 value.Customer.Username
             })
-            .SingleOrDefaultAsync(cancellationToken);
-        if (group is null)
+            .ToArrayAsync(cancellationToken);
+        if (groupLinks.Length == 0)
             return false;
+
+        // A Telegram group can intentionally be shared by more than one customer, and
+        // historical reconnects may also have left duplicate rows for the same customer.
+        // Prefer the profile that belongs to the sender; otherwise query every distinct
+        // customer linked to this group instead of throwing on SingleOrDefault.
+        var senderTelegramId = message.From?.Id.ToString(CultureInfo.InvariantCulture);
+        var senderUsername = NormalizeAssistantTelegramUsername(message.From?.Username);
+        var matchedCustomerIds = groupLinks
+            .Where(value =>
+                (!string.IsNullOrWhiteSpace(senderTelegramId) && value.TelegramId == senderTelegramId) ||
+                (!string.IsNullOrWhiteSpace(senderUsername) &&
+                 NormalizeAssistantTelegramUsername(value.Username) == senderUsername))
+            .Select(value => value.CustomerId)
+            .Distinct()
+            .ToArray();
+        var customerIds = matchedCustomerIds.Length > 0
+            ? matchedCustomerIds
+            : groupLinks.Select(value => value.CustomerId).Distinct().ToArray();
 
         if (isFinancialQuestion)
         {
@@ -85,7 +103,7 @@ public sealed partial class TelegramWebhookController
                 !item.IsDeleted &&
                 item.Order != null &&
                 !item.Order.IsDeleted &&
-                item.Order.CustomerId == group.CustomerId &&
+                customerIds.Contains(item.Order.CustomerId) &&
                 item.Order.Status != OrderStatus.Cancelled)
             .OrderByDescending(item => item.UpdatedAt ?? item.CreatedAt)
             .Take(150)
@@ -105,7 +123,18 @@ public sealed partial class TelegramWebhookController
                 item.UpdatedAt ?? item.CreatedAt))
             .ToListAsync(cancellationToken);
 
-        var customerUsername = group.Username?.Trim().TrimStart('@');
+        var selectedLinks = groupLinks.Where(value => customerIds.Contains(value.CustomerId)).ToArray();
+        var customerTelegramIds = selectedLinks
+            .Select(value => value.TelegramId?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var customerUsernames = selectedLinks
+            .Select(value => NormalizeAssistantTelegramUsername(value.Username))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var requestRows = await _db.SalesListRequests
             .AsNoTracking()
             .Where(request =>
@@ -114,15 +143,15 @@ public sealed partial class TelegramWebhookController
                 request.Status != SalesListRequestStatus.PendingConfirmation &&
                 request.Status != SalesListRequestStatus.Cancelled &&
                 request.Status != SalesListRequestStatus.Expired &&
-                ((!string.IsNullOrWhiteSpace(group.TelegramId) &&
-                  request.TelegramUserId == group.TelegramId) ||
-                 (!string.IsNullOrWhiteSpace(customerUsername) &&
-                  request.TelegramUsername == customerUsername) ||
+                ((request.TelegramUserId != null &&
+                  customerTelegramIds.Contains(request.TelegramUserId)) ||
+                 (request.TelegramUsername != null &&
+                  customerUsernames.Contains(request.TelegramUsername)) ||
                  (request.IsGift &&
-                  ((!string.IsNullOrWhiteSpace(group.TelegramId) &&
-                    request.GiftRecipientTelegramUserId == group.TelegramId) ||
-                   (!string.IsNullOrWhiteSpace(customerUsername) &&
-                    request.GiftRecipientTelegramUsername == customerUsername)))))
+                   ((request.GiftRecipientTelegramUserId != null &&
+                     customerTelegramIds.Contains(request.GiftRecipientTelegramUserId)) ||
+                    (request.GiftRecipientTelegramUsername != null &&
+                     customerUsernames.Contains(request.GiftRecipientTelegramUsername))))))
             .OrderByDescending(request => request.UpdatedAt ?? request.CreatedAt)
             .Take(150)
             .Select(request => new
@@ -566,6 +595,9 @@ public sealed partial class TelegramWebhookController
 
     private static string? FirstNotBlank(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+
+    private static string NormalizeAssistantTelegramUsername(string? value) =>
+        value?.Trim().TrimStart('@').ToLowerInvariant() ?? string.Empty;
 
     private static string FormatListCode(int? publicCode) =>
         publicCode.HasValue ? $" (کد لیست {publicCode.Value})" : string.Empty;
