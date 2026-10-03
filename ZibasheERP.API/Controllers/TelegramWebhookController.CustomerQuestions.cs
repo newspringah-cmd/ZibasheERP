@@ -119,6 +119,7 @@ public sealed partial class TelegramWebhookController
                 item.Perfume != null ? item.Perfume.Name : null,
                 item.Perfume != null ? item.Perfume.EnglishName : null,
                 item.ManualDescription,
+                item.SalesList != null ? item.SalesList.OpenDate : null,
                 item.FulfillmentStatus,
                 item.Order!.InvoiceIssuedAt.HasValue || item.Order.Invoices.Any(invoice => !invoice.IsDeleted),
                 item.UpdatedAt ?? item.CreatedAt))
@@ -165,6 +166,7 @@ public sealed partial class TelegramWebhookController
                 request.SalesList.EnglishName,
                 PerfumeName = request.SalesList.Perfume.Name,
                 PerfumeEnglishName = request.SalesList.Perfume.EnglishName,
+                request.SalesList.OpenDate,
                 request.SalesList.Status,
                 ChangedAt = request.UpdatedAt ?? request.CreatedAt
             })
@@ -179,8 +181,9 @@ public sealed partial class TelegramWebhookController
             request.PerfumeName,
             request.PerfumeEnglishName,
             null,
+            request.OpenDate,
             SalesListFulfillmentStatus(request.Status),
-            request.Status is SalesListStatus.Invoiced or SalesListStatus.Closed,
+            false,
             request.ChangedAt)));
 
         if (rows.Count == 0)
@@ -194,10 +197,7 @@ public sealed partial class TelegramWebhookController
 
         var products = rows
             .GroupBy(ItemIdentity)
-            .Select(grouping => grouping
-                .OrderByDescending(value => value.Status)
-                .ThenByDescending(value => value.ChangedAt)
-                .First())
+            .Select(SelectCurrentCustomerItemStatus)
             .OrderBy(value => value.Status == OrderItemFulfillmentStatus.Shipped)
             .ThenByDescending(value => value.ChangedAt)
             .ToList();
@@ -583,9 +583,32 @@ public sealed partial class TelegramWebhookController
     };
 
     private static string ItemIdentity(CustomerItemStatusRow item) =>
-        item.SalesListId?.ToString("N") ??
+        item.PublicCode.HasValue
+            ? $"list-code:{item.PublicCode.Value}"
+            : item.SalesListId?.ToString("N") ??
         item.PerfumeId?.ToString("N") ??
         NormalizeCustomerQuestion(item.ManualDescription ?? item.Id.ToString("N"));
+
+    private static CustomerItemStatusRow SelectCurrentCustomerItemStatus(
+        IGrouping<string, CustomerItemStatusRow> grouping)
+    {
+        var newestRow = grouping
+            .OrderByDescending(value => value.SalesListOpenedAt ?? DateTime.MinValue)
+            .ThenByDescending(value => value.ChangedAt)
+            .First();
+        var currentCycleRows = newestRow.SalesListId.HasValue
+            ? grouping.Where(value => value.SalesListId == newestRow.SalesListId).ToArray()
+            : grouping.ToArray();
+        var selected = currentCycleRows
+            .OrderByDescending(value => value.Status)
+            .ThenByDescending(value => value.ChangedAt)
+            .First();
+
+        return selected with
+        {
+            HasIssuedInvoice = currentCycleRows.Any(value => value.HasIssuedInvoice)
+        };
+    }
 
     private static string ItemDisplayName(CustomerItemStatusRow item) =>
         FirstNotBlank(
@@ -618,9 +641,9 @@ public sealed partial class TelegramWebhookController
     private static string CustomerSafeStatusLabel(CustomerItemStatusRow item) => item.Status switch
     {
         OrderItemFulfillmentStatus.ListCompleted or OrderItemFulfillmentStatus.AwaitingPurchase =>
-            "تکمیل لیست در انتظار خرید قطعی",
+            "تکمیل در انتظار خرید قطعی",
         OrderItemFulfillmentStatus.Invoiced when !item.HasIssuedInvoice =>
-            "تکمیل لیست در انتظار خرید قطعی",
+            "تکمیل در انتظار خرید قطعی",
         OrderItemFulfillmentStatus.Invoiced =>
             "برای بررسی وضعیت این مرحله لطفاً با حسابداری زیباشی در ارتباط باشید",
         _ => OrderItemFulfillmentStatusLabel(item.Status)
@@ -636,6 +659,7 @@ public sealed partial class TelegramWebhookController
         string? PerfumeName,
         string? PerfumeEnglishName,
         string? ManualDescription,
+        DateTime? SalesListOpenedAt,
         OrderItemFulfillmentStatus Status,
         bool HasIssuedInvoice,
         DateTime ChangedAt);

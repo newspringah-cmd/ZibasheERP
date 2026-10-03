@@ -4351,6 +4351,7 @@ public sealed partial class TelegramWebhookController
                     item.Perfume != null ? item.Perfume.Name : null,
                     item.Perfume != null ? item.Perfume.EnglishName : null,
                     item.ManualDescription,
+                    item.SalesList != null ? item.SalesList.OpenDate : null,
                     item.FulfillmentStatus,
                     item.Order!.InvoiceIssuedAt.HasValue || item.Order.Invoices.Any(invoice => !invoice.IsDeleted),
                     item.UpdatedAt ?? item.CreatedAt))
@@ -4387,6 +4388,7 @@ public sealed partial class TelegramWebhookController
                 request.SalesList.EnglishName,
                 PerfumeName = request.SalesList.Perfume.Name,
                 PerfumeEnglishName = request.SalesList.Perfume.EnglishName,
+                request.SalesList.OpenDate,
                 request.SalesList.Status,
                 ChangedAt = request.UpdatedAt ?? request.CreatedAt
             })
@@ -4401,16 +4403,14 @@ public sealed partial class TelegramWebhookController
             request.PerfumeName,
             request.PerfumeEnglishName,
             null,
+            request.OpenDate,
             SalesListFulfillmentStatus(request.Status),
-            request.Status is SalesListStatus.Invoiced or SalesListStatus.Closed,
+            false,
             request.ChangedAt)));
 
         var products = rows
             .GroupBy(ItemIdentity)
-            .Select(grouping => grouping
-                .OrderByDescending(value => value.Status)
-                .ThenByDescending(value => value.ChangedAt)
-                .First())
+            .Select(SelectCurrentCustomerItemStatus)
             .OrderBy(value => value.Status == OrderItemFulfillmentStatus.Shipped)
             .ThenByDescending(value => value.ChangedAt)
             .Take(200)
