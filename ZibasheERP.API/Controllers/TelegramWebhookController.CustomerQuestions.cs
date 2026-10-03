@@ -120,6 +120,7 @@ public sealed partial class TelegramWebhookController
                 item.Perfume != null ? item.Perfume.EnglishName : null,
                 item.ManualDescription,
                 item.FulfillmentStatus,
+                item.Order!.InvoiceIssuedAt.HasValue || item.Order.Invoices.Any(invoice => !invoice.IsDeleted),
                 item.UpdatedAt ?? item.CreatedAt))
             .ToListAsync(cancellationToken);
 
@@ -179,6 +180,7 @@ public sealed partial class TelegramWebhookController
             request.PerfumeEnglishName,
             null,
             SalesListFulfillmentStatus(request.Status),
+            request.Status is SalesListStatus.Invoiced or SalesListStatus.Closed,
             request.ChangedAt)));
 
         if (rows.Count == 0)
@@ -504,7 +506,7 @@ public sealed partial class TelegramWebhookController
         {
             var item = items.Single();
             var answer = $"وضعیت «{ItemDisplayName(item)}»{FormatListCode(item.PublicCode)}: " +
-                $"{CustomerSafeStatusLabel(item.Status)}.";
+                $"{CustomerSafeStatusLabel(item)}.";
             if (asksForTime && item.Status != OrderItemFulfillmentStatus.Shipped)
                 answer += "\nزمان دقیق مرحله بعد در سیستم ثبت نشده؛ به‌محض تغییر، وضعیت جدید همین‌جا قابل بررسی است.";
             return answer;
@@ -514,7 +516,7 @@ public sealed partial class TelegramWebhookController
             .Take(8)
             .Select(item =>
                 $"• {ItemDisplayName(item)}{FormatListCode(item.PublicCode)} — " +
-                CustomerSafeStatusLabel(item.Status));
+                CustomerSafeStatusLabel(item));
         var response = "آخرین وضعیت آیتم‌های شما:\n" + string.Join("\n", lines);
         if (items.Count > 8)
             response += $"\nو {items.Count - 8} مورد دیگر";
@@ -613,11 +615,15 @@ public sealed partial class TelegramWebhookController
         _ => OrderItemFulfillmentStatus.WaitingForListCompletion
     };
 
-    private static string CustomerSafeStatusLabel(OrderItemFulfillmentStatus status) => status switch
+    private static string CustomerSafeStatusLabel(CustomerItemStatusRow item) => item.Status switch
     {
+        OrderItemFulfillmentStatus.ListCompleted or OrderItemFulfillmentStatus.AwaitingPurchase =>
+            "تکمیل لیست در انتظار خرید قطعی",
+        OrderItemFulfillmentStatus.Invoiced when !item.HasIssuedInvoice =>
+            "تکمیل لیست در انتظار خرید قطعی",
         OrderItemFulfillmentStatus.Invoiced =>
             "برای بررسی وضعیت این مرحله لطفاً با حسابداری زیباشی در ارتباط باشید",
-        _ => OrderItemFulfillmentStatusLabel(status)
+        _ => OrderItemFulfillmentStatusLabel(item.Status)
     };
 
     private sealed record CustomerItemStatusRow(
@@ -631,6 +637,7 @@ public sealed partial class TelegramWebhookController
         string? PerfumeEnglishName,
         string? ManualDescription,
         OrderItemFulfillmentStatus Status,
+        bool HasIssuedInvoice,
         DateTime ChangedAt);
 
     private sealed record PerfumeGuidanceCatalogRow(

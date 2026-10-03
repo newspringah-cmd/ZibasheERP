@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Features.Integrations.TrackTelegramGroupMembership;
 using ZibasheERP.Application.Features.Integrations.RecordOrderArtifact;
 using ZibasheERP.Application.Notifications;
 using ZibasheERP.Domain.Entities;
@@ -319,7 +320,10 @@ public sealed class N8nIntegrationsController : ControllerBase
             return NotFound(new { Message = "نگاشت گروه مشتری پیدا نشد." });
 
         var now = DateTime.UtcNow;
-        group.IsActive = false;
+        var availability = TelegramGroupMembershipPolicy.ApplyAvailability(
+            group.IsActive, group.RestoreOnBotRejoin, canDeliver: false);
+        group.IsActive = availability.IsActive;
+        group.RestoreOnBotRejoin = availability.RestoreOnBotRejoin;
         group.UpdatedAt = now;
         var failure = new IntegrationDeliveryFailure
         {

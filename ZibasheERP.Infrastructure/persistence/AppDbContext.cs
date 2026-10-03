@@ -200,7 +200,9 @@ public class AppDbContext : DbContext
             .IsUnique();
 
         modelBuilder.Entity<CustomerTelegramGroup>()
-            .HasIndex(group => group.ChatId);
+            .HasIndex(group => new { group.ChatId, group.IsPrimaryForShipping })
+            .IsUnique()
+            .HasFilter("[IsPrimaryForShipping] = 1 AND [IsDeleted] = 0");
     }
 
     private static void ConfigurePerfume(ModelBuilder modelBuilder)

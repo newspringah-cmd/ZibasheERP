@@ -4352,6 +4352,7 @@ public sealed partial class TelegramWebhookController
                     item.Perfume != null ? item.Perfume.EnglishName : null,
                     item.ManualDescription,
                     item.FulfillmentStatus,
+                    item.Order!.InvoiceIssuedAt.HasValue || item.Order.Invoices.Any(invoice => !invoice.IsDeleted),
                     item.UpdatedAt ?? item.CreatedAt))
                 .ToListAsync(ct);
 
@@ -4401,6 +4402,7 @@ public sealed partial class TelegramWebhookController
             request.PerfumeEnglishName,
             null,
             SalesListFulfillmentStatus(request.Status),
+            request.Status is SalesListStatus.Invoiced or SalesListStatus.Closed,
             request.ChangedAt)));
 
         var products = rows

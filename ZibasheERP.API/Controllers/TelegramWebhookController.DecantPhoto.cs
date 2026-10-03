@@ -442,6 +442,7 @@ public sealed partial class TelegramWebhookController
                     : message.Chat.Title.Trim(),
                 Username = NormalizeDecantUsername(message.Chat.Username),
                 IsActive = true,
+                IsPrimaryForShipping = true,
                 LinkedAt = DateTime.UtcNow,
                 LastSeenAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
@@ -451,6 +452,7 @@ public sealed partial class TelegramWebhookController
         else
         {
             customer.TelegramGroup.IsActive = true;
+            customer.TelegramGroup.RestoreOnBotRejoin = false;
             customer.TelegramGroup.LastSeenAt = DateTime.UtcNow;
             customer.TelegramGroup.UpdatedAt = DateTime.UtcNow;
         }

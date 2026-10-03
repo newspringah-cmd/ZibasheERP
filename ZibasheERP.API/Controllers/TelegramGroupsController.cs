@@ -223,6 +223,14 @@ public sealed class TelegramGroupsController(AppDbContext context) : ControllerB
         group.Title = title;
         group.Username = NormalizeUsername(request.Username);
         group.IsActive = request.IsActive;
+        group.RestoreOnBotRejoin = false;
+        if (!request.IsActive)
+            group.IsPrimaryForShipping = false;
+        else if (!group.IsPrimaryForShipping)
+            group.IsPrimaryForShipping = !await context.CustomerTelegramGroups.AsNoTracking().AnyAsync(
+                value => !value.IsDeleted && value.Id != group.Id &&
+                    value.ChatId == chatId && value.IsPrimaryForShipping,
+                cancellationToken);
         group.IsDeleted = false;
         group.UpdatedAt = now;
 

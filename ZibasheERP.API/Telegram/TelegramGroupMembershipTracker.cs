@@ -70,7 +70,10 @@ public sealed class TelegramGroupMembershipTracker(
             group.ChatId = newId;
             group.Title = string.IsNullOrWhiteSpace(newChat.Title) ? group.Title : newChat.Title.Trim();
             group.Username = NormalizeUsername(newChat.Username);
-            group.IsActive = true;
+            var availability = TelegramGroupMembershipPolicy.ApplyAvailability(
+                group.IsActive, group.RestoreOnBotRejoin, canDeliver: true);
+            group.IsActive = availability.IsActive;
+            group.RestoreOnBotRejoin = availability.RestoreOnBotRejoin;
             group.LastSeenAt = now;
             group.UpdatedAt = now;
         }
@@ -107,7 +110,8 @@ public sealed class TelegramGroupMembershipTracker(
         await context.SaveChangesAsync(cancellationToken);
         var queuedInvoices = 0;
         var queuedPhotos = 0;
-        foreach (var customerId in groups.Select(value => value.CustomerId).Distinct())
+        foreach (var customerId in groups.Where(value => value.IsActive)
+                     .Select(value => value.CustomerId).Distinct())
         {
             queuedInvoices += await QueueUndeliveredInvoicesAsync(customerId, newId, cancellationToken);
             queuedPhotos += await QueueUndeliveredDecantPhotosAsync(customerId, newId, cancellationToken);
@@ -161,7 +165,12 @@ public sealed class TelegramGroupMembershipTracker(
         var now = DateTime.UtcNow;
         foreach (var group in groups)
         {
-            group.IsActive = canDeliver;
+            // Restore only links that were active when delivery was lost. A
+            // historical link that an administrator had disabled stays disabled.
+            var availability = TelegramGroupMembershipPolicy.ApplyAvailability(
+                group.IsActive, group.RestoreOnBotRejoin, canDeliver);
+            group.IsActive = availability.IsActive;
+            group.RestoreOnBotRejoin = availability.RestoreOnBotRejoin;
             if (!string.IsNullOrWhiteSpace(update.Chat.Title)) group.Title = update.Chat.Title.Trim();
             group.Username = NormalizeUsername(update.Chat.Username);
             group.LastSeenAt = now;
@@ -171,7 +180,8 @@ public sealed class TelegramGroupMembershipTracker(
         if (canDeliver)
         {
             var queued = 0;
-            foreach (var customerId in groups.Select(value => value.CustomerId).Distinct())
+            foreach (var customerId in groups.Where(value => value.IsActive)
+                         .Select(value => value.CustomerId).Distinct())
                 queued += await QueueUndeliveredDecantPhotosAsync(customerId, chatId, cancellationToken);
             if (queued > 0)
                 logger.LogInformation(
@@ -192,7 +202,10 @@ public sealed class TelegramGroupMembershipTracker(
             return;
         foreach (var group in groups)
         {
-            group.IsActive = false;
+            var availability = TelegramGroupMembershipPolicy.ApplyAvailability(
+                group.IsActive, group.RestoreOnBotRejoin, canDeliver: false);
+            group.IsActive = availability.IsActive;
+            group.RestoreOnBotRejoin = availability.RestoreOnBotRejoin;
             group.UpdatedAt = DateTime.UtcNow;
         }
         await context.SaveChangesAsync(cancellationToken);
@@ -369,13 +382,18 @@ public sealed class TelegramGroupMembershipTracker(
         var now = DateTime.UtcNow;
         if (group is null)
         {
+            var hasShippingPrimary = await context.CustomerTelegramGroups.AsNoTracking()
+                .AnyAsync(value => !value.IsDeleted &&
+                    value.ChatId == chatId && value.IsPrimaryForShipping, cancellationToken);
             group = new CustomerTelegramGroup { Id = Guid.NewGuid(), CustomerId = customer.Id,
-                ChatId = chatId, CreatedAt = now, LinkedAt = now };
+                ChatId = chatId, CreatedAt = now, LinkedAt = now,
+                IsPrimaryForShipping = !hasShippingPrimary };
             context.CustomerTelegramGroups.Add(group);
         }
         group.Title = string.IsNullOrWhiteSpace(chat.Title) ? chatId : chat.Title.Trim();
         group.Username = NormalizeUsername(chat.Username);
-        group.IsActive = true; group.IsDeleted = false; group.LastSeenAt = now; group.UpdatedAt = now;
+        group.IsActive = true; group.IsDeleted = false; group.RestoreOnBotRejoin = false;
+        group.LastSeenAt = now; group.UpdatedAt = now;
         await context.SaveChangesAsync(cancellationToken);
         return new TelegramGroupLinkResult(alreadyLinked ? TelegramGroupLinkStatus.AlreadyLinked : TelegramGroupLinkStatus.Linked);
     }

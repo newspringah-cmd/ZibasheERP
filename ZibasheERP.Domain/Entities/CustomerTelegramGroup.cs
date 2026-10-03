@@ -21,6 +21,19 @@ public sealed class CustomerTelegramGroup : BaseEntity
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// True only when this link was active immediately before Telegram made the bot
+    /// unavailable. It prevents historical/manual inactive links from being revived
+    /// when the bot is added to the group again.
+    /// </summary>
+    public bool RestoreOnBotRejoin { get; set; }
+
+    /// <summary>
+    /// Selects the customer used by the shipping/address workflow when a Telegram
+    /// group is intentionally linked to more than one customer.
+    /// </summary>
+    public bool IsPrimaryForShipping { get; set; }
+
     public DateTime LinkedAt { get; set; }
 
     public DateTime? LastSeenAt { get; set; }

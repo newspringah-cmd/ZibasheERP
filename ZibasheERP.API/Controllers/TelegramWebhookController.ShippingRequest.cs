@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Features.Integrations.TrackTelegramGroupMembership;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.API.Controllers;
@@ -74,6 +75,74 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data == "shipping:manageconnections")
+        {
+            if (!IsAuthorizedShippingOperator(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای مدیر و حسابدار فعال است.", ct, true);
+                return true;
+            }
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendShippingGroupConnectionsAsync(callback.Message.Chat.Id, callback.From.Id, ct);
+            return true;
+        }
+
+        if (callback.Data.StartsWith("shipping:unlinkconfirm:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["shipping:unlinkconfirm:".Length..], "N", out var unlinkCandidateId))
+        {
+            if (!IsAuthorizedShippingOperator(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای مدیر و حسابدار فعال است.", ct, true);
+                return true;
+            }
+            var candidate = await _db.CustomerTelegramGroups.AsNoTracking()
+                .Include(value => value.Customer)
+                .FirstOrDefaultAsync(value => value.Id == unlinkCandidateId && !value.IsDeleted && value.IsActive &&
+                    value.ChatId == callback.Message.Chat.Id.ToString(), ct);
+            if (candidate is null)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این اتصال دیگر فعال نیست.", ct, true);
+                return true;
+            }
+            var activeCount = await _db.CustomerTelegramGroups.AsNoTracking().CountAsync(value =>
+                !value.IsDeleted && value.IsActive && value.ChatId == callback.Message.Chat.Id.ToString(), ct);
+            if (activeCount <= 1)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id,
+                    "آخرین اتصال گروه را نمی‌توان از این بخش حذف کرد.", ct, true);
+                return true;
+            }
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await _sender.SendInlineKeyboardAsync(callback.Message.Chat.Id.ToString(),
+                $"⚠️ اتصال {OrderCustomerLabel(candidate.Customer)} از این گروه حذف شود؟\n\n" +
+                "مشتری، آدرس‌ها، سفارش‌ها و فاکتورها حذف نمی‌شوند؛ فقط ارتباط این مشتری با همین گروه غیرفعال می‌شود.",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[]
+                    {
+                        new TelegramInlineButton("✅ بله، اتصال اشتباه است", $"shipping:unlinkexecute:{candidate.Id:N}"),
+                        new TelegramInlineButton("↩️ انصراف", "shipping:manageconnections")
+                    }
+                }, ct);
+            return true;
+        }
+
+        if (callback.Data.StartsWith("shipping:unlinkexecute:", StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["shipping:unlinkexecute:".Length..], "N", out var unlinkId))
+        {
+            if (!IsAuthorizedShippingOperator(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای مدیر و حسابدار فعال است.", ct, true);
+                return true;
+            }
+            var removed = await RemoveShippingGroupConnectionAsync(
+                callback.Message.Chat.Id, unlinkId, callback.From.Id, ct);
+            await _sender.AnswerCallbackAsync(callback.Id,
+                removed ? "اتصال اشتباه در این گروه غیرفعال شد." : "اتصال تغییر نکرد؛ اطلاعات گروه عوض شده است.", ct, true);
+            await StartShippingPreparationAsync(callback.Message.Chat.Id, callback.From.Id, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("shipping:preparecustomer:", StringComparison.Ordinal) &&
             Guid.TryParseExact(callback.Data["shipping:preparecustomer:".Length..], "N", out var preparedCustomerId))
         {
@@ -90,6 +159,8 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "اتصال این مشتری دیگر معتبر نیست.", ct, true);
                 return true;
             }
+            await SetPrimaryShippingCustomerAsync(
+                callback.Message.Chat.Id, preparedCustomerId, callback.From.Id, ct);
             draft.CustomerId = preparedCustomerId;
             draft.Stage = TelegramShippingPreparationStage.AwaitingAddressChoice;
             _orderFlowDrafts.SetShippingPreparation(draft);
@@ -622,9 +693,16 @@ public sealed partial class TelegramWebhookController
             foreach (var link in exactLinks)
             {
                 var linkChanged = false;
-                if (!link.IsActive)
+                // An observed message proves the bot is available, but it must not
+                // revive an old/manual inactive customer association. Restore only
+                // links explicitly suspended because the bot became unavailable.
+                var availability = TelegramGroupMembershipPolicy.ApplyAvailability(
+                    link.IsActive, link.RestoreOnBotRejoin, canDeliver: true);
+                if (link.IsActive != availability.IsActive ||
+                    link.RestoreOnBotRejoin != availability.RestoreOnBotRejoin)
                 {
-                    link.IsActive = true;
+                    link.IsActive = availability.IsActive;
+                    link.RestoreOnBotRejoin = availability.RestoreOnBotRejoin;
                     link.LastSeenAt = now;
                     linkChanged = true;
                 }
@@ -660,7 +738,7 @@ public sealed partial class TelegramWebhookController
                     chatId,
                     exactLinks.Length);
             }
-            return true;
+            return exactLinks.Any(value => value.IsActive);
         }
 
         // Telegram may omit the migration service message from the webhook history.
@@ -692,7 +770,7 @@ public sealed partial class TelegramWebhookController
     {
         var chatId = chat.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var conflictingChat = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
-            !value.IsDeleted && value.ChatId == chatId && value.CustomerId != customer.Id, ct);
+            !value.IsDeleted && value.IsActive && value.ChatId == chatId && value.CustomerId != customer.Id, ct);
         if (conflictingChat is not null) return false;
         var customerGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
             !value.IsDeleted && value.CustomerId == customer.Id, ct);
@@ -705,6 +783,7 @@ public sealed partial class TelegramWebhookController
                 Id = Guid.NewGuid(), CustomerId = customer.Id, ChatId = chatId,
                 Title = string.IsNullOrWhiteSpace(chat.Title) ? chatId : chat.Title.Trim(),
                 Username = chat.Username?.Trim().TrimStart('@'), IsActive = true,
+                IsPrimaryForShipping = true,
                 LinkedAt = now, LastSeenAt = now, CreatedAt = now
             };
             _db.CustomerTelegramGroups.Add(customerGroup);
@@ -712,6 +791,8 @@ public sealed partial class TelegramWebhookController
         else
         {
             customerGroup.IsActive = true;
+            customerGroup.RestoreOnBotRejoin = false;
+            customerGroup.IsPrimaryForShipping = true;
             customerGroup.LastSeenAt = now;
             customerGroup.UpdatedAt = now;
         }
@@ -798,21 +879,115 @@ public sealed partial class TelegramWebhookController
             Stage = TelegramShippingPreparationStage.AwaitingAddressChoice
         };
         _orderFlowDrafts.SetShippingPreparation(draft);
-        if (linkedCustomers.Length == 1)
+        var primaryLinks = linkedCustomers.Where(value => value.IsPrimaryForShipping).ToArray();
+        var selectedLink = linkedCustomers.Length == 1
+            ? linkedCustomers[0]
+            : primaryLinks.Length == 1 ? primaryLinks[0] : null;
+        if (selectedLink is not null)
         {
-            draft.CustomerId = linkedCustomers[0].CustomerId;
+            draft.CustomerId = selectedLink.CustomerId;
             _orderFlowDrafts.SetShippingPreparation(draft);
             await SendShippingAddressChoicesAsync(draft, ct);
             return;
         }
-        var buttons = linkedCustomers.Select(value =>
-            (IReadOnlyCollection<TelegramInlineButton>)new[]
+        await SendShippingGroupConnectionsAsync(chatId, userId, ct);
+    }
+
+    private async Task SendShippingGroupConnectionsAsync(long chatId, long userId, CancellationToken ct)
+    {
+        var links = await _db.CustomerTelegramGroups.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.IsActive && value.ChatId == chatId.ToString())
+            .Include(value => value.Customer)
+            .OrderByDescending(value => value.IsPrimaryForShipping)
+            .ThenBy(value => value.Customer.FullName)
+            .ToArrayAsync(ct);
+        if (links.Length == 0)
+        {
+            await ReplyAsync(chatId, "این گروه اتصال فعال به مشتری ندارد.", ct);
+            return;
+        }
+        var draft = new TelegramShippingPreparationDraft
+        {
+            ChatId = chatId,
+            UserId = userId,
+            Stage = TelegramShippingPreparationStage.AwaitingAddressChoice
+        };
+        _orderFlowDrafts.SetShippingPreparation(draft);
+        var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        foreach (var link in links)
+        {
+            var primary = link.IsPrimaryForShipping ? " ⭐" : string.Empty;
+            buttons.Add(new[]
             {
-                new TelegramInlineButton(OrderCustomerLabel(value.Customer),
-                    $"shipping:preparecustomer:{value.CustomerId:N}")
-            }).ToArray();
+                new TelegramInlineButton(
+                    $"📮 {OrderCustomerLabel(link.Customer)}{primary}",
+                    $"shipping:preparecustomer:{link.CustomerId:N}"),
+                new TelegramInlineButton("🗑 حذف اتصال", $"shipping:unlinkconfirm:{link.Id:N}")
+            });
+        }
         await _sender.SendInlineKeyboardAsync(chatId.ToString(),
-            "این گروه به چند مشتری متصل است؛ مشتری را انتخاب کنید:", buttons, ct);
+            "این گروه به چند مشتری متصل است. مشتری صحیح برای ارسال را انتخاب کنید؛ " +
+            "انتخاب شما به‌عنوان مشتری اصلی ارسال ذخیره می‌شود.\n\n" +
+            "اتصال نامرتبط را فقط پس از اطمینان با دکمه حذف اتصال پاک کنید.", buttons, ct);
+    }
+
+    private async Task SetPrimaryShippingCustomerAsync(
+        long chatId, Guid customerId, long operatorUserId, CancellationToken ct)
+    {
+        var chatIdText = chatId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var links = await _db.CustomerTelegramGroups.Where(value =>
+            !value.IsDeleted && value.IsActive && value.ChatId == chatIdText).ToArrayAsync(ct);
+        var selected = links.FirstOrDefault(value => value.CustomerId == customerId);
+        if (selected is null || (selected.IsPrimaryForShipping && links.Count(value => value.IsPrimaryForShipping) == 1))
+            return;
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        foreach (var link in links.Where(value => value.IsPrimaryForShipping))
+        {
+            link.IsPrimaryForShipping = false;
+            link.UpdatedAt = DateTime.UtcNow;
+        }
+        await _db.SaveChangesAsync(ct);
+        selected.IsPrimaryForShipping = true;
+        selected.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        _logger.LogInformation(
+            "Telegram shipping primary changed for group {ChatId} to customer {CustomerId} by operator {OperatorUserId}.",
+            chatIdText, customerId, operatorUserId);
+    }
+
+    private async Task<bool> RemoveShippingGroupConnectionAsync(
+        long chatId, Guid linkId, long operatorUserId, CancellationToken ct)
+    {
+        var chatIdText = chatId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var links = await _db.CustomerTelegramGroups.Where(value =>
+            !value.IsDeleted && value.IsActive && value.ChatId == chatIdText).ToArrayAsync(ct);
+        if (links.Length <= 1)
+            return false;
+        var removed = links.FirstOrDefault(value => value.Id == linkId);
+        if (removed is null)
+            return false;
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        removed.IsPrimaryForShipping = false;
+        removed.RestoreOnBotRejoin = false;
+        removed.IsActive = false;
+        removed.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        var remaining = links.Where(value => value.Id != removed.Id).ToArray();
+        if (remaining.Length == 1 && !remaining[0].IsPrimaryForShipping)
+        {
+            remaining[0].IsPrimaryForShipping = true;
+            remaining[0].UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+        }
+        await transaction.CommitAsync(ct);
+        _logger.LogWarning(
+            "Telegram customer-group link {LinkId} for customer {CustomerId} was disabled in group {ChatId} by operator {OperatorUserId}.",
+            removed.Id, removed.CustomerId, chatIdText, operatorUserId);
+        return true;
     }
 
     private async Task SendShippingAddressChoicesAsync(TelegramShippingPreparationDraft draft, CancellationToken ct)
@@ -826,6 +1001,10 @@ public sealed partial class TelegramWebhookController
                 $"shipping:prepareaddress:{address.Id:N}")
         }).ToList();
         buttons.Add(new[] { new TelegramInlineButton("➕ ثبت آدرس جدید", "shipping:preparenew") });
+        var hasMultipleConnections = await _db.CustomerTelegramGroups.AsNoTracking().CountAsync(value =>
+            !value.IsDeleted && value.IsActive && value.ChatId == draft.ChatId.ToString(), ct) > 1;
+        if (hasMultipleConnections)
+            buttons.Add(new[] { new TelegramInlineButton("⚙️ مدیریت اتصال‌های این گروه", "shipping:manageconnections") });
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
             $"📮 آماده‌سازی پست\nمشتری: {OrderCustomerLabel(customer)}\n\nآدرس را بررسی و انتخاب کنید:", buttons, ct);
     }

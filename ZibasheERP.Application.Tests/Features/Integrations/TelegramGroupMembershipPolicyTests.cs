@@ -26,4 +26,46 @@ public sealed class TelegramGroupMembershipPolicyTests
         Assert.False(TelegramGroupMembershipPolicy.CanDeliver("restricted", true, false));
         Assert.False(TelegramGroupMembershipPolicy.CanDeliver("restricted", false, true));
     }
+
+    [Fact]
+    public void ApplyAvailability_ActiveLinkIsMarkedForRestorationWhenBotLeaves()
+    {
+        var result = TelegramGroupMembershipPolicy.ApplyAvailability(
+            isActive: true,
+            restoreOnBotRejoin: false,
+            canDeliver: false);
+
+        Assert.False(result.IsActive);
+        Assert.True(result.RestoreOnBotRejoin);
+    }
+
+    [Fact]
+    public void ApplyAvailability_BotRejoinRestoresOnlyPreviouslyActiveLink()
+    {
+        var recoverable = TelegramGroupMembershipPolicy.ApplyAvailability(
+            isActive: false,
+            restoreOnBotRejoin: true,
+            canDeliver: true);
+        var historicalInactive = TelegramGroupMembershipPolicy.ApplyAvailability(
+            isActive: false,
+            restoreOnBotRejoin: false,
+            canDeliver: true);
+
+        Assert.True(recoverable.IsActive);
+        Assert.False(recoverable.RestoreOnBotRejoin);
+        Assert.False(historicalInactive.IsActive);
+        Assert.False(historicalInactive.RestoreOnBotRejoin);
+    }
+
+    [Fact]
+    public void ApplyAvailability_RepeatedUnavailableEventKeepsRestorationMarker()
+    {
+        var result = TelegramGroupMembershipPolicy.ApplyAvailability(
+            isActive: false,
+            restoreOnBotRejoin: true,
+            canDeliver: false);
+
+        Assert.False(result.IsActive);
+        Assert.True(result.RestoreOnBotRejoin);
+    }
 }
