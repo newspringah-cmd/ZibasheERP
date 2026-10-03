@@ -375,6 +375,34 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data == "invoiceadmin:pending-invoice-total")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(
+                    callback.Id, "این گزارش فقط برای مدیر اصلی قابل مشاهده است.", ct, true);
+                return true;
+            }
+
+            await _sender.AnswerCallbackAsync(callback.Id, "در حال محاسبه گزارش مالی…", ct);
+            await SendPendingInvoiceTotalReportAsync(callback.Message.Chat.Id, ct);
+            return true;
+        }
+
+        if (callback.Data == "invoiceadmin:monthly-payment-rate")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(
+                    callback.Id, "این گزارش فقط برای مدیر اصلی قابل مشاهده است.", ct, true);
+                return true;
+            }
+
+            await _sender.AnswerCallbackAsync(callback.Id, "در حال محاسبه گزارش یک‌ماه اخیر…", ct);
+            await SendMonthlyPaymentRateReportAsync(callback.Message.Chat.Id, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("ownerprice:", StringComparison.Ordinal))
         {
             if (!IsPrimaryOwner(callback.From.Id))
@@ -1685,6 +1713,21 @@ public sealed partial class TelegramWebhookController
         {
             case "invoices":
                 message = "🧾 مدیریت فاکتورها";
+                if (IsPrimaryOwner(userId))
+                {
+                    buttons.Add(new[]
+                    {
+                        new TelegramInlineButton(
+                            "💰 جمع فاکتورهای در انتظار پرداخت",
+                            "invoiceadmin:pending-invoice-total")
+                    });
+                    buttons.Add(new[]
+                    {
+                        new TelegramInlineButton(
+                            "📊 درصد پرداخت یک‌ماه اخیر",
+                            "invoiceadmin:monthly-payment-rate")
+                    });
+                }
                 buttons.Add(new[] { new TelegramInlineButton("صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch") });
                 buttons.Add(new[]
                 {
@@ -1793,6 +1836,137 @@ public sealed partial class TelegramWebhookController
         }
         buttons.Add(new[] { new TelegramInlineButton("↩️ بازگشت به منوی اصلی", "invoiceadmin:menu:main") });
         await _sender.SendInlineKeyboardAsync(chatId.ToString(), message, buttons, ct);
+    }
+
+    private async Task SendPendingInvoiceTotalReportAsync(long chatId, CancellationToken ct)
+    {
+        var invoices = await _db.Invoices
+            .AsNoTracking()
+            .Where(invoice =>
+                !invoice.IsDeleted &&
+                invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Issued &&
+                invoice.Order != null &&
+                !invoice.Order.IsDeleted &&
+                invoice.Order.Status != OrderStatus.Cancelled)
+            .Select(invoice => new
+            {
+                invoice.TotalAmount,
+                ConfirmedAmount = invoice.Order!.Payments
+                    .Where(payment =>
+                        !payment.IsDeleted &&
+                        payment.Status == ZibasheERP.Domain.Enums.PaymentStatus.Confirmed)
+                    .Sum(payment => (decimal?)payment.Amount) ?? 0m
+            })
+            .ToArrayAsync(ct);
+
+        var pendingAmounts = invoices
+            .Select(invoice => Math.Max(0m, invoice.TotalAmount - invoice.ConfirmedAmount))
+            .Where(amount => amount > 0m)
+            .ToArray();
+        var total = pendingAmounts.Sum();
+        var formattedTotal = total.ToString(
+            "N0", System.Globalization.CultureInfo.InvariantCulture);
+
+        await _sender.SendInlineKeyboardAsync(
+            chatId.ToString(),
+            "💰 گزارش مالی فاکتورهای در انتظار پرداخت\n\n" +
+            $"تعداد فاکتور: {pendingAmounts.Length}\n" +
+            $"جمع کل مبلغ در انتظار پرداخت: {formattedTotal} تومان\n\n" +
+            "مبالغ پرداخت‌شده و تأییدشده از این جمع کسر شده‌اند.",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("↩️ بازگشت به فاکتورها", "invoiceadmin:menu:invoices") }
+            },
+            ct);
+    }
+
+    private async Task SendMonthlyPaymentRateReportAsync(long chatId, CancellationToken ct)
+    {
+        var from = DateTime.UtcNow.AddDays(-30);
+        var invoices = await _db.Invoices
+            .AsNoTracking()
+            .Where(invoice =>
+                !invoice.IsDeleted &&
+                invoice.IssuedAt >= from &&
+                (invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Issued ||
+                 invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid) &&
+                invoice.Order != null &&
+                !invoice.Order.IsDeleted &&
+                invoice.Order.Status != OrderStatus.Cancelled)
+            .Select(invoice => new
+            {
+                invoice.TotalAmount,
+                invoice.Status,
+                OrderStatus = invoice.Order!.Status,
+                ConfirmedAmount = invoice.Order.Payments
+                    .Where(payment =>
+                        !payment.IsDeleted &&
+                        payment.Status == ZibasheERP.Domain.Enums.PaymentStatus.Confirmed)
+                    .Sum(payment => (decimal?)payment.Amount) ?? 0m
+            })
+            .ToArrayAsync(ct);
+
+        if (invoices.Length == 0)
+        {
+            await _sender.SendInlineKeyboardAsync(
+                chatId.ToString(),
+                "📊 گزارش وضعیت پرداخت یک‌ماه اخیر\n\nدر ۳۰ روز گذشته فاکتوری صادر نشده است.",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("↩️ بازگشت به فاکتورها", "invoiceadmin:menu:invoices") }
+                },
+                ct);
+            return;
+        }
+
+        var rows = invoices.Select(invoice =>
+        {
+            var isPaid = invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
+                         invoice.OrderStatus == OrderStatus.Paid ||
+                         invoice.ConfirmedAmount >= invoice.TotalAmount;
+            var paidAmount = isPaid
+                ? invoice.TotalAmount
+                : Math.Min(invoice.TotalAmount, Math.Max(0m, invoice.ConfirmedAmount));
+            return new
+            {
+                invoice.TotalAmount,
+                IsPaid = isPaid,
+                PaidAmount = paidAmount,
+                PendingAmount = Math.Max(0m, invoice.TotalAmount - paidAmount)
+            };
+        }).ToArray();
+
+        var paidCount = rows.Count(value => value.IsPaid);
+        var pendingCount = rows.Length - paidCount;
+        var paidCountPercent = 100m * paidCount / rows.Length;
+        var pendingCountPercent = 100m - paidCountPercent;
+        var totalAmount = rows.Sum(value => value.TotalAmount);
+        var paidAmountTotal = rows.Sum(value => value.PaidAmount);
+        var pendingAmountTotal = rows.Sum(value => value.PendingAmount);
+        var paidAmountPercent = totalAmount <= 0m ? 0m : 100m * paidAmountTotal / totalAmount;
+        var pendingAmountPercent = totalAmount <= 0m ? 0m : 100m - paidAmountPercent;
+
+        static string Number(decimal value) =>
+            value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        static string Percent(decimal value) =>
+            value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+        await _sender.SendInlineKeyboardAsync(
+            chatId.ToString(),
+            "📊 گزارش وضعیت پرداخت یک‌ماه اخیر\n" +
+            "بازه: ۳۰ روز گذشته براساس تاریخ صدور فاکتور\n\n" +
+            $"تعداد کل فاکتورها: {rows.Length}\n" +
+            $"✅ پرداخت‌شده: {paidCount} فاکتور — {Percent(paidCountPercent)}\n" +
+            $"⏳ در انتظار پرداخت: {pendingCount} فاکتور — {Percent(pendingCountPercent)}\n\n" +
+            "درصد براساس مبلغ:\n" +
+            $"✅ پرداخت‌شده: {Number(paidAmountTotal)} تومان — {Percent(paidAmountPercent)}\n" +
+            $"⏳ در انتظار پرداخت: {Number(pendingAmountTotal)} تومان — {Percent(pendingAmountPercent)}\n" +
+            $"💰 جمع فاکتورها: {Number(totalAmount)} تومان",
+            new IReadOnlyCollection<TelegramInlineButton>[]
+            {
+                new[] { new TelegramInlineButton("↩️ بازگشت به فاکتورها", "invoiceadmin:menu:invoices") }
+            },
+            ct);
     }
 
     private async Task<bool> TryHandleInvoiceCaptionEditMessageAsync(
