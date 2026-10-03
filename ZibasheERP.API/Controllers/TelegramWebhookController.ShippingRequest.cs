@@ -402,6 +402,23 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id, "عملیات ثبت آدرس و اتصال گروه لغو شد.", ct);
             return true;
         }
+        // Button-only stages must not capture ordinary group messages. Keeping the
+        // draft is intentional so the operator can still continue with its buttons.
+        if (draft.Stage is TelegramShippingPreparationStage.AwaitingAddressChoice or
+            TelegramShippingPreparationStage.Ready)
+            return false;
+
+        // Commands always belong to the normal bot command pipeline (except /cancel
+        // above and /ad, which is handled before this method).
+        if (!string.IsNullOrWhiteSpace(command) && command.StartsWith('/'))
+            return false;
+
+        // Group input prompts use ForceReply. Only consume a textual response when it
+        // is actually replying to the prompt, otherwise normal customer questions in
+        // the same group would be mistaken for an address or username.
+        if (IsGroup(message.Chat.Type) && message.ReplyToMessage is null)
+            return false;
+
         if (draft.Stage == TelegramShippingPreparationStage.AwaitingIdentity)
         {
             var customer = await ResolveShippingCustomerAsync(input, draft.LinkGroupOnIdentity, ct);
@@ -483,8 +500,7 @@ public sealed partial class TelegramWebhookController
             await DispatchManualRegisteredAddressAsync(draft, ct);
             return true;
         }
-        await ReplyAsync(message.Chat.Id, "از دکمه‌های فرایند ارسال استفاده کنید.", ct);
-        return true;
+        return false;
     }
 
     private async Task<Customer> CreateManualAddressRegistrationCustomerAsync(
