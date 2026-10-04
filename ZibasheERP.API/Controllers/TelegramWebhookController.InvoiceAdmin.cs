@@ -313,6 +313,13 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("invoiceadmin:group-report", StringComparison.Ordinal))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendTelegramGroupConnectionReportAsync(callback.Message.Chat.Id, callback.Data, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("orderflow:", StringComparison.Ordinal))
         {
             await HandleOrderFlowCallbackAsync(callback, ct);
@@ -1819,6 +1826,7 @@ public sealed partial class TelegramWebhookController
                         new TelegramInlineButton("حذف", $"invoiceadmin:delete:{account.Id:N}")
                     });
                 buttons.Add(new[] { new TelegramInlineButton("➕ راهنمای افزودن حساب", "invoiceadmin:add") });
+                buttons.Add(new[] { new TelegramInlineButton("🔗 گزارش اتصال گروه‌های مشتریان", "invoiceadmin:group-report") });
                 if (IsPrimaryOwner(userId))
                 {
                     buttons.Add(new[] { new TelegramInlineButton("💰 مدیریت قیمت‌ها", "invoiceadmin:pricing") });
