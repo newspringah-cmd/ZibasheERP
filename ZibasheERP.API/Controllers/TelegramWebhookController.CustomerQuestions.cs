@@ -518,16 +518,51 @@ public sealed partial class TelegramWebhookController
                 $"{CustomerSafeStatusLabel(item)}.";
             if (asksForTime && item.Status != OrderItemFulfillmentStatus.Shipped)
                 answer += "\nزمان دقیق مرحله بعد در سیستم ثبت نشده؛ به‌محض تغییر، وضعیت جدید همین‌جا قابل بررسی است.";
-            return answer;
+            return answer + "\n\n" + FormatCustomerItemStatusSummary(items);
         }
 
-        var lines = items.Select(item =>
+        var lines = items
+            .OrderBy(item => item.Status == OrderItemFulfillmentStatus.WaitingForListCompletion)
+            .ThenBy(item => item.Status is OrderItemFulfillmentStatus.ListCompleted or OrderItemFulfillmentStatus.AwaitingPurchase ||
+                            item.Status == OrderItemFulfillmentStatus.Invoiced && !item.HasIssuedInvoice
+                ? OrderItemFulfillmentStatus.ListCompleted
+                : item.Status)
+            .Select(item =>
                 $"• {ItemDisplayName(item)}{FormatListCode(item.PublicCode)} — " +
                 CustomerSafeStatusLabel(item));
         var response = "آخرین وضعیت آیتم‌های شما:\n" + string.Join("\n", lines);
         if (asksForTime && items.Any(value => value.Status != OrderItemFulfillmentStatus.Shipped))
             response += "\n\nزمان دقیق مرحله بعد در سیستم ثبت نشده. برای یک عطر مشخص، نام عطر یا کد لیست را بفرستید.";
-        return response;
+        return response + "\n\n" + FormatCustomerItemStatusSummary(items);
+    }
+
+    private static string FormatCustomerItemStatusSummary(
+        IReadOnlyCollection<CustomerItemStatusRow> items,
+        bool customerFacing = true)
+    {
+        string SummaryLabel(OrderItemFulfillmentStatus status, bool hasIssuedInvoice) =>
+            customerFacing
+                ? status switch
+                {
+                    OrderItemFulfillmentStatus.ListCompleted or OrderItemFulfillmentStatus.AwaitingPurchase =>
+                        "تکمیل در انتظار خرید قطعی",
+                    OrderItemFulfillmentStatus.Invoiced when !hasIssuedInvoice =>
+                        "تکمیل در انتظار خرید قطعی",
+                    OrderItemFulfillmentStatus.Invoiced => "فاکتور شده (پیگیری از حسابداری)",
+                    _ => OrderItemFulfillmentStatusLabel(status)
+                }
+                : OrderItemFulfillmentStatusLabel(status);
+
+        var totals = items
+            .GroupBy(item => SummaryLabel(item.Status, item.HasIssuedInvoice))
+            .ToDictionary(group => group.Key, group => group.Count());
+        var counts = Enum.GetValues<OrderItemFulfillmentStatus>()
+            .OrderBy(status => status == OrderItemFulfillmentStatus.WaitingForListCompletion)
+            .Select(status => SummaryLabel(status, hasIssuedInvoice: true))
+            .Distinct()
+            .Select(label => $"• {label}: {totals.GetValueOrDefault(label)} عطر");
+        return $"📊 آمار تفکیکی عطرهای این گزارش\nجمع کل: {items.Count} عطر\n" +
+               string.Join("\n", counts);
     }
 
     private static int MatchPerfumeScore(CustomerItemStatusRow item, string normalizedQuestion)

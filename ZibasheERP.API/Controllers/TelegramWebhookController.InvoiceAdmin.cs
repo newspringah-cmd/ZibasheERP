@@ -4598,7 +4598,10 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        var lines = products.Select(item =>
+        var lines = products
+            .OrderBy(item => item.Status == OrderItemFulfillmentStatus.WaitingForListCompletion)
+            .ThenBy(item => item.Status)
+            .Select(item =>
             $"• {ItemDisplayName(item)}{FormatListCode(item.PublicCode)} — " +
             OrderItemFulfillmentStatusLabel(item.Status)).ToArray();
         var header = $"🔎 گزارش وضعیت عطرهای @{normalizedUsername}\n\n";
@@ -4614,7 +4617,14 @@ public sealed partial class TelegramWebhookController
             }
             builder.AppendLine(line);
         }
-        builder.Append($"\nتعداد عطرها: {products.Length}");
+        var summary = FormatCustomerItemStatusSummary(products, customerFacing: false);
+        if (builder.Length + summary.Length + 2 > 3500)
+        {
+            chunks.Add(builder.ToString().TrimEnd());
+            builder.Clear();
+            builder.Append($"🔎 ادامه گزارش @{normalizedUsername}\n");
+        }
+        builder.Append("\n").Append(summary);
         chunks.Add(builder.ToString().TrimEnd());
         foreach (var chunk in chunks)
             await ReplyAsync(chatId, chunk, ct);
