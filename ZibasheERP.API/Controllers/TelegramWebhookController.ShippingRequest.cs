@@ -674,10 +674,10 @@ public sealed partial class TelegramWebhookController
 
     private async Task SendShippingInputPromptAsync(long chatId, string text, CancellationToken ct)
     {
-        if (chatId > 0)
-            await _sender.SendForceReplyAsync(chatId.ToString(), text, ct);
-        else
-            await ReplyAsync(chatId, text, ct);
+        var prompt = chatId < 0
+            ? text + "\n\nلطفاً روی همین پیام Reply بزنید و متن را پیست و ارسال کنید. برای لغو /cancel را بفرستید."
+            : text;
+        await _sender.SendForceReplyAsync(chatId.ToString(), prompt, ct);
     }
 
     private async Task<bool> EnsureActiveCustomerGroupLinkAsync(TelegramChat chat, CancellationToken ct)
