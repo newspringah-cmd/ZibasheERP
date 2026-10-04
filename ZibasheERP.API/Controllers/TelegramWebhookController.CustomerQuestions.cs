@@ -252,7 +252,6 @@ public sealed partial class TelegramWebhookController
             {
                 var active = products
                     .Where(value => value.Status != OrderItemFulfillmentStatus.Shipped)
-                    .Take(8)
                     .ToList();
                 selected = active.Count > 0 ? active : products.Take(5).ToList();
             }
@@ -271,13 +270,23 @@ public sealed partial class TelegramWebhookController
         string answer,
         CancellationToken cancellationToken)
     {
-        var signedAnswer = ZibaAssistantIdentity.Signature + "\n\n" + answer;
-        var result = message.MessageId > 0
-            ? await _sender.SendReplyAsync(
-                message.Chat.Id.ToString(), signedAnswer, message.MessageId, cancellationToken)
-            : await _sender.SendAsync(message.Chat.Id.ToString(), signedAnswer, cancellationToken);
-        if (!result.IsSuccessful)
-            _logger.LogWarning("Telegram customer status answer failed: {Error}", result.Error);
+        var parts = SplitTelegramMessage(answer).ToArray();
+        for (var index = 0; index < parts.Length; index++)
+        {
+            var heading = index == 0 ? string.Empty : $"ادامه وضعیت آیتم‌ها ({index + 1}/{parts.Length})\n\n";
+            var signedAnswer = ZibaAssistantIdentity.Signature + "\n\n" + heading + parts[index];
+            var result = index == 0 && message.MessageId > 0
+                ? await _sender.SendReplyAsync(
+                    message.Chat.Id.ToString(), signedAnswer, message.MessageId, cancellationToken)
+                : await _sender.SendAsync(message.Chat.Id.ToString(), signedAnswer, cancellationToken);
+            if (result.IsSuccessful)
+                continue;
+
+            _logger.LogWarning(
+                "Telegram customer status answer part {Part}/{Total} failed: {Error}",
+                index + 1, parts.Length, result.Error);
+            break;
+        }
     }
 
     private async Task<bool> TryHandlePerfumeGuidanceQuestionAsync(
@@ -512,14 +521,10 @@ public sealed partial class TelegramWebhookController
             return answer;
         }
 
-        var lines = items
-            .Take(8)
-            .Select(item =>
+        var lines = items.Select(item =>
                 $"• {ItemDisplayName(item)}{FormatListCode(item.PublicCode)} — " +
                 CustomerSafeStatusLabel(item));
         var response = "آخرین وضعیت آیتم‌های شما:\n" + string.Join("\n", lines);
-        if (items.Count > 8)
-            response += $"\nو {items.Count - 8} مورد دیگر";
         if (asksForTime && items.Any(value => value.Status != OrderItemFulfillmentStatus.Shipped))
             response += "\n\nزمان دقیق مرحله بعد در سیستم ثبت نشده. برای یک عطر مشخص، نام عطر یا کد لیست را بفرستید.";
         return response;
