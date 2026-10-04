@@ -56,12 +56,27 @@ public sealed partial class TelegramWebhookController
             (item.IsBottleOwner ? " | صاحب باتل" : string.Empty) +
             (customerIds.Length > 1 ? $"\nمشتری: {item.CustomerName}" : string.Empty) +
             (!ready && item.ShippedAt.HasValue
-                ? $"\nتاریخ ارسال: {TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.SpecifyKind(item.ShippedAt.Value, DateTimeKind.Utc), "Asia/Tehran"):yyyy/MM/dd}"
+                ? $"\nتاریخ ارسال: {FormatShippingPersianDate(item.ShippedAt.Value)}"
                 : string.Empty));
         var report = title + "\n\n" + (items.Length == 0 ? "موردی ثبت نشده است." : string.Join("\n\n", lines)) +
             $"\n\nتعداد آیتم‌ها: {items.Length}";
-        foreach (var part in SplitTelegramMessage(report))
-            await ReplyAsync(message.Chat.Id, part, ct);
+        var parts = SplitTelegramMessage(report).ToArray();
+        for (var index = 0; index < parts.Length; index++)
+        {
+            var html = System.Net.WebUtility.HtmlEncode(parts[index]);
+            if (index == parts.Length - 1)
+                html += "\n\n<b>گزارش مربوط به 11 شهریور یا 2 September به بعد می‌باشد.</b>";
+            await _sender.SendHtmlAsync(chatId, html, ct);
+        }
         return true;
+    }
+
+    private static string FormatShippingPersianDate(DateTime shippedAt)
+    {
+        var tehranDate = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
+            DateTime.SpecifyKind(shippedAt, DateTimeKind.Utc), "Asia/Tehran");
+        var calendar = new System.Globalization.PersianCalendar();
+        return FormattableString.Invariant(
+            $"{calendar.GetYear(tehranDate):0000}/{calendar.GetMonth(tehranDate):00}/{calendar.GetDayOfMonth(tehranDate):00}");
     }
 }
