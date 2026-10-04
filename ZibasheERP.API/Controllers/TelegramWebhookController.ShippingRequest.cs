@@ -538,6 +538,16 @@ public sealed partial class TelegramWebhookController
             };
             _db.Addresses.Add(address);
             await _db.SaveChangesAsync(ct);
+            // Removing the consumed bot prompt also clears its ForceReply for members
+            // who open the group after the operator has registered the address.
+            if (message.ReplyToMessage is { MessageId: > 0, From.IsBot: true } addressPrompt &&
+                addressPrompt.Text?.StartsWith("آدرس کامل را وارد کنید", StringComparison.Ordinal) == true)
+            {
+                var removed = await _sender.DeleteMessageAsync(
+                    message.Chat.Id.ToString(), addressPrompt.MessageId, ct);
+                if (!removed.IsSuccessful)
+                    _logger.LogWarning("Could not remove consumed shipping address prompt: {Error}", removed.Error);
+            }
             if (draft.RegistrationOnly)
             {
                 draft.AddressId = address.Id;

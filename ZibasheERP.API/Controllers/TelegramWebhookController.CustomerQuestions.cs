@@ -250,10 +250,7 @@ public sealed partial class TelegramWebhookController
 
             if (selected.Count == 0)
             {
-                var active = products
-                    .Where(value => value.Status != OrderItemFulfillmentStatus.Shipped)
-                    .ToList();
-                selected = active.Count > 0 ? active : products.Take(5).ToList();
+                selected = products.ToList();
             }
         }
 

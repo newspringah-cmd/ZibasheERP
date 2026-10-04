@@ -49,7 +49,8 @@ public sealed record TelegramUser(
     [property: JsonPropertyName("id")] long Id,
     [property: JsonPropertyName("username")] string? Username,
     [property: JsonPropertyName("first_name")] string? FirstName = null,
-    [property: JsonPropertyName("last_name")] string? LastName = null);
+    [property: JsonPropertyName("last_name")] string? LastName = null,
+    [property: JsonPropertyName("is_bot")] bool IsBot = false);
 
 public sealed record TelegramContact(
     [property: JsonPropertyName("phone_number")] string PhoneNumber,
