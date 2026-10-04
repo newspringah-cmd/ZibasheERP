@@ -193,8 +193,9 @@ public sealed partial class TelegramWebhookController
         var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
         {
             new[] { new TelegramInlineButton($"۴۸ تا ۷۲ ساعت ({Count("h48_72")})", "paymentreminder:bucket:h48_72") },
-            new[] { new TelegramInlineButton($"۷ تا ۸ روز ({Count("d7_8")})", "paymentreminder:bucket:d7_8") },
-            new[] { new TelegramInlineButton($"۱۴ تا ۱۵ روز ({Count("d14_15")})", "paymentreminder:bucket:d14_15") },
+            new[] { new TelegramInlineButton($"۷۳ ساعت تا ۸ روز ({Count("d7_8")})", "paymentreminder:bucket:d7_8") },
+            new[] { new TelegramInlineButton($"۸ تا ۱۵ روز ({Count("d14_15")})", "paymentreminder:bucket:d14_15") },
+            new[] { new TelegramInlineButton($"۱۵ روز تا یک ماه ({Count("d15_30")})", "paymentreminder:bucket:d15_30") },
             new[] { new TelegramInlineButton($"بیش از یک ماه ({Count("over30")})", "paymentreminder:bucket:over30") },
             new[] { new TelegramInlineButton("↩ بازگشت", "invoiceadmin:menu:invoices") }
         };
@@ -543,17 +544,18 @@ public sealed partial class TelegramWebhookController
     }
 
     private static bool IsPaymentReminderBucket(string bucket) =>
-        bucket is "h48_72" or "d7_8" or "d14_15" or "over30";
+        bucket is "h48_72" or "d7_8" or "d14_15" or "d15_30" or "over30";
 
     private static bool IsInPaymentReminderBucket(DateTime issuedAt, string bucket, DateTime now)
     {
         var age = now - issuedAt;
         return bucket switch
         {
-            "h48_72" => age >= TimeSpan.FromHours(48) && age < TimeSpan.FromHours(72),
-            "d7_8" => age >= TimeSpan.FromDays(7) && age < TimeSpan.FromDays(9),
-            "d14_15" => age >= TimeSpan.FromDays(14) && age < TimeSpan.FromDays(16),
-            "over30" => age >= TimeSpan.FromDays(30),
+            "h48_72" => age >= TimeSpan.FromHours(48) && age < TimeSpan.FromHours(73),
+            "d7_8" => age >= TimeSpan.FromHours(73) && age < TimeSpan.FromHours(193),
+            "d14_15" => age >= TimeSpan.FromHours(193) && age < TimeSpan.FromHours(361),
+            "d15_30" => age >= TimeSpan.FromHours(361) && age < TimeSpan.FromHours(721),
+            "over30" => age >= TimeSpan.FromHours(721),
             _ => false
         };
     }
@@ -561,8 +563,9 @@ public sealed partial class TelegramWebhookController
     private static string PaymentReminderBucketTitle(string bucket) => bucket switch
     {
         "h48_72" => "۴۸ تا ۷۲ ساعت",
-        "d7_8" => "۷ تا ۸ روز",
-        "d14_15" => "۱۴ تا ۱۵ روز",
+        "d7_8" => "۷۳ ساعت تا ۸ روز",
+        "d14_15" => "۸ تا ۱۵ روز",
+        "d15_30" => "۱۵ روز تا یک ماه",
         "over30" => "بیش از یک ماه",
         _ => "نامشخص"
     };
