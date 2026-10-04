@@ -557,12 +557,15 @@ public sealed partial class TelegramWebhookController
             .GroupBy(item => SummaryLabel(item.Status, item.HasIssuedInvoice))
             .ToDictionary(group => group.Key, group => group.Count());
         var counts = Enum.GetValues<OrderItemFulfillmentStatus>()
+            .Where(status => status is not (OrderItemFulfillmentStatus.Purchased or
+                OrderItemFulfillmentStatus.Invoiced or OrderItemFulfillmentStatus.ArrivedInIran))
             .OrderBy(status => status == OrderItemFulfillmentStatus.WaitingForListCompletion)
             .Select(status => SummaryLabel(status, hasIssuedInvoice: true))
             .Distinct()
             .Select(label => $"• {label}: {totals.GetValueOrDefault(label)} عطر");
         return $"📊 آمار تفکیکی عطرهای این گزارش\nجمع کل: {items.Count} عطر\n" +
-               string.Join("\n", counts);
+               string.Join("\n", counts) +
+               "\n\nتوجه این گزارش مربوط به ایتم های ثبت شده در سیستم جدید فروش زیباشی و پس از تاریخ 11 شهریور می باشد";
     }
 
     private static int MatchPerfumeScore(CustomerItemStatusRow item, string normalizedQuestion)
