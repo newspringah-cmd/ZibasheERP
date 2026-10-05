@@ -102,6 +102,10 @@ public interface IInvoiceIssuanceService
     Task<ProductionCopyArchive?> GetAllProductionCopiesAsync(
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<SalesListProductionCopy>> GetProductionCopiesAsync(
+        IReadOnlyCollection<Guid> salesListIds,
+        CancellationToken cancellationToken = default);
+
     Task<InvoiceIssuanceResult> IssueManualAsync(
         string customerIdentity,
         IReadOnlyCollection<ManualInvoiceLineInput> lines,

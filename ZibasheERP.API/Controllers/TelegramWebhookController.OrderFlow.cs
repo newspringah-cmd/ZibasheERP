@@ -724,6 +724,11 @@ public sealed partial class TelegramWebhookController
             return;
         }
         var now = DateTime.UtcNow;
+        var arrivingListIds = await _db.OrderItems.AsNoTracking()
+            .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
+                selected.Contains(value.SalesListId.Value) &&
+                value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
+            .Select(value => value.SalesListId!.Value).Distinct().ToArrayAsync(ct);
         var affected = await _db.OrderItems.Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
                 selected.Contains(value.SalesListId.Value) &&
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
@@ -738,12 +743,18 @@ public sealed partial class TelegramWebhookController
             var result = await SendDecantQueueListAsync(list, ct);
             if (!result.IsSuccessful) failures.Add($"{list.DisplayCode}: {result.Error}");
         }
+        if (affected > 0 && arrivingListIds.Length > 0)
+        {
+            var copies = await _invoiceIssuanceService.GetProductionCopiesAsync(arrivingListIds, ct);
+            var labelFailures = await SendProductionCopiesAsync(copies, ct);
+            failures.AddRange(labelFailures);
+        }
         _orderFlowDrafts.ClearArrivalSelection(chatId, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, $"{affected} آیتم وارد صف دکانت شد ✅", ct, true);
         await ReplyAsync(chatId,
             failures.Count == 0
                 ? $"✅ {lists.Length} عطر به صف دکانت ارسال شد."
-                : $"⚠️ وضعیت ثبت شد اما ارسال {failures.Count} پیام صف ناموفق بود:\n{string.Join("\n", failures)}", ct);
+                : $"⚠️ وضعیت ثبت شد اما ارسال {failures.Count} پیام صف یا چاپ لیبل ناموفق بود:\n{string.Join("\n", failures)}", ct);
         await SendOrderFlowDashboardAsync(chatId, ct);
     }
 

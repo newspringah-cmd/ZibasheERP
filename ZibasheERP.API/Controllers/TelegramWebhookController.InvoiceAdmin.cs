@@ -2883,12 +2883,9 @@ public sealed partial class TelegramWebhookController
                 var result = await _invoiceIssuanceService.IssueCompletedListsAsync(
                     selected.ToArray(), userId.ToString(), ct);
                 _invoiceIssuanceDrafts.Remove(chatId, userId);
-                var productionDispatchFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
                 var paymentTrackingStatus = await SendPaymentTrackingReportAsync(result.BatchId, ct);
                 var accountingStatus = await SendAccountingReportsAsync(result.BatchId, ct);
-                var productionDispatchStatus = productionDispatchFailures.Count == 0
-                    ? $"نسخهٔ چاپ لیبل {result.ProductionCopies.Count} لیست ارسال شد ✅؛ ارسال به صف دکانت پس از ثبت رسیدن عطر انجام می‌شود."
-                    : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionDispatchFailures);
+                var productionDispatchStatus = "نسخهٔ چاپ لیبل و ارسال به صف دکانت پس از ثبت رسیدن عطر به ایران انجام می‌شود.";
                 await ReplyAsync(chatId,
                     $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
                     $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +
@@ -3598,12 +3595,9 @@ public sealed partial class TelegramWebhookController
             var result = await _invoiceIssuanceService.IssueCompletedListsAsync(
                 draft.SelectedSalesListIds.ToArray(), message.From.Id.ToString(), ct);
             _invoiceIssuanceDrafts.Remove(message.Chat.Id, message.From.Id);
-            var productionFailures = await SendProductionCopiesAsync(result.ProductionCopies, ct);
             var paymentTrackingStatus = await SendPaymentTrackingReportAsync(result.BatchId, ct);
             var accountingStatus = await SendAccountingReportsAsync(result.BatchId, ct);
-            var productionStatus = productionFailures.Count == 0
-                ? $"نسخهٔ چاپ لیبل {result.ProductionCopies.Count} لیست ارسال شد ✅؛ صف دکانت بعد از ثبت رسیدن عطر ساخته می‌شود."
-                : "⚠️ ارسال نسخهٔ عملیاتی کامل نشد:\n" + string.Join("\n", productionFailures);
+            var productionStatus = "نسخهٔ چاپ لیبل و ارسال به صف دکانت پس از ثبت رسیدن عطر به ایران انجام می‌شود.";
             await ReplyAsync(message.Chat.Id,
                 $"✅ {result.InvoiceCount} فاکتور تجمیعی صادر شد.\n" +
                 $"شماره‌ها: {string.Join("، ", result.InvoiceNumbers)}\n\n" +

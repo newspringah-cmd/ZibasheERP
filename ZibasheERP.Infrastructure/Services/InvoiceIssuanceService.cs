@@ -134,6 +134,21 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 copies);
     }
 
+    public async Task<IReadOnlyCollection<SalesListProductionCopy>> GetProductionCopiesAsync(
+        IReadOnlyCollection<Guid> salesListIds, CancellationToken cancellationToken = default)
+    {
+        var lists = await _db.SalesLists.AsNoTracking()
+            .Include(list => list.Requests.Where(request => !request.IsDeleted &&
+                request.Kind == SalesListRequestKind.CurrentBottle &&
+                request.Status == SalesListRequestStatus.Invoiced))
+                .ThenInclude(request => request.Bottle)
+            .Include(list => list.Perfume)
+            .Where(list => !list.IsDeleted && salesListIds.Contains(list.Id))
+            .OrderBy(list => list.PublicCode)
+            .ToArrayAsync(cancellationToken);
+        return lists.Select(CreateProductionCopy).ToArray();
+    }
+
     public async Task MoveCompletedListToWaitingAsync(
         Guid salesListId, CancellationToken cancellationToken = default)
     {
