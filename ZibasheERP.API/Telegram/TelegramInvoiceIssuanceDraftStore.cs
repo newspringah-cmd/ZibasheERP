@@ -118,6 +118,7 @@ public enum TelegramManualInvoiceStage
 
 public sealed class TelegramManualInvoiceDraft
 {
+    public List<TelegramManualInvoiceEntry> Entries { get; } = [];
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
     public TelegramManualInvoiceStage Stage { get; set; } = TelegramManualInvoiceStage.AwaitingGiftDecision;
@@ -131,6 +132,15 @@ public sealed class TelegramManualInvoiceDraft
     public decimal PendingLineUnitAmount { get; set; }
     public List<ZibasheERP.Application.Interfaces.ManualInvoiceLineInput> Lines { get; } = [];
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public sealed class TelegramManualInvoiceEntry
+{
+    public required string CustomerIdentity { get; init; }
+    public string? GiftRecipientIdentity { get; init; }
+    public List<ZibasheERP.Application.Interfaces.ManualInvoiceLineInput> Lines { get; } = [];
+    public List<string> Photos { get; } = [];
+    public string? IssuedInvoiceNumber { get; set; }
 }
 
 public sealed class TelegramManualInvoiceDraftStore

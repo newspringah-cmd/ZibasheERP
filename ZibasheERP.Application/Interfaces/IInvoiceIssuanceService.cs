@@ -12,7 +12,8 @@ public sealed record ManualInvoiceLineInput(
     string Description,
     int Quantity,
     decimal UnitAmount,
-    decimal BottleAmount = 0);
+    decimal BottleAmount = 0,
+    decimal? TotalAmount = null);
 
 public sealed class BottlePriceResolutionRequiredException : InvalidOperationException
 {

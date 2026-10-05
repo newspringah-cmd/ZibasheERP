@@ -701,7 +701,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         foreach (var line in validLines)
         {
             row++;
-            var perfumeAmount = line.Quantity * line.UnitAmount;
+            var perfumeAmount = line.TotalAmount ?? line.Quantity * line.UnitAmount;
             order.Items.Add(new OrderItem
             {
                 Id = Guid.NewGuid(), CreatedAt = now, OrderId = order.Id,

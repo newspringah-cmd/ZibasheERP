@@ -2770,26 +2770,41 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "فرایند منقضی شده است.", ct);
                 return;
             }
-            manualDraft.Stage = TelegramManualInvoiceStage.AwaitingLine;
+            manualDraft.Lines.Clear();
+            manualDraft.ProductPhotoFileIds.Clear();
+            manualDraft.CustomerIdentity = string.Empty;
+            manualDraft.GiftRecipientIdentity = string.Empty;
+            manualDraft.Stage = TelegramManualInvoiceStage.AwaitingGiftDecision;
             _manualInvoiceDrafts.Set(manualDraft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ReplyAsync(chatId, "نام یا شرح آیتم بعدی را وارد کنید:", ct);
+            await _sender.SendInlineKeyboardAsync(chatId.ToString(), "آیتم بعدی هدیه است؟",
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("بله", "invoicebatch:manualgift:yes"),
+                        new TelegramInlineButton("خیر", "invoicebatch:manualgift:no") }
+                }, ct);
             return;
         }
         if (callback.Data == "invoicebatch:manualfinish")
         {
             if (!_manualInvoiceDrafts.TryGet(chatId, userId, out var manualDraft) ||
                 manualDraft.Stage != TelegramManualInvoiceStage.AwaitingMoreLines ||
-                manualDraft.Lines.Count == 0)
+                manualDraft.Entries.Count == 0)
             {
                 await _sender.AnswerCallbackAsync(callback.Id, "حداقل یک آیتم معتبر لازم است.", ct);
                 return;
             }
-            manualDraft.Stage = TelegramManualInvoiceStage.AwaitingPhoto;
+            manualDraft.Stage = TelegramManualInvoiceStage.AwaitingConfirmation;
             _manualInvoiceDrafts.Set(manualDraft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await ReplyAsync(chatId,
-                $"عکس آیتم ۱ از {manualDraft.Lines.Count} را ارسال کنید:\n{manualDraft.Lines[0].Description}", ct);
+            await _sender.SendInlineKeyboardAsync(chatId.ToString(),
+                $"پایان ثبت: {manualDraft.Entries.Sum(entry => entry.Lines.Count)} آیتم برای {manualDraft.Entries.Count} فاکتور\n" +
+                string.Join("\n", manualDraft.Entries.Select(entry => $"{entry.CustomerIdentity}: {entry.Lines.Count} آیتم")),
+                new IReadOnlyCollection<TelegramInlineButton>[]
+                {
+                    new[] { new TelegramInlineButton("✅ صدور و ارسال فاکتورها", "invoicebatch:manualconfirm") },
+                    new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
+                }, ct);
             return;
         }
         if (callback.Data == "invoicebatch:manualconfirm")
@@ -2802,19 +2817,22 @@ public sealed partial class TelegramWebhookController
             try
             {
                 await _sender.AnswerCallbackAsync(callback.Id, "فاکتور در حال صدور است…", ct);
-                var result = await _invoiceIssuanceService.IssueManualAsync(
-                    manualDraft.CustomerIdentity, manualDraft.Lines,
-                    manualDraft.ProductPhotoFileIds, userId.ToString(),
-                    manualDraft.IsGift ? manualDraft.GiftRecipientIdentity : null,
-                    manualDraft.IsInventory, ct);
+                foreach (var entry in manualDraft.Entries.Where(entry => entry.IssuedInvoiceNumber is null))
+                {
+                    var issued = await _invoiceIssuanceService.IssueManualAsync(
+                        entry.CustomerIdentity, entry.Lines, entry.Photos, userId.ToString(),
+                        entry.GiftRecipientIdentity, manualDraft.IsInventory, ct);
+                    entry.IssuedInvoiceNumber = issued.InvoiceNumbers.Single();
+                }
                 _manualInvoiceDrafts.Remove(chatId, userId);
-                var paymentTrackingStatus = await SendManualPaymentTrackingReportAsync(
-                    result.InvoiceNumbers.Single(), ct);
-                var accountingStatus = await SendManualAccountingReportAsync(
-                    result.InvoiceNumbers.Single(), ct);
+                foreach (var entry in manualDraft.Entries)
+                {
+                    await SendManualPaymentTrackingReportAsync(entry.IssuedInvoiceNumber!, ct);
+                    await SendManualAccountingReportAsync(entry.IssuedInvoiceNumber!, ct);
+                }
                 await ReplyAsync(chatId,
-                    $"✅ فاکتور دستی {result.InvoiceNumbers.Single()} صادر شد.\n" +
-                    paymentTrackingStatus + "\n" + accountingStatus + "\n" +
+                    $"✅ {manualDraft.Entries.Count} فاکتور صادر شد:\n" +
+                    string.Join("\n", manualDraft.Entries.Select(entry => entry.IssuedInvoiceNumber)) + "\n" +
                     "ارسال خودکار انجام می‌شود؛ در صورت نبود گروه مشتری یا خطای دائمی، مورد به گروه خطاهای فاکتور می‌رود.", ct);
             }
             catch (InvalidOperationException exception)
@@ -3409,9 +3427,24 @@ public sealed partial class TelegramWebhookController
                     $"عکس آیتم {nextIndex + 1} از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[nextIndex].Description}", ct);
                 return true;
             }
-            draft.Stage = TelegramManualInvoiceStage.AwaitingConfirmation;
+            static string IdentityKey(string identity) => identity.Trim().TrimStart('@').ToLowerInvariant();
+            var recipient = draft.IsGift ? draft.GiftRecipientIdentity : null;
+            var entry = draft.Entries.FirstOrDefault(value =>
+                IdentityKey(value.CustomerIdentity) == IdentityKey(draft.CustomerIdentity) &&
+                IdentityKey(value.GiftRecipientIdentity ?? "") == IdentityKey(recipient ?? ""));
+            if (entry is null)
+            {
+                entry = new TelegramManualInvoiceEntry
+                {
+                    CustomerIdentity = draft.CustomerIdentity, GiftRecipientIdentity = recipient
+                };
+                draft.Entries.Add(entry);
+            }
+            entry.Lines.AddRange(draft.Lines);
+            entry.Photos.AddRange(draft.ProductPhotoFileIds);
+            draft.Stage = TelegramManualInvoiceStage.AwaitingMoreLines;
             _manualInvoiceDrafts.Set(draft);
-            var total = draft.Lines.Sum(line => line.Quantity * line.UnitAmount + line.BottleAmount);
+            var total = draft.Lines.Sum(line => (line.TotalAmount ?? line.Quantity * line.UnitAmount) + line.BottleAmount);
             await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
                 (draft.IsInventory ? "🔴🔴 موجودی 🔴🔴\n" : string.Empty) +
                 $"پیش‌نمایش فاکتور دستی\n" +
@@ -3421,7 +3454,8 @@ public sealed partial class TelegramWebhookController
                 $"تعداد ردیف: {draft.Lines.Count}\nمبلغ کل: {total:N0} تومان\nعکس همه آیتم‌ها: دریافت شد ✅",
                 new IReadOnlyCollection<TelegramInlineButton>[]
                 {
-                    new[] { new TelegramInlineButton("✅ صدور نهایی", "invoicebatch:manualconfirm") },
+                    new[] { new TelegramInlineButton("➕ ادامه برای فاکتور جدید", "invoicebatch:manualadd") },
+                    new[] { new TelegramInlineButton("✅ پایان", "invoicebatch:manualfinish") },
                     new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
                 }, ct);
             return true;
@@ -3448,7 +3482,7 @@ public sealed partial class TelegramWebhookController
             draft.Stage = TelegramManualInvoiceStage.AwaitingLine;
             _manualInvoiceDrafts.Set(draft);
             await ReplyAsync(message.Chat.Id,
-                "نام یا شرح آیتم اول را وارد کنید:\n\nفرمت سریع: عطر تست / 5 / 250000 / 30000", ct);
+                "نام عطر را وارد کنید یا فرمت سریع سه‌خطی بفرستید:\nنام عطر\nمقدار میل\nمبلغ کل با شیشه (تومان)\n\nمثال:\nعطر تست\n5\n1280000", ct);
             return true;
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingCustomer)
@@ -3458,8 +3492,8 @@ public sealed partial class TelegramWebhookController
             _manualInvoiceDrafts.Set(draft);
             await ReplyAsync(message.Chat.Id,
                 "نام یا شرح آیتم اول را وارد کنید:\n\n" +
-                "اگر خواستید ردیف را یکجا ثبت کنید، فرمت سریع هم فعال است:\n" +
-                "عطر تست / 5 / 250000 / 30000", ct);
+                "فرمت سریع در سه خط: نام عطر، مقدار میل، مبلغ کل با شیشه (تومان)\n\n" +
+                "مثال:\nعطر تست\n5\n1280000", ct);
             return true;
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingLine)
@@ -3477,25 +3511,22 @@ public sealed partial class TelegramWebhookController
                     $"عکس آیتم ۱ از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[0].Description}", ct);
                 return true;
             }
-            if (text.Contains('/'))
+            if (text.Contains('\n'))
             {
-                var values = text.Split('/', StringSplitOptions.TrimEntries);
-                if (values.Length is < 3 or > 4 || string.IsNullOrWhiteSpace(values[0]) ||
+                var values = text.Split('\n', StringSplitOptions.TrimEntries);
+                if (values.Length != 3 || string.IsNullOrWhiteSpace(values[0]) ||
                     !TryParsePositiveInt(values[1], out var quantity) ||
-                    !TryParseNonNegativeDecimal(values[2], out var unitAmount) ||
-                    (values.Length == 4 && !TryParseNonNegativeDecimal(values[3], out _)))
+                    !TryParseNonNegativeDecimal(values[2], out var totalAmount))
                 {
                     await ReplyAsync(message.Chat.Id,
-                        "فرمت معتبر نیست. نمونه: عطر تست / 5 / 250000 / 30000", ct);
+                        "فرمت باید دقیقاً سه خط باشد؛ نام عطر، مقدار میل، مبلغ کل با شیشه:\nعطر تست\n5\n1280000", ct);
                     return true;
                 }
-                var bottleAmount = values.Length == 4
-                    ? decimal.Parse(NormalizeNumber(values[3]), System.Globalization.CultureInfo.InvariantCulture)
-                    : 0;
-                draft.Lines.Add(new ManualInvoiceLineInput(values[0], quantity, unitAmount, bottleAmount));
-                draft.Stage = TelegramManualInvoiceStage.AwaitingMoreLines;
+                draft.Lines.Add(new ManualInvoiceLineInput(values[0], quantity,
+                    totalAmount / quantity, TotalAmount: totalAmount));
+                draft.Stage = TelegramManualInvoiceStage.AwaitingPhoto;
                 _manualInvoiceDrafts.Set(draft);
-                await SendManualInvoiceLineDecisionAsync(message.Chat.Id, draft.Lines.Count, ct);
+                await ReplyAsync(message.Chat.Id, "عکس این آیتم را ارسال کنید:", ct);
                 return true;
             }
             draft.PendingLineDescription = text;
@@ -3514,56 +3545,33 @@ public sealed partial class TelegramWebhookController
             draft.PendingLineQuantity = quantity;
             draft.Stage = TelegramManualInvoiceStage.AwaitingLineUnitAmount;
             _manualInvoiceDrafts.Set(draft);
-            await ReplyAsync(message.Chat.Id, "قیمت هر واحد یا هر میل را به تومان وارد کنید؛ مثال: 250000", ct);
+            await ReplyAsync(message.Chat.Id, "مبلغ کل این آیتم به همراه شیشه را به تومان وارد کنید؛ مثال: 1280000", ct);
             return true;
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingLineUnitAmount)
         {
             if (!TryParseNonNegativeDecimal(text, out var unitAmount))
             {
-                await ReplyAsync(message.Chat.Id, "قیمت واحد نامعتبر است؛ عدد صفر یا مثبت وارد کنید.", ct);
-                return true;
-            }
-            draft.PendingLineUnitAmount = unitAmount;
-            draft.Stage = TelegramManualInvoiceStage.AwaitingLineBottleAmount;
-            _manualInvoiceDrafts.Set(draft);
-            await ReplyAsync(message.Chat.Id, "قیمت شیشه را به تومان وارد کنید؛ اگر رایگان است 0 بفرستید.", ct);
-            return true;
-        }
-        if (draft.Stage == TelegramManualInvoiceStage.AwaitingLineBottleAmount)
-        {
-            if (!TryParseNonNegativeDecimal(text, out var bottleAmount))
-            {
-                await ReplyAsync(message.Chat.Id, "قیمت شیشه نامعتبر است؛ عدد صفر یا مثبت وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "مبلغ کل نامعتبر است؛ عدد صفر یا مثبت وارد کنید.", ct);
                 return true;
             }
             draft.Lines.Add(new ManualInvoiceLineInput(
                 draft.PendingLineDescription,
                 draft.PendingLineQuantity,
-                draft.PendingLineUnitAmount,
-                bottleAmount));
+                unitAmount / draft.PendingLineQuantity,
+                TotalAmount: unitAmount));
             draft.PendingLineDescription = string.Empty;
             draft.PendingLineQuantity = 0;
             draft.PendingLineUnitAmount = 0;
-            draft.Stage = TelegramManualInvoiceStage.AwaitingMoreLines;
+            draft.Stage = TelegramManualInvoiceStage.AwaitingPhoto;
             _manualInvoiceDrafts.Set(draft);
-            await SendManualInvoiceLineDecisionAsync(message.Chat.Id, draft.Lines.Count, ct);
+            await ReplyAsync(message.Chat.Id, "عکس این آیتم را ارسال کنید:", ct);
             return true;
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingMoreLines)
         {
-            if (text.Equals("ثبت", StringComparison.OrdinalIgnoreCase))
-            {
-                draft.Stage = TelegramManualInvoiceStage.AwaitingPhoto;
-                _manualInvoiceDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id,
-                    $"عکس آیتم ۱ از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[0].Description}", ct);
-                return true;
-            }
-            draft.PendingLineDescription = text;
-            draft.Stage = TelegramManualInvoiceStage.AwaitingLineQuantity;
-            _manualInvoiceDrafts.Set(draft);
-            await ReplyAsync(message.Chat.Id, "مقدار یا حجم آیتم را به میل وارد کنید؛ مثال: 5", ct);
+            await ReplyAsync(message.Chat.Id,
+                "از دکمه «ادامه برای فاکتور جدید» یا «پایان» استفاده کنید.", ct);
             return true;
         }
         return true;
