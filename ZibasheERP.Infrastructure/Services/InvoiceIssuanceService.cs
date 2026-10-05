@@ -865,6 +865,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             {
                 var listOrders = orders
                     .Where(order => order.Items.Any(item => item.SalesListId == link.SalesListId))
+                    .OrderByDescending(order => order.Items.Any(item =>
+                        item.SalesListId == link.SalesListId && item.IsBottleOwner))
+                    .ThenByDescending(order => order.Items.Where(item => item.SalesListId == link.SalesListId)
+                        .Sum(item => item.RequestedVolumeMl))
+                    .ThenBy(order => order.Items.Where(item => item.SalesListId == link.SalesListId)
+                        .Min(item => item.RowNumber))
+                    .ThenBy(order => order.CreatedAt).ThenBy(order => order.Id)
                     .ToArray();
                 var rows = listOrders.Select((order, index) =>
                 {
@@ -877,11 +884,15 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     var listAmount = order.Items
                         .Where(item => item.SalesListId == link.SalesListId)
                         .Sum(item => item.LineTotal);
-                    return $"{(paid ? "✅" : "🔴")} {index + 1}. {identity} — " +
+                    var volume = order.Items.Where(item => item.SalesListId == link.SalesListId)
+                        .Sum(item => item.RequestedVolumeMl);
+                    var owner = order.Items.Any(item => item.SalesListId == link.SalesListId && item.IsBottleOwner)
+                        ? " 👑" : "";
+                    return $"{(paid ? "✅" : "🔴")} {index + 1}. {identity}{owner} — {volume} میل — " +
                            $"{invoice?.InvoiceNumber ?? "بدون فاکتور"} — {listAmount:N0} تومان";
                 });
                 var message = $"💳 واریز جدید\n" +
-                              $"عطر: {link.SalesList.EnglishName}\n" +
+                              $"عطر: {(string.IsNullOrWhiteSpace(link.SalesList.PersianName) ? link.SalesList.EnglishName : link.SalesList.PersianName)}\n" +
                               $"کد لیست: {link.SalesList.DisplayCode}\n" +
                               $"تعداد فاکتور: {listOrders.Length}\n\n{string.Join("\n", rows)}\n\n" +
                               $"✅ پرداخت‌شده   🔴 در انتظار پرداخت\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
@@ -899,7 +910,10 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 return new InvoicePaymentTrackingReport(
                     batch.Id, link.SalesListId, message,
                     link.TelegramPaymentTrackingChatId,
-                    link.TelegramPaymentTrackingMessageId, actions);
+                    link.TelegramPaymentTrackingMessageId, actions,
+                    string.IsNullOrWhiteSpace(link.SalesList.PersianName)
+                        ? link.SalesList.EnglishName : link.SalesList.PersianName,
+                    link.SalesList.TelegramPhotoFileId);
             })
             .ToArray();
     }

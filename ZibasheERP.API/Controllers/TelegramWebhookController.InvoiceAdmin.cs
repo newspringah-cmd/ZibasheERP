@@ -1501,12 +1501,7 @@ public sealed partial class TelegramWebhookController
 
     private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildPaymentTrackingButtons(
         InvoicePaymentTrackingReport report) =>
-        report.Actions.Select(action =>
-            (IReadOnlyCollection<TelegramInlineButton>)new[]
-            {
-                new TelegramInlineButton(action.Label,
-                    $"invoiceinventory:start:{action.OrderItemId:N}")
-            }).ToArray();
+        Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
 
     private async Task HandleInvoiceInventoryCallbackAsync(
         TelegramCallbackQuery callback, CancellationToken ct)
@@ -2979,6 +2974,21 @@ public sealed partial class TelegramWebhookController
         var failures = new List<string>();
         foreach (var report in reports)
         {
+            if (!string.IsNullOrWhiteSpace(report.TelegramPhotoFileId))
+            {
+                var photo = await _sender.SendPhotoHtmlAsync(
+                    _options.NewPaymentsChatId.Trim(), report.TelegramPhotoFileId,
+                    $"💳 واریز جدید\n<b>{Html(report.PersianName ?? "عطر")}</b>", ct);
+                if (!photo.IsSuccessful || !photo.MessageId.HasValue)
+                {
+                    failures.Add(photo.Error ?? "ارسال عکس عطر ناموفق بود.");
+                    continue;
+                }
+                var link = await _db.InvoiceIssuanceBatchSalesLists.FirstAsync(value =>
+                    value.InvoiceIssuanceBatchId == batchId && value.SalesListId == report.SalesListId, ct);
+                link.TelegramPaymentTrackingPhotoMessageId = photo.MessageId.Value;
+                await _db.SaveChangesAsync(ct);
+            }
             var sent = await _sender.SendInlineKeyboardAsync(
                 _options.NewPaymentsChatId.Trim(), report.Message,
                 BuildPaymentTrackingButtons(report), ct);
@@ -3117,6 +3127,9 @@ public sealed partial class TelegramWebhookController
             ? "✅ پرداخت‌شده"
             : "🔴 در انتظار پرداخت";
         var items = order.Items.Where(item => !item.IsDeleted)
+            .OrderByDescending(item => item.IsBottleOwner)
+            .ThenByDescending(item => item.RequestedVolumeMl)
+            .ThenBy(item => item.RowNumber).ThenBy(item => item.Id)
             .Select(item => $"• {item.ManualDescription ?? "آیتم دستی"} — {item.RequestedVolumeMl} میل")
             .ToArray();
         return $"💳 واریز جدید — فاکتور دستی\n" +

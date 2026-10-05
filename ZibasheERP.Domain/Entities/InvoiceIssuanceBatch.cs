@@ -33,4 +33,5 @@ public sealed class InvoiceIssuanceBatchSalesList
     public SalesList SalesList { get; set; } = null!;
     public string? TelegramPaymentTrackingChatId { get; set; }
     public long? TelegramPaymentTrackingMessageId { get; set; }
+    public long? TelegramPaymentTrackingPhotoMessageId { get; set; }
 }

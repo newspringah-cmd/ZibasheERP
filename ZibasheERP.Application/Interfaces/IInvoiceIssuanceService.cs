@@ -64,7 +64,9 @@ public sealed record InvoicePaymentTrackingReport(
     string Message,
     string? TelegramChatId,
     long? TelegramMessageId,
-    IReadOnlyCollection<InvoicePaymentTrackingAction> Actions);
+    IReadOnlyCollection<InvoicePaymentTrackingAction> Actions,
+    string? PersianName = null,
+    string? TelegramPhotoFileId = null);
 
 public sealed record InvoicePaymentTrackingAction(Guid OrderItemId, string Label);
 
