@@ -39,13 +39,6 @@ public sealed partial class TelegramWebhookController
             $"تعداد لیست: {lists.Length}\nتعداد شیشه: {bottles.Length}\n\n" +
             (bottles.Length == 0 ? "شیشه‌ای برای این لیست‌ها ثبت نشده است." : "جمع تفکیکی:\n" + Counts(bottles))
         };
-        foreach (var list in lists)
-        {
-            var requests = list.Requests.Where(request => !request.IsBottleOwner).ToArray();
-            var name = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
-            sections.Add($"کد {list.DisplayCode} — {name}\nباقی‌مانده: {list.RemainingVolume} میل\n" +
-                $"تعداد شیشه: {requests.Length}\n" + Counts(requests));
-        }
         sections.Add("سهم صاحب باتل و درخواست‌های صف بعدی در شمارش شیشه‌ها لحاظ نشده‌اند.");
         foreach (var part in SplitTelegramMessage(string.Join("\n\n", sections)))
             await ReplyAsync(chatId, part, ct);
