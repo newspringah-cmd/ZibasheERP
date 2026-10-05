@@ -382,6 +382,19 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data == "invoiceadmin:low-stock-bottles")
+        {
+            if (!IsPrimaryOwner(callback.From.Id))
+            {
+                await _sender.AnswerCallbackAsync(callback.Id,
+                    "این گزارش فقط برای مدیر اصلی قابل مشاهده است.", ct, true);
+                return true;
+            }
+            await _sender.AnswerCallbackAsync(callback.Id, "در حال محاسبه گزارش شیشه‌ها…", ct);
+            await SendLowStockBottleReportAsync(callback.Message.Chat.Id, ct);
+            return true;
+        }
+
         if (callback.Data == "invoiceadmin:pending-invoice-total")
         {
             if (!IsPrimaryOwner(callback.From.Id))
@@ -1734,6 +1747,11 @@ public sealed partial class TelegramWebhookController
                             "📊 درصد پرداخت یک‌ماه اخیر",
                             "invoiceadmin:monthly-payment-rate")
                     });
+                    buttons.Add(new[]
+                    {
+                        new TelegramInlineButton("🧴 شیشه‌های لیست‌های بیش از ۷۰٪ تکمیل",
+                            "invoiceadmin:low-stock-bottles")
+                    });
                 }
                 buttons.Add(new[] { new TelegramInlineButton("صدور فاکتور لیست‌های تکمیل‌شده", "invoiceadmin:batch") });
                 buttons.Add(new[]
@@ -1883,6 +1901,7 @@ public sealed partial class TelegramWebhookController
             "مبالغ پرداخت‌شده و تأییدشده از این جمع کسر شده‌اند.",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
+                new[] { new TelegramInlineButton("🧴 شیشه‌های لیست‌های بیش از ۷۰٪ تکمیل", "invoiceadmin:low-stock-bottles") },
                 new[] { new TelegramInlineButton("↩️ بازگشت به فاکتورها", "invoiceadmin:menu:invoices") }
             },
             ct);
