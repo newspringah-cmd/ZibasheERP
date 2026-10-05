@@ -879,8 +879,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     var identity = !string.IsNullOrWhiteSpace(order.Customer?.Username)
                         ? $"@{order.Customer.Username.TrimStart('@')}"
                         : order.Customer?.TelegramId ?? order.Customer?.FullName ?? "مشتری نامشخص";
-                    var paid = invoice?.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid &&
-                               order.Status == OrderStatus.Paid;
+                    var paid = invoice?.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid;
                     var listAmount = order.Items
                         .Where(item => item.SalesListId == link.SalesListId)
                         .Sum(item => item.LineTotal);
