@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using ZibasheERP.Infrastructure.Persistence;
 namespace ZibasheERP.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005202820_SupportHalfMilliliterOrderItems")]
+    partial class SupportHalfMilliliterOrderItems
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1228,10 +1231,6 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasIndex("SourceOrderItemId")
                         .IsUnique()
                         .HasFilter("[SourceOrderItemId] IS NOT NULL");
-
-                    b.HasIndex("TelegramChannelId", "TelegramMessageId")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0 AND [TelegramChannelId] IS NOT NULL AND [TelegramMessageId] IS NOT NULL");
 
                     b.ToTable("SalesLists");
                 });

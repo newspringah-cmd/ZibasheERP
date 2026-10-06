@@ -4,7 +4,7 @@ public sealed record InvoiceInventoryPreview(
     Guid OrderItemId,
     string CustomerIdentity,
     string PerfumeName,
-    int VolumeMl,
+    decimal VolumeMl,
     string BottleName,
     decimal BottlePrice,
     decimal CurrentAmount);

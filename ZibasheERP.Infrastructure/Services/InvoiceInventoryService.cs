@@ -90,6 +90,8 @@ public sealed class InvoiceInventoryService : IInvoiceInventoryService
         order.Customer.UpdatedAt = now;
 
         var source = item.SalesList!;
+        if (item.RequestedVolumeMl % 1 != 0)
+            throw new InvalidOperationException("انتقال حجم نیم‌میل به لیست کانال پشتیبانی نمی‌شود.");
         var perfumeAmount = newTotalAmount - item.BottlePrice;
         var offer = new SalesList
         {
@@ -102,8 +104,8 @@ public sealed class InvoiceInventoryService : IInvoiceInventoryService
             BaseNotes = source.BaseNotes, Accords = source.Accords,
             PerfumeId = source.PerfumeId,
             PricePerMl = decimal.Round(perfumeAmount / item.RequestedVolumeMl, 2),
-            TotalVolume = item.RequestedVolumeMl,
-            MinimumRequestVolumeMl = item.RequestedVolumeMl,
+            TotalVolume = checked((int)item.RequestedVolumeMl),
+            MinimumRequestVolumeMl = checked((int)item.RequestedVolumeMl),
             ReservedVolume = 0, OpenDate = now, Status = SalesListStatus.Open,
             TelegramPhotoFileId = source.TelegramPhotoFileId,
             IsInventoryOffer = true, SourceOrderItemId = item.Id,

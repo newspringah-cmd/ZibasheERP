@@ -24,7 +24,7 @@ public sealed record GetOrderItemResponse(
     Guid? SalesListId,
     string PerfumeName,
     string PerfumeBrand,
-    int RequestedVolumeMl,
+    decimal RequestedVolumeMl,
     decimal PerfumePricePerMl,
     decimal PerfumeAmount,
     bool IsBottleOwner,

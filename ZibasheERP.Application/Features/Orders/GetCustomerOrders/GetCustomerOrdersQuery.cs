@@ -12,5 +12,5 @@ public sealed record CustomerOrderSummary(
     string Status,
     DateTime RegisteredAt,
     decimal FinalAmount,
-    int TotalVolumeMl,
+    decimal TotalVolumeMl,
     int ItemCount);

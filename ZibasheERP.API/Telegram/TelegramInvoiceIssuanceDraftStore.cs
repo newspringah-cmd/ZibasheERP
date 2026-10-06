@@ -128,7 +128,7 @@ public sealed class TelegramManualInvoiceDraft
     public string GiftRecipientIdentity { get; set; } = string.Empty;
     public List<string> ProductPhotoFileIds { get; } = [];
     public string PendingLineDescription { get; set; } = string.Empty;
-    public int PendingLineQuantity { get; set; }
+    public decimal PendingLineQuantity { get; set; }
     public decimal PendingLineUnitAmount { get; set; }
     public List<ZibasheERP.Application.Interfaces.ManualInvoiceLineInput> Lines { get; } = [];
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

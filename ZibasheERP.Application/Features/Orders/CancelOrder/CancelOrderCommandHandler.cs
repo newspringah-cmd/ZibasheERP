@@ -59,7 +59,7 @@ public sealed class CancelOrderCommandHandler
             .Where(item => !item.IsDeleted)
             .Sum(item => item.RequestedVolumeMl);
 
-        salesList.ReservedVolume = Math.Max(0, salesList.ReservedVolume - reservedVolume);
+        salesList.ReservedVolume = Math.Max(0, salesList.ReservedVolume - checked((int)reservedVolume));
         if (salesList.Status == ZibasheERP.Domain.Entities.SalesListStatus.Full)
         {
             salesList.Status = ZibasheERP.Domain.Entities.SalesListStatus.Open;

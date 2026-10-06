@@ -17,13 +17,13 @@ public sealed record BusinessReportResponse(
     decimal ConfirmedPaymentAmount,
     decimal RefundedPaymentAmount,
     decimal OutstandingDebt,
-    int SoldVolumeMl,
+    decimal SoldVolumeMl,
     IReadOnlyCollection<ReportStatusResponse> OrdersByStatus,
     IReadOnlyCollection<TopPerfumeResponse> TopPerfumes,
     IReadOnlyCollection<TopDebtorResponse> TopDebtors);
 
 public sealed record ReportStatusResponse(string Status, int Count, decimal Amount);
-public sealed record TopPerfumeResponse(Guid PerfumeId, string Name, int VolumeMl, decimal Amount);
+public sealed record TopPerfumeResponse(Guid PerfumeId, string Name, decimal VolumeMl, decimal Amount);
 public sealed record TopDebtorResponse(
     Guid CustomerId,
     string FullName,

@@ -416,17 +416,32 @@ public sealed partial class TelegramWebhookController
                 await _db.Entry(salesList).ReloadAsync(cancellationToken);
                 if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
                     return;
+                // Old imported cycles can still point at the channel post now owned
+                // by a newer cycle. Never let their refresh overwrite its roster.
+                var newerOwner = await _db.SalesLists.AsNoTracking()
+                    .Where(value => !value.IsDeleted && value.Id != salesList.Id &&
+                        value.TelegramChannelId == salesList.TelegramChannelId &&
+                        value.TelegramMessageId == salesList.TelegramMessageId &&
+                        value.OpenDate > salesList.OpenDate &&
+                        (value.Status == SalesListStatus.Open || value.Status == SalesListStatus.Full))
+                    .OrderByDescending(value => value.OpenDate)
+                    .Select(value => (Guid?)value.Id).FirstOrDefaultAsync(cancellationToken);
+                if (newerOwner.HasValue)
+                {
+                    salesList.TelegramChannelId = null;
+                    salesList.TelegramMessageId = null;
+                    salesList.TelegramDiscussionMessageId = null;
+                    salesList.TelegramContinuationMessageId = null;
+                    await _salesListRepository.SaveChangesAsync(cancellationToken);
+                    await RefreshChannelSalesListAsync(newerOwner.Value, cancellationToken);
+                    return;
+                }
                 var requests = includeCompletedRequests
                     ? await _salesListRequestRepository.GetForLabelAdministrationAsync(salesListId, cancellationToken)
                     : await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
                 var captions = FormatChannelSalesListPages(salesList, requests);
                 await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
-                await _sender.EditPhotoCaptionAsync(
-                    salesList.TelegramChannelId,
-                    salesList.TelegramMessageId.Value,
-                    captions.Main,
-                    BuildChannelVolumeButtons(salesList, salesList.TelegramContinuationMessageId),
-                    cancellationToken);
+                await RefreshMainChannelPostAsync(salesList, captions.Main, cancellationToken);
                 await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
                 if (salesList.Status == SalesListStatus.Full)
                     await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
@@ -438,6 +453,42 @@ public sealed partial class TelegramWebhookController
         {
             refreshLock.Release();
         }
+    }
+
+    private async Task RefreshMainChannelPostAsync(SalesList list, string caption, CancellationToken ct)
+    {
+        var buttons = BuildChannelVolumeButtons(list, list.TelegramContinuationMessageId);
+        var result = !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
+            ? await _sender.EditPhotoCaptionAsync(list.TelegramChannelId!, list.TelegramMessageId!.Value,
+                caption, buttons, ct)
+            : await _sender.EditTextWithKeyboardAsync(list.TelegramChannelId!, list.TelegramMessageId!.Value,
+                caption, buttons, ct);
+        if (result.IsSuccessful || IsTelegramMessageUnchanged(result.Error)) return;
+        // Only a definitive missing-message response permits replacement. Network,
+        // permission and rate-limit failures must not create duplicate posts.
+        if (result.Error?.Contains("message to edit not found", StringComparison.OrdinalIgnoreCase) != true)
+            throw new InvalidOperationException($"بروزرسانی پست لیست ناموفق بود: {result.Error}");
+        var replacement = !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
+            ? await _sender.SendPhotoWithKeyboardAsync(list.TelegramChannelId!, list.TelegramPhotoFileId,
+                caption, buttons, ct)
+            : await _sender.SendInlineKeyboardAsync(list.TelegramChannelId!, caption, buttons, ct);
+        if (!replacement.IsSuccessful || !replacement.MessageId.HasValue)
+            throw new InvalidOperationException($"بازسازی پست حذف‌شده ناموفق بود: {replacement.Error}");
+        list.TelegramMessageId = replacement.MessageId;
+        list.TelegramDiscussionMessageId = null;
+        list.UpdatedAt = DateTime.UtcNow;
+        await _salesListRepository.SaveChangesAsync(ct);
+        var discussion = await _sender.SendReplyAsync(list.TelegramChannelId!,
+            $"💬 هر سؤالی در رابطه با عطر «{list.EnglishName}» دارید، اینجا بپرسید.\n" +
+            "اگر مقدار موردنظر شما در دکمه‌ها نیست، آن را در کامنت بنویسید تا ادمین ثبت کند.",
+            list.TelegramMessageId.Value, ct);
+        if (!discussion.IsSuccessful || !discussion.MessageId.HasValue)
+            throw new InvalidOperationException($"پست بازسازی شد اما ایجاد گفت‌وگو ناموفق بود: {discussion.Error}");
+        list.TelegramDiscussionMessageId = discussion.MessageId;
+        await _salesListRepository.SaveChangesAsync(ct);
+        // Update a continuation's return link to the replacement main post.
+        var requests = await _salesListRequestRepository.GetConfirmedAsync(list.Id, ct);
+        await SynchronizeContinuationPostAsync(list, FormatChannelSalesListPages(list, requests).Continuation, ct);
     }
 
     private async Task SendRemainingVolumeAlertsAsync(
@@ -629,11 +680,8 @@ public sealed partial class TelegramWebhookController
         if (nextList.TelegramMessageId.HasValue)
         {
             await SynchronizeContinuationPostAsync(nextList, pages.Continuation, ct);
-            post = !string.IsNullOrWhiteSpace(nextList.TelegramPhotoFileId)
-                ? await _sender.EditPhotoCaptionAsync(nextList.TelegramChannelId!, nextList.TelegramMessageId.Value,
-                    pages.Main, BuildChannelVolumeButtons(nextList), ct)
-                : await _sender.EditTextWithKeyboardAsync(nextList.TelegramChannelId!, nextList.TelegramMessageId.Value,
-                    pages.Main, BuildChannelVolumeButtons(nextList), ct);
+            await RefreshMainChannelPostAsync(nextList, pages.Main, ct);
+            post = new TelegramSendResult(true, MessageId: nextList.TelegramMessageId);
         }
         else if (!string.IsNullOrWhiteSpace(nextList.TelegramPhotoFileId))
         {

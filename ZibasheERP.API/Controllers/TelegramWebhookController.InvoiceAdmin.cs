@@ -3515,7 +3515,7 @@ public sealed partial class TelegramWebhookController
             {
                 var values = text.Split('\n', StringSplitOptions.TrimEntries);
                 if (values.Length != 3 || string.IsNullOrWhiteSpace(values[0]) ||
-                    !TryParsePositiveInt(values[1], out var quantity) ||
+                    !TryParseManualVolume(values[1], out var quantity) ||
                     !TryParseNonNegativeDecimal(values[2], out var totalAmount))
                 {
                     await ReplyAsync(message.Chat.Id,
@@ -3537,9 +3537,9 @@ public sealed partial class TelegramWebhookController
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingLineQuantity)
         {
-            if (!TryParsePositiveInt(text, out var quantity))
+            if (!TryParseManualVolume(text, out var quantity))
             {
-                await ReplyAsync(message.Chat.Id, "مقدار نامعتبر است؛ فقط عدد مثبت وارد کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "مقدار باید مثبت و مضرب ۰٫۵ میل باشد؛ مثال: 9.5", ct);
                 return true;
             }
             draft.PendingLineQuantity = quantity;
@@ -3724,6 +3724,9 @@ public sealed partial class TelegramWebhookController
                 new[] { new TelegramInlineButton("✅ پایان و دریافت عکس", "invoicebatch:manualfinish") },
                 new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
             }, ct);
+
+    private static bool TryParseManualVolume(string value, out decimal volume) =>
+        TryParseNonNegativeDecimal(value.Replace('٫', '.'), out volume) && volume > 0 && volume % 0.5m == 0;
 
     private static bool TryParseNonNegativeDecimal(string value, out decimal amount) =>
         decimal.TryParse(

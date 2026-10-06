@@ -245,6 +245,11 @@ public class AppDbContext : DbContext
     private static void ConfigureSalesList(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<SalesList>()
+            .HasIndex(value => new { value.TelegramChannelId, value.TelegramMessageId })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0 AND [TelegramChannelId] IS NOT NULL AND [TelegramMessageId] IS NOT NULL");
+
+        modelBuilder.Entity<SalesList>()
             .HasIndex(x => x.PublicCode)
             .IsUnique()
             .HasFilter("[PublicCode] > 0");

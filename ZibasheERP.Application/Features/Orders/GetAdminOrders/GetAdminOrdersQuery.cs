@@ -16,5 +16,5 @@ public sealed record AdminOrderSummary(
     string Mobile,
     string? TelegramId,
     decimal FinalAmount,
-    int TotalVolumeMl,
+    decimal TotalVolumeMl,
     int ItemCount);

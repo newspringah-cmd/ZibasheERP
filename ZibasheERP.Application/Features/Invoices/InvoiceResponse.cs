@@ -74,7 +74,7 @@ public sealed record InvoiceLineResponse(
     Guid Id,
     string PerfumeName,
     string PerfumeBrand,
-    int VolumeMl,
+    decimal VolumeMl,
     decimal PricePerMl,
     decimal PerfumeAmount,
     bool IsBottleOwner,

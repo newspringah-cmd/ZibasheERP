@@ -36,7 +36,8 @@ public class OrderItem : BaseEntity
     public string? ManualDescription { get; set; }
 
     // حجم درخواستی
-    public int RequestedVolumeMl { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "decimal(18,2)")]
+    public decimal RequestedVolumeMl { get; set; }
 
     // تعداد (فعلاً همیشه 1 است اما برای آینده نگه می‌داریم)
     public int Quantity { get; set; } = 1;

@@ -27,7 +27,7 @@ internal sealed record PaymentReminderCandidate(
 
 internal sealed record PaymentAgingReportItem(
     string Name,
-    int VolumeMl,
+    decimal VolumeMl,
     int Quantity);
 
 internal sealed record PaymentAgingReportRow(

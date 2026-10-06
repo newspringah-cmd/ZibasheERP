@@ -10,7 +10,7 @@ public sealed record CompletedSalesListForInvoice(
 
 public sealed record ManualInvoiceLineInput(
     string Description,
-    int Quantity,
+    decimal Quantity,
     decimal UnitAmount,
     decimal BottleAmount = 0,
     decimal? TotalAmount = null);
