@@ -467,6 +467,20 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if (callback.Data?.StartsWith("purchasepage:", StringComparison.Ordinal) == true)
+        {
+            var parts = callback.Data.Split(':');
+            var allowed = callback.Message is not null &&
+                callback.Message.Chat.Id.ToString() == _options.LowStockAlertChatId.Trim() &&
+                IsAuthorizedShippingOperator(callback.From.Id);
+            var queued = allowed && parts.Length == 3 && Guid.TryParseExact(parts[1], "N", out var session) &&
+                int.TryParse(parts[2], out var page) &&
+                HttpContext.RequestServices.GetRequiredService<TelegramPurchaseCandidatesWorker>()
+                    .QueuePage(callback.Message!.Chat.Id, session, page);
+            await _sender.AnswerCallbackAsync(callback.Id, queued ? "صفحه بعد در حال ارسال است." :
+                allowed ? "گزارش مشغول یا منقضی است؛ کمی صبر کنید یا /r را بزنید." : "دسترسی ندارید.", cancellationToken);
+            return;
+        }
         if (await TryHandleTrackingImportCallbackAsync(callback, cancellationToken))
             return;
 

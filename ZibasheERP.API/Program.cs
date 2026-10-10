@@ -162,6 +162,9 @@ builder.Services.AddSingleton<TelegramTemporaryMessageCleaner>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramTemporaryMessageCleaner>());
 builder.Services.AddSingleton<TelegramSalesListRebuildWorker>();
+builder.Services.AddSingleton<TelegramPurchaseCandidatesWorker>();
+builder.Services.AddHostedService(serviceProvider =>
+    serviceProvider.GetRequiredService<TelegramPurchaseCandidatesWorker>());
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramSalesListRebuildWorker>());
 builder.Services.AddSingleton<TelegramProductionCopyResendWorker>();

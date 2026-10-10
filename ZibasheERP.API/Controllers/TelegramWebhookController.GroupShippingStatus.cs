@@ -11,6 +11,19 @@ public sealed partial class TelegramWebhookController
         var command = message.Text?.Trim().Split((char[]?)null, 2,
             StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Split('@', 2)[0];
         var ready = string.Equals(command, "/r", StringComparison.OrdinalIgnoreCase);
+        if (ready && message.Chat.Id.ToString() == _options.LowStockAlertChatId.Trim())
+        {
+            if (message.From is null || !IsAuthorizedShippingOperator(message.From.Id))
+                await ReplyAsync(message.Chat.Id, "این گزارش فقط برای مدیر و حسابدار مجاز فعال است.", ct);
+            else
+            {
+                var worker = HttpContext.RequestServices.GetRequiredService<TelegramPurchaseCandidatesWorker>();
+                var queued = await worker.StartAsync(message.Chat.Id, ct);
+                await ReplyAsync(message.Chat.Id, queued ? "گزارش عکس‌دار در حال ارسال است؛ هر صفحه حداکثر ۵۰ لیست." :
+                    "گزارش قبلی هنوز در حال ارسال است؛ کمی صبر کنید.", ct);
+            }
+            return true;
+        }
         if (!ready && !string.Equals(command, "/s", StringComparison.OrdinalIgnoreCase))
             return false;
         if (!IsGroup(message.Chat.Type))
