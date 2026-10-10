@@ -43,6 +43,14 @@ public sealed class TelegramGroupMembershipTracker(
     ITelegramMessageSender sender,
     ILogger<TelegramGroupMembershipTracker> logger) : ITelegramGroupMembershipTracker
 {
+    private static string? InvoiceDisplayName(OrderItem item, bool english) =>
+        (english
+            ? new[] { item.SalesList?.EnglishName, item.SalesList?.PersianName,
+                item.Perfume?.EnglishName, item.Perfume?.Name, item.ManualDescription }
+            : new[] { item.SalesList?.PersianName, item.SalesList?.EnglishName,
+                item.Perfume?.Name, item.Perfume?.EnglishName, item.ManualDescription })
+        .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+
     public async Task TrackMigrationAsync(
         long oldChatId,
         TelegramChat newChat,
@@ -304,8 +312,8 @@ public sealed class TelegramGroupMembershipTracker(
                     {
                         item.SalesListId,
                         FileId = item.SalesList.TelegramPhotoFileId,
-                        PersianName = item.Perfume?.Name ?? item.ManualDescription,
-                        EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                        PersianName = InvoiceDisplayName(item, false),
+                        EnglishName = InvoiceDisplayName(item, true)
                     })
                 });
             context.NotificationOutbox.Add(new NotificationOutbox
@@ -316,8 +324,8 @@ public sealed class TelegramGroupMembershipTracker(
                 {
                     InvoiceNumber = invoice!.InvoiceNumber, IssuedAt = invoice.IssuedAt,
                     GiverUsername = request.TelegramUsername, GiverTelegramId = request.TelegramUserId,
-                    PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                    PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                    PerfumePersianName = InvoiceDisplayName(item, false),
+                    PerfumeEnglishName = InvoiceDisplayName(item, true),
                     RequestedVolumeMl = item.RequestedVolumeMl
                 })
             });
@@ -343,8 +351,8 @@ public sealed class TelegramGroupMembershipTracker(
                         new
                         {
                             RowNumber = item.RowNumber,
-                            PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                            PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                            PerfumePersianName = InvoiceDisplayName(item, false),
+                            PerfumeEnglishName = InvoiceDisplayName(item, true),
                             PerfumeBrand = item.Perfume?.Brand,
                             item.RequestedVolumeMl,
                             item.PerfumePricePerMl,
@@ -512,8 +520,8 @@ public sealed class TelegramGroupMembershipTracker(
                         {
                             item.SalesListId,
                             FileId = item.SalesList!.TelegramPhotoFileId!,
-                             PersianName = item.Perfume?.Name ?? item.ManualDescription,
-                             EnglishName = item.Perfume?.EnglishName ?? item.ManualDescription
+                             PersianName = InvoiceDisplayName(item, false),
+                             EnglishName = InvoiceDisplayName(item, true)
                          })
                          .GroupBy(value => value.SalesListId.HasValue
                              ? $"list:{value.SalesListId.Value:N}"
@@ -554,8 +562,8 @@ public sealed class TelegramGroupMembershipTracker(
                     Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                     {
                         item.RowNumber,
-                        PerfumePersianName = item.Perfume?.Name ?? item.ManualDescription,
-                        PerfumeEnglishName = item.Perfume?.EnglishName ?? item.ManualDescription,
+                        PerfumePersianName = InvoiceDisplayName(item, false),
+                        PerfumeEnglishName = InvoiceDisplayName(item, true),
                         PerfumeBrand = item.Perfume?.Brand,
                         item.RequestedVolumeMl,
                         item.PerfumePricePerMl,
