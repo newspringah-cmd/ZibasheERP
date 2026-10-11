@@ -197,8 +197,11 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         QueueProcessingOrder = QueueProcessingOrder.OldestFirst
     });
 
-    public TelegramMessageSender(IOptions<TelegramOptions> options)
+    private readonly ILogger<TelegramMessageSender> _logger;
+
+    public TelegramMessageSender(IOptions<TelegramOptions> options, ILogger<TelegramMessageSender> logger)
     {
+        _logger = logger;
         _botToken = options.Value.BotToken.Trim();
         _httpClient = new HttpClient
         {
@@ -761,6 +764,8 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 // Telegram's flood timeout must be respected in full; retrying early
                 // prolongs the restriction and makes customers click again.
                 var delay = TimeSpan.FromSeconds(Math.Max(body?.Parameters?.RetryAfter ?? attempt + 1, 1));
+                _logger.LogWarning("Telegram request delayed: method {Method}, HTTP {Status}, retry {Attempt}, wait {DelaySeconds}s",
+                    method, (int)response.StatusCode, attempt + 1, delay.TotalSeconds);
                 await Task.Delay(delay, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

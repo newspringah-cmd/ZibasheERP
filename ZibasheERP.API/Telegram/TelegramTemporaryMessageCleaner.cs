@@ -60,7 +60,6 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     public void Cancel(string chatId, long messageId)
     {
         _scheduled.TryRemove((chatId, messageId), out _);
-        TelegramReservationPostEditor.CancelRefresh(chatId, messageId);
     }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
