@@ -15,6 +15,7 @@ public sealed partial class TelegramWebhookController
     private static readonly int[] ChannelVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SalesListRefreshLocks = new();
     private static readonly ConcurrentDictionary<Guid, long> SalesListRefreshVersions = new();
+    private static readonly ConcurrentDictionary<(Guid, long), SemaphoreSlim> ReservationStartLocks = new();
 
     private async Task<bool> TryHandleChannelSalesListCallbackAsync(
         TelegramCallbackQuery callback, CancellationToken cancellationToken)
@@ -29,7 +30,10 @@ public sealed partial class TelegramWebhookController
             if (parts[0] == "slv" && parts.Length == 3 &&
                 TryDecodeCompactGuid(parts[1], out var listId) && int.TryParse(parts[2], out var volume))
             {
-                await StartChannelReservationAsync(callback, listId, volume, cancellationToken);
+                var gate = ReservationStartLocks.GetOrAdd((listId, callback.From.Id), _ => new SemaphoreSlim(1, 1));
+                await gate.WaitAsync(cancellationToken);
+                try { await StartChannelReservationAsync(callback, listId, volume, cancellationToken); }
+                finally { gate.Release(); }
                 return true;
             }
             if (parts[0] == "slb" && parts.Length == 3 &&
@@ -131,6 +135,20 @@ public sealed partial class TelegramWebhookController
                 salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
                 callback.From.Id, TimeSpan.FromSeconds(60)))
             throw new InvalidOperationException("کاربر دیگری در حال ثبت می‌باشد؛ لطفاً منتظر بمانید.");
+        var userId = callback.From.Id.ToString();
+        var pending = await _db.SalesListRequests.AsNoTracking()
+            .Where(x => x.SalesListId == salesListId && x.TelegramUserId == userId && x.VolumeMl == volume &&
+                !x.IsDeleted && x.Status == SalesListRequestStatus.PendingConfirmation && x.ExpiresAt > DateTime.UtcNow)
+            .OrderByDescending(x => x.CreatedAt).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(cancellationToken);
+        if (pending.HasValue)
+        {
+            var existing = await _salesListRequestRepository.GetAsync(pending.Value, cancellationToken);
+            if (existing!.BottleId.HasValue)
+                await ShowChannelConfirmationAsync(callback, existing,
+                    $"{BottleLabel(existing.Bottle!.Type.ToString())} — {existing.BottlePrice:N0} تومان", cancellationToken);
+            else await ShowChannelBottleSelectionAsync(callback, existing.Id, cancellationToken);
+            return;
+        }
         var request = new SalesListRequest
         {
             Id = Guid.NewGuid(),
@@ -349,6 +367,14 @@ public sealed partial class TelegramWebhookController
             _temporaryMessageCleaner.ReleaseInteraction(
                 request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value, callback.From.Id);
         }
+        await _sender.AnswerCallbackAsync(callback.Id, "درخواست با موفقیت ثبت شد ✅", cancellationToken);
+    }
+
+    internal async Task FinishConfirmedReservationAsync(Guid requestId, CancellationToken cancellationToken)
+    {
+        var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.Status != SalesListRequestStatus.Confirmed) return;
         await RefreshChannelSalesListAsync(request.SalesListId, cancellationToken);
         var confirmed = await _salesListRequestRepository.GetAsync(request.Id, cancellationToken)
             ?? request;
@@ -362,19 +388,20 @@ public sealed partial class TelegramWebhookController
         var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
             ? _options.AdminChatId
             : _options.SalesAuditChatId;
-        await _sender.SendAsync(auditChatId,
+        var audit = await _sender.SendAsync(auditChatId,
             "✅ ثبت جدید در لیست فروش\n" +
             $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
-            $"کاربر: {DisplayTelegramUser(callback.From)}\n" +
+            $"کاربر: @{confirmed.TelegramUsername}\n" +
             (confirmed.IsGift ? $"هدیه‌گیرنده: {GiftRecipientLabel(confirmed)}\n" : string.Empty) +
-            $"Telegram ID: {callback.From.Id}\n" +
+            $"Telegram ID: {confirmed.TelegramUserId}\n" +
             $"کد لیست: {confirmed.SalesList.DisplayCode}\n" +
             $"عطر: {confirmed.SalesList.EnglishName}\n" +
             $"مقدار: {confirmed.VolumeMl} میل\n" +
             $"شیشه: {bottleText}\n" +
             $"مبلغ کل: {total:N0} تومان\n" +
             SalesListAuditPostLine(confirmed.SalesList), cancellationToken);
-        await _sender.AnswerCallbackAsync(callback.Id, "درخواست با موفقیت ثبت شد ✅", cancellationToken);
+        if (!audit.IsSuccessful)
+            throw new InvalidOperationException($"ارسال گزارش ثبت ناموفق بود: {audit.Error}");
     }
 
     private async Task RefreshChannelSalesListAsync(

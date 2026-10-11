@@ -741,7 +741,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         if (string.IsNullOrWhiteSpace(_botToken))
             return new TelegramSendResult(false, "Telegram bot token is not configured.");
 
-        for (var attempt = 0; attempt < 3; attempt++)
+        for (var attempt = 0; attempt < 6; attempt++)
         {
             using var lease = await _rateLimiter.AcquireAsync(1, cancellationToken);
             if (!lease.IsAcquired)
@@ -755,10 +755,12 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 if (response.IsSuccessStatusCode && body?.Ok == true)
                     return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result));
                 var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
-                if (!retryable || attempt == 2)
+                if (!retryable || attempt == 5 || ((int)response.StatusCode >= 500 && attempt >= 2))
                     return new TelegramSendResult(false,
                         body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.");
-                var delay = TimeSpan.FromSeconds(Math.Clamp(body?.Parameters?.RetryAfter ?? attempt + 1, 1, 10));
+                // Telegram's flood timeout must be respected in full; retrying early
+                // prolongs the restriction and makes customers click again.
+                var delay = TimeSpan.FromSeconds(Math.Max(body?.Parameters?.RetryAfter ?? attempt + 1, 1));
                 await Task.Delay(delay, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
