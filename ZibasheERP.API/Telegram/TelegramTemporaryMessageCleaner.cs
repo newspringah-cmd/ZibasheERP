@@ -57,10 +57,8 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay) =>
         _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows);
 
-    public void Cancel(string chatId, long messageId)
-    {
+    public void Cancel(string chatId, long messageId) =>
         _scheduled.TryRemove((chatId, messageId), out _);
-    }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
         _scheduledDeletes[(chatId, messageId)] = DateTime.UtcNow.Add(delay);
@@ -76,15 +74,10 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
             foreach (var item in _scheduled.Where(item => item.Value.ExpiresAt <= now).ToArray())
             {
                 if (!_scheduled.TryRemove(item.Key, out _)) continue;
-                _logger.LogInformation("Reservation restore started: message {MessageId}, due {DueAt}, at {Timestamp}",
-                    item.Key.MessageId, item.Value.ExpiresAt, DateTime.UtcNow);
-                var result = await _sender.EditReservationPostAsync(
+                var result = await _sender.EditPhotoCaptionAsync(
                     item.Key.ChatId, item.Key.MessageId, item.Value.Caption, item.Value.Rows, stoppingToken);
                 if (!result.IsSuccessful)
                     _logger.LogWarning("Telegram reservation prompt restore failed: {Error}", result.Error);
-                else
-                    _logger.LogInformation("Reservation restore completed: message {MessageId}, at {Timestamp}",
-                        item.Key.MessageId, DateTime.UtcNow);
             }
             foreach (var item in _scheduledDeletes.Where(item => item.Value <= now).ToArray())
             {

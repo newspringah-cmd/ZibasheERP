@@ -15,7 +15,6 @@ public sealed partial class TelegramWebhookController
     private static readonly int[] ChannelVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SalesListRefreshLocks = new();
     private static readonly ConcurrentDictionary<Guid, long> SalesListRefreshVersions = new();
-    private static readonly ConcurrentDictionary<(Guid, long), SemaphoreSlim> ReservationStartLocks = new();
 
     private async Task<bool> TryHandleChannelSalesListCallbackAsync(
         TelegramCallbackQuery callback, CancellationToken cancellationToken)
@@ -23,9 +22,6 @@ public sealed partial class TelegramWebhookController
         var data = callback.Data ?? string.Empty;
         if (!data.StartsWith("sl", StringComparison.Ordinal))
             return false;
-        var callbackTimer = System.Diagnostics.Stopwatch.StartNew();
-        _logger.LogInformation("Reservation callback received: {Data}, message {MessageId}, chat {ChatId}, at {Timestamp}",
-            data, callback.Message?.MessageId, callback.Message?.Chat.Id, DateTime.UtcNow);
 
         try
         {
@@ -33,10 +29,7 @@ public sealed partial class TelegramWebhookController
             if (parts[0] == "slv" && parts.Length == 3 &&
                 TryDecodeCompactGuid(parts[1], out var listId) && int.TryParse(parts[2], out var volume))
             {
-                var gate = ReservationStartLocks.GetOrAdd((listId, callback.From.Id), _ => new SemaphoreSlim(1, 1));
-                await gate.WaitAsync(cancellationToken);
-                try { await StartChannelReservationAsync(callback, listId, volume, cancellationToken); }
-                finally { gate.Release(); }
+                await StartChannelReservationAsync(callback, listId, volume, cancellationToken);
                 return true;
             }
             if (parts[0] == "slb" && parts.Length == 3 &&
@@ -92,8 +85,7 @@ public sealed partial class TelegramWebhookController
         }
         catch (InvalidOperationException exception)
         {
-            _logger.LogWarning(exception, "Channel reservation callback failed: {CallbackData}", callback.Data);
-            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken, showAlert: true);
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken);
             return true;
         }
         catch (DbUpdateConcurrencyException)
@@ -103,11 +95,6 @@ public sealed partial class TelegramWebhookController
                 "لیست هم‌زمان تغییر کرد و خودکار به‌روز می‌شود؛ چند لحظه بعد دوباره انتخاب کنید.",
                 cancellationToken);
             return true;
-        }
-        finally
-        {
-            _logger.LogInformation("Reservation callback finished: {Data}, duration {DurationMs}ms",
-                data, callbackTimer.ElapsedMilliseconds);
         }
 
         await _sender.AnswerCallbackAsync(callback.Id, "گزینه معتبر نیست.", cancellationToken);
@@ -143,20 +130,13 @@ public sealed partial class TelegramWebhookController
                 salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
                 callback.From.Id, TimeSpan.FromSeconds(20)))
             throw new InvalidOperationException("کاربر دیگری در حال ثبت می‌باشد؛ لطفاً منتظر بمانید.");
-        var userId = callback.From.Id.ToString();
-        var pending = await _db.SalesListRequests.AsNoTracking()
-            .Where(x => x.SalesListId == salesListId && x.TelegramUserId == userId && x.VolumeMl == volume &&
-                !x.IsDeleted && x.Status == SalesListRequestStatus.PendingConfirmation && x.ExpiresAt > DateTime.UtcNow)
-            .OrderByDescending(x => x.CreatedAt).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(cancellationToken);
-        if (pending.HasValue)
-        {
-            var existing = await _salesListRequestRepository.GetAsync(pending.Value, cancellationToken);
-            if (existing!.BottleId.HasValue)
-                await ShowChannelConfirmationAsync(callback, existing,
-                    $"{BottleLabel(existing.Bottle!.Type.ToString())} — {existing.BottlePrice:N0} تومان", cancellationToken);
-            else await ShowChannelBottleSelectionAsync(callback, existing.Id, cancellationToken);
-            return;
-        }
+        if (!string.IsNullOrWhiteSpace(callback.Id))
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+
+        var previous = await _salesListRequestRepository.GetConfirmedForUserAsync(
+            salesListId, callback.From.Id.ToString(), cancellationToken);
+        var sameVolumeCount = previous.Count(value => value.VolumeMl == volume);
+        var totalPrevious = previous.Sum(value => value.VolumeMl);
         var request = new SalesListRequest
         {
             Id = Guid.NewGuid(),
@@ -190,16 +170,26 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        try
+        var warning = sameVolumeCount > 0
+            ? $"⚠️ شما قبلاً {sameVolumeCount} بار مقدار {volume} میل را در این لیست ثبت کرده‌اید.\n"
+            : totalPrevious > 0
+                ? $"ℹ️ شما در حال حاضر مجموعاً {totalPrevious} میل در این لیست دارید.\n"
+                : string.Empty;
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
         {
-            await ShowChannelBottleSelectionAsync(callback, request.Id, cancellationToken);
-        }
-        catch
-        {
-            _temporaryMessageCleaner.ReleaseInteraction(salesList.TelegramChannelId,
-                salesList.TelegramMessageId.Value, callback.From.Id);
-            throw;
-        }
+            new[] { new TelegramInlineButton("👤 برای خودم", $"slp:{EncodeCompactGuid(request.Id)}:self") }
+        };
+        rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
+        var prompt = $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}این {volume} میل را برای خودتان ثبت می‌کنید؟";
+        var originalRequests = await _salesListRequestRepository.GetConfirmedAsync(salesList.Id, cancellationToken);
+        var channelResult = await _sender.EditPhotoCaptionAsync(
+            salesList.TelegramChannelId, salesList.TelegramMessageId.Value, prompt, rows, cancellationToken);
+        if (!channelResult.IsSuccessful)
+            throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
+        _temporaryMessageCleaner.ScheduleRestore(
+            salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
+            FormatChannelSalesList(salesList, originalRequests), BuildChannelVolumeButtons(salesList),
+            TimeSpan.FromSeconds(7));
     }
 
     private async Task ShowChannelBottleSelectionAsync(
@@ -311,7 +301,19 @@ public sealed partial class TelegramWebhookController
             $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
             $"شیشه: {bottleDescription}\n" +
             $"مبلغ کل: {total:N0} تومان";
-        await EditRequestPromptAsync(request, confirmation, rows, cancellationToken);
+        if (!request.SalesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))
+            throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
+        _temporaryMessageCleaner.Cancel(request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value);
+        var originalRequests = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
+        var channelResult = await _sender.EditPhotoCaptionAsync(
+            request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
+            confirmation, rows, cancellationToken);
+        if (!channelResult.IsSuccessful)
+            throw new InvalidOperationException("نمایش تأیید روی پست لیست ناموفق بود.");
+        _temporaryMessageCleaner.ScheduleRestore(
+            request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
+            FormatChannelSalesList(request.SalesList, originalRequests), BuildChannelVolumeButtons(request.SalesList),
+            TimeSpan.FromSeconds(7));
         if (!string.IsNullOrWhiteSpace(callback.Id))
             await _sender.AnswerCallbackAsync(callback.Id, "نوع شیشه انتخاب شد.", cancellationToken);
     }
@@ -325,13 +327,11 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         _temporaryMessageCleaner.Cancel(request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value);
         var original = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
-        var result = await _sender.EditReservationPostAsync(
+        var result = await _sender.EditPhotoCaptionAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, cancellationToken);
-        _logger.LogInformation("Reservation prompt update: request {RequestId}, message {MessageId}, success {Success}, error {Error}",
-            request.Id, request.SalesList.TelegramMessageId, result.IsSuccessful, result.Error);
-        if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
-            throw new InvalidOperationException($"نمایش گزینه‌ها روی پست لیست ناموفق بود: {result.Error}");
+        if (!result.IsSuccessful)
+            throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
         _temporaryMessageCleaner.ScheduleRestore(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             FormatChannelSalesList(request.SalesList, original), BuildChannelVolumeButtons(request.SalesList),
@@ -365,6 +365,31 @@ public sealed partial class TelegramWebhookController
             _temporaryMessageCleaner.ReleaseInteraction(
                 request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value, callback.From.Id);
         }
+        await RefreshChannelSalesListAsync(request.SalesListId, cancellationToken);
+        var confirmed = await _salesListRequestRepository.GetAsync(request.Id, cancellationToken)
+            ?? request;
+        var bottleText = confirmed.IsBottleOwner
+            ? "صاحب باتل — رایگان"
+            : confirmed.Bottle is null
+            ? "نامشخص"
+            : $"{BottleLabel(confirmed.Bottle.Type.ToString())} — {confirmed.BottlePrice:N0} تومان";
+        var total = confirmed.VolumeMl * confirmed.PerfumePricePerMl + confirmed.BottlePrice;
+        var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
+        var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
+            ? _options.AdminChatId
+            : _options.SalesAuditChatId;
+        await _sender.SendAsync(auditChatId,
+            "✅ ثبت جدید در لیست فروش\n" +
+            $"زمان: {tehranNow:yyyy/MM/dd HH:mm:ss}\n" +
+            $"کاربر: {DisplayTelegramUser(callback.From)}\n" +
+            (confirmed.IsGift ? $"هدیه‌گیرنده: {GiftRecipientLabel(confirmed)}\n" : string.Empty) +
+            $"Telegram ID: {callback.From.Id}\n" +
+            $"کد لیست: {confirmed.SalesList.DisplayCode}\n" +
+            $"عطر: {confirmed.SalesList.EnglishName}\n" +
+            $"مقدار: {confirmed.VolumeMl} میل\n" +
+            $"شیشه: {bottleText}\n" +
+            $"مبلغ کل: {total:N0} تومان\n" +
+            SalesListAuditPostLine(confirmed.SalesList), cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست با موفقیت ثبت شد ✅", cancellationToken);
     }
 
@@ -467,9 +492,11 @@ public sealed partial class TelegramWebhookController
     private async Task RefreshMainChannelPostAsync(SalesList list, string caption, CancellationToken ct)
     {
         var buttons = BuildChannelVolumeButtons(list, list.TelegramContinuationMessageId);
-        var result = await _sender.EditReservationPostAsync(
-            list.TelegramChannelId!, list.TelegramMessageId!.Value, caption, buttons, ct,
-            hasPhoto: !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId));
+        var result = !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
+            ? await _sender.EditPhotoCaptionAsync(list.TelegramChannelId!, list.TelegramMessageId!.Value,
+                caption, buttons, ct)
+            : await _sender.EditTextWithKeyboardAsync(list.TelegramChannelId!, list.TelegramMessageId!.Value,
+                caption, buttons, ct);
         if (result.IsSuccessful || IsTelegramMessageUnchanged(result.Error)) return;
         // Only a definitive missing-message response permits replacement. Network,
         // permission and rate-limit failures must not create duplicate posts.
@@ -572,7 +599,7 @@ public sealed partial class TelegramWebhookController
         };
         if (list.TelegramContinuationMessageId.HasValue)
         {
-            await _sender.EditReservationPostAsync(
+            await _sender.EditPhotoCaptionAsync(
                 list.TelegramChannelId, list.TelegramContinuationMessageId.Value,
                 continuationCaption, navigation, cancellationToken);
             return;
