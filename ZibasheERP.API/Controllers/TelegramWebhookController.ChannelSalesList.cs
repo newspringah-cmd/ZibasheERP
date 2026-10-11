@@ -323,7 +323,7 @@ public sealed partial class TelegramWebhookController
         var result = await _temporaryMessageCleaner.UpdatePromptAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, FormatChannelSalesList(request.SalesList, original),
-            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(7), cancellationToken);
+            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(20), cancellationToken);
         if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
             throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
     }
