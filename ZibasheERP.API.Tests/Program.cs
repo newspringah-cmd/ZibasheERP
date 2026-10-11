@@ -75,9 +75,13 @@ var deferredBefore = keyboardProxy.Captions.Count;
 Check(keyboardProxy.Captions.Count == deferredBefore && keyboardCleaner.IsScheduled("channel", 2), "queued prompt protects post without issuing Telegram edit");
 await Publish(keyboardCleaner);
 Check(keyboardProxy.Captions.Last() == "after response", "background publisher delivers queued step");
+var refreshedBefore = keyboardProxy.KeyboardEdits;
+Check(keyboardProxy.LastRows!.First().First().Text == rows.First().First().Text + "\u2063" &&
+    keyboardProxy.LastRows!.First().First().CallbackData == rows.First().First().CallbackData,
+    "post refresh forces a new keyboard without replaying or changing the order action");
 deferredBefore = keyboardProxy.Captions.Count;
 await Publish(keyboardCleaner);
-Check(keyboardProxy.Captions.Count == deferredBefore, "queued step is published once");
+Check(keyboardProxy.Captions.Count == deferredBefore && keyboardProxy.KeyboardEdits == refreshedBefore, "queued step and post refresh are published once");
 keyboardCleaner.QueuePrompt("channel", 2, "old step", rows, "perfume", rows);
 keyboardCleaner.QueuePrompt("channel", 2, "new step", rows, "perfume", rows);
 await Publish(keyboardCleaner);
@@ -130,6 +134,7 @@ Console.WriteLine("All reservation interaction tests passed.");
 public class SenderProxy : DispatchProxy
 {
     public int KeyboardEdits;
+    public IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>? LastRows;
     public string? LastPhoto;
     public List<string> Captions { get; } = new();
     public Func<string, Task<TelegramSendResult>> Edit { get; set; } = _ => Task.FromResult(new TelegramSendResult(true));
@@ -138,6 +143,7 @@ public class SenderProxy : DispatchProxy
         if (targetMethod!.Name == "EditReplyMarkupAsync")
         {
             KeyboardEdits++;
+            LastRows = (IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args![2]!;
             return Edit("<keyboard>");
         }
         if (targetMethod.Name == "EditPhotoAsync")
