@@ -188,6 +188,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
     private readonly MemoryCache _membershipCache = new(new MemoryCacheOptions { SizeLimit = 10000 });
     private readonly HttpClient _httpClient;
+    private readonly ILogger<TelegramMessageSender> _logger;
     private readonly string _botToken;
     private readonly TokenBucketRateLimiter _rateLimiter = new(new TokenBucketRateLimiterOptions
     {
@@ -199,8 +200,9 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         QueueProcessingOrder = QueueProcessingOrder.OldestFirst
     });
 
-    public TelegramMessageSender(IOptions<TelegramOptions> options)
+    public TelegramMessageSender(IOptions<TelegramOptions> options, ILogger<TelegramMessageSender>? logger = null)
     {
+        _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<TelegramMessageSender>.Instance;
         _botToken = options.Value.BotToken.Trim();
         _httpClient = new HttpClient
         {
@@ -763,7 +765,25 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
                     cancellationToken: cancellationToken);
                 if (response.IsSuccessStatusCode && body?.Ok == true)
+                {
+                    if (method == "editMessageCaption" || method == "editMessageReplyMarkup")
+                    {
+                        var sent = JsonSerializer.SerializeToElement(request);
+                        bool? keyboardMatches = null;
+                        if (sent.TryGetProperty("reply_markup", out var expected) &&
+                            body.Result is { ValueKind: JsonValueKind.Object } actual)
+                            keyboardMatches = actual.TryGetProperty("reply_markup", out var returned) &&
+                                JsonElement.DeepEquals(expected, returned);
+                        long? returnedChat = body.Result is { ValueKind: JsonValueKind.Object } result &&
+                            result.TryGetProperty("chat", out var chat) && chat.TryGetProperty("id", out var chatId)
+                            ? chatId.GetInt64() : null;
+                        _logger.LogInformation("Telegram edit response method={Method} attempt={Attempt} returnedChat={ChatId} returnedPost={PostId} keyboardMatches={KeyboardMatches}",
+                            method, attempt + 1, returnedChat, ReadMessageId(body.Result), keyboardMatches);
+                    }
                     return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result));
+                }
+                _logger.LogWarning("Telegram request rejected method={Method} attempt={Attempt} http={HttpStatus} retryAfter={RetryAfter} error={Error}",
+                    method, attempt + 1, (int)response.StatusCode, body?.Parameters?.RetryAfter, body?.Description);
                 var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
                 if (!retryable || attempt == 2)
                     return new TelegramSendResult(false,

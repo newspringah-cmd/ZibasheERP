@@ -141,6 +141,8 @@ public sealed partial class TelegramWebhookController
                 value.Status == SalesListRequestStatus.PendingConfirmation && value.ExpiresAt > DateTime.UtcNow)
             .OrderByDescending(value => value.CreatedAt).Select(value => (Guid?)value.Id)
             .FirstOrDefaultAsync(cancellationToken);
+        _logger.LogInformation("Reservation start callback={CallbackId} list={ListId} pendingRequest={RequestId} storedPost={PostId}",
+            callback.Id, salesListId, pendingId, salesList.TelegramMessageId);
         if (pendingId.HasValue)
         {
             var pending = await _salesListRequestRepository.GetAsync(pendingId.Value, cancellationToken)

@@ -192,7 +192,19 @@ public sealed partial class TelegramWebhookController : ControllerBase
                     callbackMessage.Chat,
                     cancellationToken);
             }
-            await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
+            var callbackStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            var traceReservation = update.CallbackQuery.Data?.StartsWith("sl", StringComparison.Ordinal) == true;
+            if (traceReservation)
+                _logger.LogInformation("Reservation callback received callback={CallbackId} data={Data} user={UserId} chat={ChatId} post={PostId}",
+                    update.CallbackQuery.Id, update.CallbackQuery.Data, update.CallbackQuery.From.Id,
+                    update.CallbackQuery.Message?.Chat.Id, update.CallbackQuery.Message?.MessageId);
+            try { await HandleCallbackAsync(update.CallbackQuery, cancellationToken); }
+            finally
+            {
+                if (traceReservation)
+                    _logger.LogInformation("Reservation callback finished callback={CallbackId} elapsedMs={ElapsedMs}",
+                        update.CallbackQuery.Id, System.Diagnostics.Stopwatch.GetElapsedTime(callbackStarted).TotalMilliseconds);
+            }
             return Ok();
         }
 
