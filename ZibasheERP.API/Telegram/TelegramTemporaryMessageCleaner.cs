@@ -57,8 +57,11 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay) =>
         _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows);
 
-    public void Cancel(string chatId, long messageId) =>
+    public void Cancel(string chatId, long messageId)
+    {
         _scheduled.TryRemove((chatId, messageId), out _);
+        TelegramReservationPostEditor.CancelRefresh(chatId, messageId);
+    }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
         _scheduledDeletes[(chatId, messageId)] = DateTime.UtcNow.Add(delay);

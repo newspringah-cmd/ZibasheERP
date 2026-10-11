@@ -163,6 +163,7 @@ builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramTemporaryMessageCleaner>());
 builder.Services.AddSingleton<TelegramSalesListRebuildWorker>();
 builder.Services.AddHostedService<TelegramReservationCompletionWorker>();
+builder.Services.AddHostedService<TelegramReservationKeyboardRefreshWorker>();
 builder.Services.AddSingleton<TelegramPurchaseCandidatesWorker>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramPurchaseCandidatesWorker>());
