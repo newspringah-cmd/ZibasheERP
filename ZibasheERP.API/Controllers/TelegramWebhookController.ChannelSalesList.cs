@@ -337,6 +337,15 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         _temporaryMessageCleaner.Cancel(request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value);
         var original = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
+        // Publish the keyboard through its dedicated Telegram method before editing
+        // the caption, so the next step is delivered as an explicit markup update.
+        var markupResult = await _sender.EditReplyMarkupAsync(
+            request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
+            rows, cancellationToken);
+        _logger.LogInformation("Reservation keyboard update: request {RequestId}, message {MessageId}, success {Success}, error {Error}",
+            request.Id, request.SalesList.TelegramMessageId, markupResult.IsSuccessful, markupResult.Error);
+        if (!markupResult.IsSuccessful && !IsTelegramMessageUnchanged(markupResult.Error))
+            throw new InvalidOperationException($"نمایش دکمه‌های مرحله بعد ناموفق بود: {markupResult.Error}");
         var result = await _sender.EditPhotoCaptionAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, cancellationToken);
