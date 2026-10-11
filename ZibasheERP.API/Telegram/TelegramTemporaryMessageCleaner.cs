@@ -74,7 +74,7 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
             foreach (var item in _scheduled.Where(item => item.Value.ExpiresAt <= now).ToArray())
             {
                 if (!_scheduled.TryRemove(item.Key, out _)) continue;
-                var result = await _sender.EditPhotoCaptionAsync(
+                var result = await _sender.EditReservationPostAsync(
                     item.Key.ChatId, item.Key.MessageId, item.Value.Caption, item.Value.Rows, stoppingToken);
                 if (!result.IsSuccessful)
                     _logger.LogWarning("Telegram reservation prompt restore failed: {Error}", result.Error);
