@@ -141,7 +141,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         if (!_temporaryMessageCleaner.TryAcquireInteraction(
                 salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
-                callback.From.Id, TimeSpan.FromSeconds(60)))
+                callback.From.Id, TimeSpan.FromSeconds(20)))
             throw new InvalidOperationException("کاربر دیگری در حال ثبت می‌باشد؛ لطفاً منتظر بمانید.");
         var userId = callback.From.Id.ToString();
         var pending = await _db.SalesListRequests.AsNoTracking()
@@ -335,7 +335,7 @@ public sealed partial class TelegramWebhookController
         _temporaryMessageCleaner.ScheduleRestore(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             FormatChannelSalesList(request.SalesList, original), BuildChannelVolumeButtons(request.SalesList),
-            TimeSpan.FromSeconds(45));
+            TimeSpan.FromSeconds(7));
     }
 
     private static string GiftRecipientLabel(SalesListRequest request) =>
