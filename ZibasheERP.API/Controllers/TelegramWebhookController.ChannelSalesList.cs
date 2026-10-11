@@ -203,7 +203,7 @@ public sealed partial class TelegramWebhookController
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
         await EditRequestPromptAsync(request,
             $"کاربر {DisplayTelegramUser(callback.From)}\nبرای ادامهٔ ثبت {request.VolumeMl} میل، دکمهٔ ثبت را بزنید.",
-            rows, cancellationToken);
+            rows, cancellationToken, keyboardOnly: true);
     }
 
     private async Task ShowChannelBottleSelectionAsync(
@@ -236,7 +236,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("برای این حجم شیشه فعالی تعریف نشده است.");
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
         await EditRequestPromptAsync(request,
-            $"کاربر {DisplayTelegramUser(callback.From)}\nنوع شیشه را انتخاب کنید:", rows, cancellationToken);
+            $"کاربر {DisplayTelegramUser(callback.From)}\nنوع شیشه را انتخاب کنید:", rows, cancellationToken, keyboardOnly: true);
     }
 
     private async Task ConfirmBottleOwnerGiftAsync(
@@ -333,7 +333,7 @@ public sealed partial class TelegramWebhookController
     private async Task EditRequestPromptAsync(
         SalesListRequest request, string prompt,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool keyboardOnly = false)
     {
         if (!request.SalesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
@@ -341,7 +341,7 @@ public sealed partial class TelegramWebhookController
         var result = await _temporaryMessageCleaner.UpdatePromptAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, FormatChannelSalesList(request.SalesList, original),
-            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(20), cancellationToken);
+            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(20), cancellationToken, keyboardOnly);
         if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
             throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
     }
