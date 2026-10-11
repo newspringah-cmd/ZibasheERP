@@ -635,7 +635,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         bool showAlert = false) =>
         await SendRequestAsync(
             "answerCallbackQuery",
-            new { callback_query_id = callbackQueryId, text = message, show_alert = showAlert },
+            new { callback_query_id = callbackQueryId, text = message ?? string.Empty, show_alert = showAlert },
             cancellationToken);
 
     public async Task<bool> IsChatAdministratorAsync(

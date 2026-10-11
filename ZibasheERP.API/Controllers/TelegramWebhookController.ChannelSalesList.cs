@@ -85,7 +85,8 @@ public sealed partial class TelegramWebhookController
         }
         catch (InvalidOperationException exception)
         {
-            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken);
+            _logger.LogWarning(exception, "Channel reservation callback failed: {CallbackData}", callback.Data);
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken, showAlert: true);
             return true;
         }
         catch (DbUpdateConcurrencyException)
@@ -128,11 +129,8 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         if (!_temporaryMessageCleaner.TryAcquireInteraction(
                 salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
-                callback.From.Id, TimeSpan.FromSeconds(20)))
+                callback.From.Id, TimeSpan.FromSeconds(60)))
             throw new InvalidOperationException("کاربر دیگری در حال ثبت می‌باشد؛ لطفاً منتظر بمانید.");
-        if (!string.IsNullOrWhiteSpace(callback.Id))
-            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
-
         var previous = await _salesListRequestRepository.GetConfirmedForUserAsync(
             salesListId, callback.From.Id.ToString(), cancellationToken);
         var sameVolumeCount = previous.Count(value => value.VolumeMl == volume);
@@ -185,11 +183,18 @@ public sealed partial class TelegramWebhookController
         var channelResult = await _sender.EditPhotoCaptionAsync(
             salesList.TelegramChannelId, salesList.TelegramMessageId.Value, prompt, rows, cancellationToken);
         if (!channelResult.IsSuccessful)
-            throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
+        {
+            _temporaryMessageCleaner.ReleaseInteraction(salesList.TelegramChannelId,
+                salesList.TelegramMessageId.Value, callback.From.Id);
+            throw new InvalidOperationException($"نمایش گزینه‌های ثبت ناموفق بود: {channelResult.Error}");
+        }
+        if (!string.IsNullOrWhiteSpace(callback.Id))
+            await _sender.AnswerCallbackAsync(callback.Id,
+                "گزینهٔ «برای خودم» را روی پست انتخاب کنید.", cancellationToken);
         _temporaryMessageCleaner.ScheduleRestore(
             salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
             FormatChannelSalesList(salesList, originalRequests), BuildChannelVolumeButtons(salesList),
-            TimeSpan.FromSeconds(7));
+            TimeSpan.FromSeconds(45));
     }
 
     private async Task ShowChannelBottleSelectionAsync(
@@ -313,7 +318,7 @@ public sealed partial class TelegramWebhookController
         _temporaryMessageCleaner.ScheduleRestore(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             FormatChannelSalesList(request.SalesList, originalRequests), BuildChannelVolumeButtons(request.SalesList),
-            TimeSpan.FromSeconds(7));
+            TimeSpan.FromSeconds(45));
         if (!string.IsNullOrWhiteSpace(callback.Id))
             await _sender.AnswerCallbackAsync(callback.Id, "نوع شیشه انتخاب شد.", cancellationToken);
     }
@@ -331,11 +336,11 @@ public sealed partial class TelegramWebhookController
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, cancellationToken);
         if (!result.IsSuccessful)
-            throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
+            throw new InvalidOperationException($"نمایش گزینه‌ها روی پست لیست ناموفق بود: {result.Error}");
         _temporaryMessageCleaner.ScheduleRestore(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             FormatChannelSalesList(request.SalesList, original), BuildChannelVolumeButtons(request.SalesList),
-            TimeSpan.FromSeconds(7));
+            TimeSpan.FromSeconds(45));
     }
 
     private static string GiftRecipientLabel(SalesListRequest request) =>
