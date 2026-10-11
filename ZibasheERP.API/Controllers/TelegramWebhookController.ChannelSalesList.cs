@@ -24,8 +24,8 @@ public sealed partial class TelegramWebhookController
         if (!data.StartsWith("sl", StringComparison.Ordinal))
             return false;
         var callbackTimer = System.Diagnostics.Stopwatch.StartNew();
-        _logger.LogInformation("Reservation callback received: {Data}, message {MessageId}",
-            data, callback.Message?.MessageId);
+        _logger.LogInformation("Reservation callback received: {Data}, message {MessageId}, chat {ChatId}, at {Timestamp}",
+            data, callback.Message?.MessageId, callback.Message?.Chat.Id, DateTime.UtcNow);
 
         try
         {

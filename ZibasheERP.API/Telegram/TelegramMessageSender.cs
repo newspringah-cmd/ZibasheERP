@@ -756,7 +756,26 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(
                     cancellationToken: cancellationToken);
                 if (response.IsSuccessStatusCode && body?.Ok == true)
+                {
+                    if (method.StartsWith("editMessage", StringComparison.Ordinal) &&
+                        body.Result is { ValueKind: JsonValueKind.Object } edited)
+                    {
+                        var sent = JsonSerializer.SerializeToElement(request);
+                        var expectedRows = sent.TryGetProperty("reply_markup", out var expectedMarkup) &&
+                            expectedMarkup.TryGetProperty("inline_keyboard", out var expectedKeyboard)
+                            ? expectedKeyboard.GetArrayLength() : -1;
+                        var actualRows = edited.TryGetProperty("reply_markup", out var actualMarkup) &&
+                            actualMarkup.TryGetProperty("inline_keyboard", out var actualKeyboard)
+                            ? actualKeyboard.GetArrayLength() : 0;
+                        bool? captionMatches = sent.TryGetProperty("caption", out var expectedCaption)
+                            ? edited.TryGetProperty("caption", out var actualCaption) &&
+                              expectedCaption.GetString() == actualCaption.GetString() : null;
+                        _logger.LogInformation("Telegram edit response: {Method}, message {MessageId}, chat {ChatId}, expected rows {ExpectedRows}, returned rows {ActualRows}, caption matches {CaptionMatches}, at {Timestamp}",
+                            method, ReadMessageId(edited), edited.GetProperty("chat").GetProperty("id").ToString(),
+                            expectedRows, actualRows, captionMatches, DateTime.UtcNow);
+                    }
                     return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result));
+                }
                 var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
                 if (!retryable || attempt == 5 || ((int)response.StatusCode >= 500 && attempt >= 2))
                     return new TelegramSendResult(false,
