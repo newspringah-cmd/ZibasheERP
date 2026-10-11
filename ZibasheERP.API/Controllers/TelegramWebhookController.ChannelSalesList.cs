@@ -71,9 +71,9 @@ public sealed partial class TelegramWebhookController
                     _temporaryMessageCleaner.ReleaseInteraction(
                         callback.Message.Chat.Id.ToString(), callback.Message.MessageId, callback.From.Id);
                 }
+                await _sender.AnswerCallbackAsync(callback.Id, "درخواست لغو شد.", cancellationToken);
                 if (request is not null)
                     await RefreshChannelSalesListAsync(request.SalesListId, cancellationToken);
-                await _sender.AnswerCallbackAsync(callback.Id, "درخواست لغو شد.", cancellationToken);
                 return true;
             }
             if (parts[0] == "slr" && parts.Length == 2 && TryDecodeCompactGuid(parts[1], out listId))
@@ -198,10 +198,12 @@ public sealed partial class TelegramWebhookController
             new[] { new TelegramInlineButton("ثبت", $"slp:{EncodeCompactGuid(request.Id)}:self", Style: "success") },
             new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") }
         };
+        // Finish the client's callback before publishing the next keyboard,
+        // matching the ordering used by the original channel registration flow.
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
         await EditRequestPromptAsync(request,
             $"کاربر {DisplayTelegramUser(callback.From)}\nبرای ادامهٔ ثبت {request.VolumeMl} میل، دکمهٔ ثبت را بزنید.",
             rows, cancellationToken);
-        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
     private async Task ShowChannelBottleSelectionAsync(
@@ -232,9 +234,9 @@ public sealed partial class TelegramWebhookController
         rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
         if (rows.Count == 1)
             throw new InvalidOperationException("برای این حجم شیشه فعالی تعریف نشده است.");
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
         await EditRequestPromptAsync(request,
             $"کاربر {DisplayTelegramUser(callback.From)}\nنوع شیشه را انتخاب کنید:", rows, cancellationToken);
-        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
     private async Task ConfirmBottleOwnerGiftAsync(
@@ -323,9 +325,9 @@ public sealed partial class TelegramWebhookController
             $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
             $"شیشه: {bottleDescription}\n" +
             $"مبلغ کل: {total:N0} تومان";
-        await EditRequestPromptAsync(request, confirmation, rows, cancellationToken);
         if (!string.IsNullOrWhiteSpace(callback.Id))
             await _sender.AnswerCallbackAsync(callback.Id, "نوع شیشه انتخاب شد.", cancellationToken);
+        await EditRequestPromptAsync(request, confirmation, rows, cancellationToken);
     }
 
     private async Task EditRequestPromptAsync(
