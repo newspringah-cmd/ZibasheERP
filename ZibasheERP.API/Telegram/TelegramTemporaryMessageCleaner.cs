@@ -11,6 +11,9 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         string Caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows);
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), ScheduledRestore> _scheduled = new();
+    private sealed record ScheduledRepublish(DateTime DueAt, string Caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows, ScheduledRestore Owner);
+    private readonly ConcurrentDictionary<(string ChatId, long MessageId), ScheduledRepublish> _republish = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), SemaphoreSlim> _postGates = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), DateTime> _scheduledDeletes = new();
     private sealed record InteractionLock(long UserId, DateTime ExpiresAt);
@@ -43,6 +46,9 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
                 result.IsSuccessful, result.Error);
             // Schedule recovery even after a transient edit failure.
             ScheduleRestore(chatId, messageId, originalCaption, originalRows, delay);
+            if (result.IsSuccessful || result.Error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true)
+                _republish[(chatId, messageId)] = new(DateTime.UtcNow.AddSeconds(2),
+                    prompt + "\n\n⬇️ برای ادامه، یکی از گزینه‌های زیر را انتخاب کنید.", rows, _scheduled[(chatId, messageId)]);
             return result;
         }
         finally { gate.Release(); }
@@ -60,6 +66,28 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
             return await edit();
         }
         finally { gate.Release(); }
+    }
+
+    internal async Task RepublishDueAsync(DateTime now, CancellationToken ct)
+    {
+        foreach (var item in _republish.Where(value => value.Value.DueAt <= now).ToArray())
+        {
+            var gate = _postGates.GetOrAdd(item.Key, _ => new SemaphoreSlim(1, 1));
+            if (!await gate.WaitAsync(0, ct)) continue;
+            try
+            {
+                if (!_republish.TryGetValue(item.Key, out var current) || !ReferenceEquals(current, item.Value)) continue;
+                ((ICollection<KeyValuePair<(string, long), ScheduledRepublish>>)_republish).Remove(new(item.Key, current));
+                // A newer step, cancellation, confirmation or restore supersedes this one-time resend.
+                if (!_scheduled.TryGetValue(item.Key, out var owner) || !ReferenceEquals(owner, current.Owner) || owner.ExpiresAt <= now) continue;
+                var result = await _sender.EditPhotoCaptionAsync(item.Key.ChatId, item.Key.MessageId, current.Caption, current.Rows, ct);
+                _logger.LogInformation("Reservation step republished chat={ChatId} post={PostId} successful={Successful} error={Error}",
+                    item.Key.ChatId, item.Key.MessageId, result.IsSuccessful, result.Error);
+            }
+            catch (Exception error) when (!ct.IsCancellationRequested)
+            { _logger.LogWarning(error, "One-time reservation step republish failed"); }
+            finally { gate.Release(); }
+        }
     }
 
     internal async Task RestoreDueAsync(DateTime now, CancellationToken ct)
@@ -122,8 +150,11 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay) =>
         _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows);
 
-    public void Cancel(string chatId, long messageId) =>
+    public void Cancel(string chatId, long messageId)
+    {
         _scheduled.TryRemove((chatId, messageId), out _);
+        _republish.TryRemove((chatId, messageId), out _);
+    }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
         _scheduledDeletes[(chatId, messageId)] = DateTime.UtcNow.Add(delay);
@@ -137,6 +168,7 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
             foreach (var item in _interactionLocks.Where(item => item.Value.ExpiresAt <= now).ToArray())
                 ((ICollection<KeyValuePair<(string, long), InteractionLock>>)_interactionLocks).Remove(item);
             await RestoreDueAsync(now, stoppingToken);
+            await RepublishDueAsync(now, stoppingToken);
             foreach (var item in _scheduledDeletes.Where(item => item.Value <= now).ToArray())
             {
                 if (!_scheduledDeletes.TryRemove(item.Key, out _)) continue;

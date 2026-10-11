@@ -7,6 +7,8 @@ using ZibasheERP.API.Telegram;
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
 static Task Restore(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
     .GetMethod("RestoreDueAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [DateTime.UtcNow.AddMinutes(1), CancellationToken.None])!;
+static Task Republish(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
+    .GetMethod("RepublishDueAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [DateTime.UtcNow.AddSeconds(3), CancellationToken.None])!;
 IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows = new[] { new[] { new TelegramInlineButton("test", "test") } };
 var sender = DispatchProxy.Create<ITelegramMessageSender, SenderProxy>();
 var proxy = (SenderProxy)(object)sender;
@@ -43,6 +45,27 @@ cleaner.ReleaseInteraction("chat", 1, 11);
 Check(!cleaner.TryAcquireInteraction("chat", 1, 11, TimeSpan.FromSeconds(20)), "other customer cannot release owner lock");
 cleaner.ReleaseInteraction("chat", 1, 10);
 Check(cleaner.TryAcquireInteraction("chat", 1, 11, TimeSpan.FromSeconds(20)), "post available after owner releases");
+
+proxy.Edit = _ => Task.FromResult(new TelegramSendResult(true));
+await cleaner.UpdatePromptAsync("pulse", 2, "bottles", rows, "original", rows, TimeSpan.FromSeconds(20), default);
+var pulseBefore = proxy.Captions.Count;
+await Republish(cleaner);
+Check(proxy.Captions.Count == pulseBefore + 1 && proxy.Captions.Last().StartsWith("bottles") && proxy.Captions.Last() != "bottles", "one automatic resend produces a fresh edit for the current step");
+await Republish(cleaner);
+Check(proxy.Captions.Count == pulseBefore + 1, "automatic step resend happens only once");
+await cleaner.UpdatePromptAsync("pulse", 2, "old step", rows, "original", rows, TimeSpan.FromSeconds(20), default);
+await cleaner.UpdatePromptAsync("pulse", 2, "new step", rows, "original", rows, TimeSpan.FromSeconds(20), default);
+await Republish(cleaner);
+Check(proxy.Captions.Last().StartsWith("new step"), "resend never restores an obsolete step");
+await cleaner.UpdatePromptAsync("pulse", 2, "cancel me", rows, "original", rows, TimeSpan.FromSeconds(20), default);
+cleaner.Cancel("pulse", 2);
+pulseBefore = proxy.Captions.Count;
+await Republish(cleaner);
+Check(proxy.Captions.Count == pulseBefore, "confirmation or cancellation suppresses pending step resend");
+await cleaner.UpdatePromptAsync("pulse", 2, "expire me", rows, "original", rows, TimeSpan.FromSeconds(1), default);
+pulseBefore = proxy.Captions.Count;
+await Republish(cleaner);
+Check(proxy.Captions.Count == pulseBefore, "expired step is never republished");
 
 using var realSender = new TelegramMessageSender(Options.Create(new TelegramOptions { BotToken = "test-token" }));
 var handler = new MembershipHandler();
