@@ -10,11 +10,9 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         DateTime ExpiresAt,
         string Caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows,
-        bool KeyboardOnly = false);
+        bool KeyboardOnly = false,
+        string? PhotoFileId = null);
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), ScheduledRestore> _scheduled = new();
-    private sealed record KeyboardResend(DateTime DueAt,
-        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows, ScheduledRestore Owner);
-    private readonly ConcurrentDictionary<(string ChatId, long MessageId), KeyboardResend> _keyboardResends = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), SemaphoreSlim> _postGates = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), DateTime> _scheduledDeletes = new();
     private sealed record InteractionLock(long UserId, DateTime ExpiresAt);
@@ -33,34 +31,27 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     public async Task<TelegramSendResult> UpdatePromptAsync(string chatId, long messageId,
         string prompt, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         string originalCaption, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> originalRows,
-        TimeSpan delay, CancellationToken ct, bool keyboardOnly = false)
+        TimeSpan delay, CancellationToken ct, bool keyboardOnly = false, string? photoFileId = null)
     {
         var gate = _postGates.GetOrAdd((chatId, messageId), _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
         {
             // A caption-changing prior step must not leave stale confirmation details.
-            var editKeyboardOnly = keyboardOnly &&
+            var editKeyboardOnly = string.IsNullOrWhiteSpace(photoFileId) && keyboardOnly &&
                 (!_scheduled.TryGetValue((chatId, messageId), out var previous) || previous.KeyboardOnly);
             Cancel(chatId, messageId);
             var started = System.Diagnostics.Stopwatch.GetTimestamp();
-            var result = editKeyboardOnly
+            var result = !string.IsNullOrWhiteSpace(photoFileId)
+                ? await _sender.EditPhotoAsync(chatId, messageId, photoFileId, prompt, rows, ct)
+                : editKeyboardOnly
                 ? await _sender.EditReplyMarkupAsync(chatId, messageId, rows, ct)
                 : await _sender.EditPhotoCaptionAsync(chatId, messageId, prompt, rows, ct);
             _logger.LogInformation("Reservation prompt edit chat={ChatId} post={MessageId} keyboardOnly={KeyboardOnly} elapsedMs={ElapsedMs} successful={Successful} error={Error}",
                 chatId, messageId, editKeyboardOnly, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds,
                 result.IsSuccessful, result.Error);
             // Schedule recovery even after a transient edit failure.
-            ScheduleRestore(chatId, messageId, originalCaption, originalRows, delay, editKeyboardOnly);
-            if (result.IsSuccessful || result.Error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                // A distinct, visually unchanged label forces a real keyboard update.
-                // Callback payloads remain identical: this never executes the order twice.
-                var resendRows = rows.Select(row => (IReadOnlyCollection<TelegramInlineButton>)row
-                    .Select(button => button with { Text = button.Text + "\u2063" }).ToArray()).ToArray();
-                _keyboardResends[(chatId, messageId)] = new(DateTime.UtcNow.AddMilliseconds(500),
-                    resendRows, _scheduled[(chatId, messageId)]);
-            }
+            ScheduleRestore(chatId, messageId, originalCaption, originalRows, delay, editKeyboardOnly, photoFileId);
             return result;
         }
         finally { gate.Release(); }
@@ -89,7 +80,9 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
             try
             {
                 if (!_scheduled.TryGetValue(item.Key, out var current) || !ReferenceEquals(current, item.Value)) continue;
-                var result = current.KeyboardOnly
+                var result = !string.IsNullOrWhiteSpace(current.PhotoFileId)
+                    ? await _sender.EditPhotoAsync(item.Key.ChatId, item.Key.MessageId, current.PhotoFileId, current.Caption, current.Rows, ct)
+                    : current.KeyboardOnly
                     ? await _sender.EditReplyMarkupAsync(item.Key.ChatId, item.Key.MessageId, current.Rows, ct)
                     : await _sender.EditPhotoCaptionAsync(item.Key.ChatId, item.Key.MessageId, current.Caption, current.Rows, ct);
                 if (result.IsSuccessful || result.Error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true)
@@ -105,27 +98,6 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
                 _logger.LogWarning(error, "Telegram reservation prompt restore failed");
                 _scheduled.TryUpdate(item.Key, item.Value with { ExpiresAt = DateTime.UtcNow.AddSeconds(5) }, item.Value);
             }
-            finally { gate.Release(); }
-        }
-    }
-
-    internal async Task ResendKeyboardsDueAsync(DateTime now, CancellationToken ct)
-    {
-        foreach (var item in _keyboardResends.Where(value => value.Value.DueAt <= now).ToArray())
-        {
-            var gate = _postGates.GetOrAdd(item.Key, _ => new SemaphoreSlim(1, 1));
-            if (!await gate.WaitAsync(0, ct)) continue;
-            try
-            {
-                if (!_keyboardResends.TryGetValue(item.Key, out var current) || !ReferenceEquals(current, item.Value)) continue;
-                ((ICollection<KeyValuePair<(string, long), KeyboardResend>>)_keyboardResends).Remove(new(item.Key, current));
-                if (!_scheduled.TryGetValue(item.Key, out var owner) || !ReferenceEquals(owner, current.Owner) || owner.ExpiresAt <= now) continue;
-                var result = await _sender.EditReplyMarkupAsync(item.Key.ChatId, item.Key.MessageId, current.Rows, ct);
-                _logger.LogInformation("Reservation keyboard resent chat={ChatId} post={PostId} successful={Successful} error={Error}",
-                    item.Key.ChatId, item.Key.MessageId, result.IsSuccessful, result.Error);
-            }
-            catch (Exception error) when (!ct.IsCancellationRequested)
-            { _logger.LogWarning(error, "Reservation keyboard resend failed"); }
             finally { gate.Release(); }
         }
     }
@@ -159,27 +131,23 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
 
     public void ScheduleRestore(
         string chatId, long messageId, string caption,
-        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay, bool keyboardOnly = false) =>
-        _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows, keyboardOnly);
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay, bool keyboardOnly = false, string? photoFileId = null) =>
+        _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows, keyboardOnly, photoFileId);
 
-    public void Cancel(string chatId, long messageId)
-    {
+    public void Cancel(string chatId, long messageId) =>
         _scheduled.TryRemove((chatId, messageId), out _);
-        _keyboardResends.TryRemove((chatId, messageId), out _);
-    }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
         _scheduledDeletes[(chatId, messageId)] = DateTime.UtcNow.Add(delay);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             var now = DateTime.UtcNow;
             foreach (var item in _interactionLocks.Where(item => item.Value.ExpiresAt <= now).ToArray())
                 ((ICollection<KeyValuePair<(string, long), InteractionLock>>)_interactionLocks).Remove(item);
-            await ResendKeyboardsDueAsync(now, stoppingToken);
             await RestoreDueAsync(now, stoppingToken);
             foreach (var item in _scheduledDeletes.Where(item => item.Value <= now).ToArray())
             {

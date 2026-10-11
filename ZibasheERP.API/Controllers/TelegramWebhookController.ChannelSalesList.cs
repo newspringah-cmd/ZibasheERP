@@ -151,7 +151,7 @@ public sealed partial class TelegramWebhookController
                 await ShowChannelConfirmationAsync(callback, pending,
                     $"{BottleLabel(pending.Bottle!.Type.ToString())} — {pending.BottlePrice:N0} تومان", cancellationToken);
             else
-                await ShowChannelSelfSelectionAsync(callback, pending, cancellationToken);
+                await ShowChannelBottleSelectionAsync(callback, pending.Id, cancellationToken);
             return;
         }
         var request = new SalesListRequest
@@ -187,23 +187,7 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        await ShowChannelSelfSelectionAsync(callback, request, cancellationToken);
-    }
-
-    private async Task ShowChannelSelfSelectionAsync(
-        TelegramCallbackQuery callback, SalesListRequest request, CancellationToken cancellationToken)
-    {
-        var rows = new IReadOnlyCollection<TelegramInlineButton>[]
-        {
-            new[] { new TelegramInlineButton("ثبت", $"slp:{EncodeCompactGuid(request.Id)}:self", Style: "success") },
-            new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") }
-        };
-        // Finish the client's callback before publishing the next keyboard,
-        // matching the ordering used by the original channel registration flow.
-        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
-        await EditRequestPromptAsync(request,
-            $"کاربر {DisplayTelegramUser(callback.From)}\nبرای ادامهٔ ثبت {request.VolumeMl} میل، دکمهٔ ثبت را بزنید.",
-            rows, cancellationToken, keyboardOnly: true);
+        await ShowChannelBottleSelectionAsync(callback, request.Id, cancellationToken);
     }
 
     private async Task ShowChannelBottleSelectionAsync(
@@ -236,7 +220,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("برای این حجم شیشه فعالی تعریف نشده است.");
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
         await EditRequestPromptAsync(request,
-            $"کاربر {DisplayTelegramUser(callback.From)}\nنوع شیشه را انتخاب کنید:", rows, cancellationToken, keyboardOnly: true);
+            $"کاربر {DisplayTelegramUser(callback.From)}\nنوع شیشه را انتخاب کنید:", rows, cancellationToken);
     }
 
     private async Task ConfirmBottleOwnerGiftAsync(
@@ -333,7 +317,7 @@ public sealed partial class TelegramWebhookController
     private async Task EditRequestPromptAsync(
         SalesListRequest request, string prompt,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
-        CancellationToken cancellationToken, bool keyboardOnly = false)
+        CancellationToken cancellationToken)
     {
         if (!request.SalesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
@@ -341,7 +325,8 @@ public sealed partial class TelegramWebhookController
         var result = await _temporaryMessageCleaner.UpdatePromptAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, FormatChannelSalesList(request.SalesList, original),
-            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(20), cancellationToken, keyboardOnly);
+            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(20), cancellationToken,
+            photoFileId: request.SalesList.TelegramPhotoFileId);
         if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
             throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
     }
@@ -477,7 +462,7 @@ public sealed partial class TelegramWebhookController
         var result = await _temporaryMessageCleaner.UpdatePostAsync(
             list.TelegramChannelId!, list.TelegramMessageId!.Value,
             () => !string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
-                ? _sender.EditPhotoCaptionAsync(list.TelegramChannelId!, list.TelegramMessageId.Value, caption, buttons, ct)
+                ? _sender.EditPhotoAsync(list.TelegramChannelId!, list.TelegramMessageId.Value, list.TelegramPhotoFileId, caption, buttons, ct)
                 : _sender.EditTextWithKeyboardAsync(list.TelegramChannelId!, list.TelegramMessageId.Value, caption, buttons, ct), ct);
         if (result.IsSuccessful || IsTelegramMessageUnchanged(result.Error)) return;
         // Only a definitive missing-message response permits replacement. Network,

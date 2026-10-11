@@ -7,8 +7,6 @@ using ZibasheERP.API.Telegram;
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
 static Task Restore(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
     .GetMethod("RestoreDueAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [DateTime.UtcNow.AddMinutes(1), CancellationToken.None])!;
-static Task Resend(TelegramTemporaryMessageCleaner cleaner, DateTime now) => (Task)typeof(TelegramTemporaryMessageCleaner)
-    .GetMethod("ResendKeyboardsDueAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [now, CancellationToken.None])!;
 IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows = new[] { new[] { new TelegramInlineButton("test", "test") } };
 var sender = DispatchProxy.Create<ITelegramMessageSender, SenderProxy>();
 var proxy = (SenderProxy)(object)sender;
@@ -60,25 +58,15 @@ Check(keyboardProxy.Captions.Last() == "choose again", "new selection cannot ret
 await Restore(keyboardCleaner);
 Check(keyboardProxy.Captions.Last() == "perfume", "caption-changing step restores original perfume caption");
 
-await keyboardCleaner.UpdatePromptAsync("channel", 2, "choose", rows, "perfume", rows, TimeSpan.FromSeconds(20), default, keyboardOnly: true);
-var resendBefore = keyboardProxy.KeyboardEdits;
-await Resend(keyboardCleaner, DateTime.UtcNow);
-Check(keyboardProxy.KeyboardEdits == resendBefore, "keyboard resend waits for its half-second deadline");
-await Resend(keyboardCleaner, DateTime.UtcNow.AddSeconds(1));
-Check(keyboardProxy.KeyboardEdits == resendBefore + 1 && keyboardProxy.LastRows!.First().First().Text != rows.First().First().Text &&
-    keyboardProxy.LastRows!.First().First().CallbackData == rows.First().First().CallbackData, "one resend forces a fresh keyboard without changing order callback");
-await Resend(keyboardCleaner, DateTime.UtcNow.AddSeconds(2));
-Check(keyboardProxy.KeyboardEdits == resendBefore + 1, "keyboard resend never loops");
-await keyboardCleaner.UpdatePromptAsync("channel", 2, "again", rows, "perfume", rows, TimeSpan.FromSeconds(20), default, keyboardOnly: true);
+await keyboardCleaner.UpdatePromptAsync("channel", 2, "bottles", rows, "perfume", rows, TimeSpan.FromSeconds(20), default, photoFileId: "same-photo");
+Check(keyboardProxy.LastPhoto == "same-photo" && keyboardProxy.Captions.Last() == "bottles", "photo refresh retains the original image and displays next step");
+await Restore(keyboardCleaner);
+Check(keyboardProxy.LastPhoto == "same-photo" && keyboardProxy.Captions.Last() == "perfume", "photo refresh timeout restores the original caption and image");
+await keyboardCleaner.UpdatePromptAsync("channel", 2, "confirmation", rows, "perfume", rows, TimeSpan.FromSeconds(20), default, photoFileId: "same-photo");
 keyboardCleaner.Cancel("channel", 2);
-resendBefore = keyboardProxy.KeyboardEdits;
-await Resend(keyboardCleaner, DateTime.UtcNow.AddSeconds(1));
-Check(keyboardProxy.KeyboardEdits == resendBefore, "cancelled or confirmed step cannot reappear");
-await keyboardCleaner.UpdatePromptAsync("channel", 2, "expired", rows, "perfume", rows, TimeSpan.Zero, default, keyboardOnly: true);
-resendBefore = keyboardProxy.KeyboardEdits;
-await Resend(keyboardCleaner, DateTime.UtcNow.AddSeconds(1));
-Check(keyboardProxy.KeyboardEdits == resendBefore, "expired step cannot be resent");
-keyboardCleaner.Cancel("channel", 2);
+var mediaBefore = keyboardProxy.Captions.Count;
+await Restore(keyboardCleaner);
+Check(keyboardProxy.Captions.Count == mediaBefore, "cancelled photo refresh cannot overwrite completed order");
 
 using var realSender = new TelegramMessageSender(Options.Create(new TelegramOptions { BotToken = "test-token" }));
 var handler = new MembershipHandler();
@@ -122,7 +110,7 @@ Console.WriteLine("All reservation interaction tests passed.");
 public class SenderProxy : DispatchProxy
 {
     public int KeyboardEdits;
-    public IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>? LastRows;
+    public string? LastPhoto;
     public List<string> Captions { get; } = new();
     public Func<string, Task<TelegramSendResult>> Edit { get; set; } = _ => Task.FromResult(new TelegramSendResult(true));
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
@@ -130,8 +118,14 @@ public class SenderProxy : DispatchProxy
         if (targetMethod!.Name == "EditReplyMarkupAsync")
         {
             KeyboardEdits++;
-            LastRows = (IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args![2]!;
             return Edit("<keyboard>");
+        }
+        if (targetMethod.Name == "EditPhotoAsync")
+        {
+            LastPhoto = (string)args![2]!;
+            var mediaCaption = (string)args[3]!;
+            Captions.Add(mediaCaption);
+            return Edit(mediaCaption);
         }
         if (targetMethod!.Name != "EditPhotoCaptionAsync") throw new NotSupportedException(targetMethod.Name);
         var caption = (string)args![2]!;

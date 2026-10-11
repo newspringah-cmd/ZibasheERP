@@ -769,7 +769,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                     cancellationToken: cancellationToken);
                 if (response.IsSuccessStatusCode && body?.Ok == true)
                 {
-                    if (method == "editMessageCaption" || method == "editMessageReplyMarkup")
+                    if (method == "editMessageCaption" || method == "editMessageReplyMarkup" || method == "editMessageMedia")
                     {
                         var sent = JsonSerializer.SerializeToElement(request);
                         bool? keyboardMatches = null;
