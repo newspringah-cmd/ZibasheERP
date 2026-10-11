@@ -36,7 +36,11 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         try
         {
             Cancel(chatId, messageId);
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
             var result = await _sender.EditPhotoCaptionAsync(chatId, messageId, prompt, rows, ct);
+            _logger.LogInformation("Reservation prompt edit chat={ChatId} post={MessageId} elapsedMs={ElapsedMs} successful={Successful} error={Error}",
+                chatId, messageId, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                result.IsSuccessful, result.Error);
             // Schedule recovery even after a transient edit failure.
             ScheduleRestore(chatId, messageId, originalCaption, originalRows, delay);
             return result;

@@ -61,6 +61,26 @@ handler.Fail = true;
 Check(!await realSender.IsChatMemberAsync("a", "4"), "membership API failure denied");
 handler.Fail = false;
 Check(await realSender.IsChatMemberAsync("a", "4") && handler.Calls == 7, "membership API errors are not cached");
+handler.Status = "member";
+Check(!await realSender.IsChatAdministratorAsync("a", "1"), "cached membership never grants administrator permission");
+handler.Status = "administrator";
+Check(await realSender.IsChatAdministratorAsync("a", "1"), "Telegram administrator is authorized");
+handler.Status = "member";
+Check(!await realSender.IsChatAdministratorAsync("a", "1"), "removed administrator immediately loses permission");
+handler.Fail = true;
+Check(!await realSender.IsChatAdministratorAsync("a", "1"), "administrator API failure never grants permission");
+var callbackHandler = new CallbackHandler();
+((HttpClient)field.GetValue(realSender)!).Dispose();
+field.SetValue(realSender, new HttpClient(callbackHandler) { BaseAddress = new Uri("https://example.invalid/") });
+Check((await realSender.AnswerCallbackAsync("first-click")).IsSuccessful, "empty callback acknowledgement succeeds");
+using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload!))
+{
+    Check(payload.RootElement.GetProperty("text").GetString() == string.Empty, "empty callback never sends JSON null");
+    Check(payload.RootElement.GetProperty("cache_time").GetInt32() == 0, "callback response is not cached by client");
+}
+await realSender.AnswerCallbackAsync("error", "access denied", showAlert: true);
+using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload!))
+    Check(payload.RootElement.GetProperty("text").GetString() == "access denied" && payload.RootElement.GetProperty("show_alert").GetBoolean(), "explicit callback alerts preserved");
 Console.WriteLine("All reservation interaction tests passed.");
 
 public class SenderProxy : DispatchProxy
@@ -85,5 +105,15 @@ public class MembershipHandler : HttpMessageHandler
         Calls++;
         return Task.FromResult(new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
         { Content = new StringContent(Fail ? "{\"ok\":false}" : "{\"ok\":true,\"result\":{\"status\":\"" + Status + "\"}}", System.Text.Encoding.UTF8, "application/json") });
+    }
+}
+
+public class CallbackHandler : HttpMessageHandler
+{
+    public string? Payload;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        Payload = await request.Content!.ReadAsStringAsync(ct);
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"ok\":true,\"result\":true}", System.Text.Encoding.UTF8, "application/json") };
     }
 }
