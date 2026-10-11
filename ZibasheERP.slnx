@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="ZibasheERP.API.Tests/ZibasheERP.API.Tests.csproj" />
   <Project Path="ZibasheERP.API/ZibasheERP.API.csproj" />
   <Project Path="ZibasheERP.Application/ZibasheERP.Application.csproj" />
   <Project Path="ZibasheERP.Application.Tests/ZibasheERP.Application.Tests.csproj" />

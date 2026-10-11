@@ -19,7 +19,7 @@ public sealed class TelegramReservationCompletionWorker(IServiceScopeFactory sco
                 using var scope = scopes.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var repository = scope.ServiceProvider.GetRequiredService<INotificationOutboxRepository>();
-                var jobs = await repository.GetPendingAsync("ChannelReservation", 10, ct);
+                var jobs = await repository.GetPendingAsync("ChannelReservation", 1, ct);
                 foreach (var job in jobs)
                 {
                     try

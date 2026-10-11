@@ -12,16 +12,19 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
     private readonly Channel<long> _requests = Channel.CreateBounded<long>(1);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ITelegramMessageSender _sender;
+    private readonly TelegramTemporaryMessageCleaner _cleaner;
     private readonly ILogger<TelegramSalesListRebuildWorker> _logger;
     private int _pendingOrRunning;
 
     public TelegramSalesListRebuildWorker(
         IServiceScopeFactory scopeFactory,
         ITelegramMessageSender sender,
+        TelegramTemporaryMessageCleaner cleaner,
         ILogger<TelegramSalesListRebuildWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _sender = sender;
+        _cleaner = cleaner;
         _logger = logger;
     }
 
@@ -189,12 +192,13 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
         TelegramSendResult? lastResult = null;
         for (var attempt = 1; attempt <= 6; attempt++)
         {
-            lastResult = await _sender.EditPhotoCaptionAsync(
+            lastResult = await _cleaner.UpdatePostAsync(list.TelegramChannelId!, list.TelegramMessageId!.Value,
+                () => _sender.EditPhotoCaptionAsync(
                 list.TelegramChannelId!,
                 list.TelegramMessageId!.Value,
                 caption,
                 TelegramWebhookController.BuildChannelVolumeButtons(list),
-                cancellationToken);
+                cancellationToken), cancellationToken);
             if (lastResult.IsSuccessful || IsUnchanged(lastResult.Error))
                 return lastResult;
             if (!TryGetRetryAfter(lastResult.Error, out var retryAfterSeconds) || attempt == 6)

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace ZibasheERP.API.Telegram;
 
@@ -185,6 +186,7 @@ public sealed record TelegramInlineButton(
     string? Url = null);
 public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
+    private readonly MemoryCache _membershipCache = new(new MemoryCacheOptions { SizeLimit = 10000 });
     private readonly HttpClient _httpClient;
     private readonly string _botToken;
     private readonly TokenBucketRateLimiter _rateLimiter = new(new TokenBucketRateLimiterOptions
@@ -673,6 +675,8 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string userId,
         CancellationToken cancellationToken = default)
     {
+        var membershipKey = (chatId, userId);
+        if (_membershipCache.TryGetValue(membershipKey, out bool cachedMember)) return cachedMember;
         if (string.IsNullOrWhiteSpace(_botToken))
             return false;
         try
@@ -685,8 +689,14 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 cancellationToken: cancellationToken);
             if (!response.IsSuccessStatusCode || body?.Ok != true || body.Result is null)
                 return false;
-            return body.Result.Status is "creator" or "administrator" or "member" ||
+            var isMember = body.Result.Status is "creator" or "administrator" or "member" ||
                 body.Result.Status == "restricted" && body.Result.IsMember == true;
+            if (isMember)
+                _membershipCache.Set(membershipKey, true, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2), Size = 1
+                });
+            return isMember;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -775,6 +785,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 
     public void Dispose()
     {
+        _membershipCache.Dispose();
         _rateLimiter.Dispose();
         _httpClient.Dispose();
     }

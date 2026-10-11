@@ -102,7 +102,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     }
 
     public async Task ConfirmCurrentBottleAsync(
-        Guid requestId, string telegramUserId, CancellationToken cancellationToken = default)
+        Guid requestId, string telegramUserId, CancellationToken cancellationToken = default, bool queueCompletion = false)
     {
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         var request = await _dbContext.SalesListRequests
@@ -157,6 +157,13 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         request.Status = SalesListRequestStatus.Confirmed;
         request.ConfirmedAt = DateTime.UtcNow;
         request.UpdatedAt = DateTime.UtcNow;
+        if (queueCompletion)
+            _dbContext.NotificationOutbox.Add(new NotificationOutbox
+            {
+                Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
+                Channel = "ChannelReservation", EventType = "ReservationConfirmed", Recipient = request.TelegramUserId,
+                Payload = System.Text.Json.JsonSerializer.Serialize(new { RequestId = request.Id })
+            });
         await _dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }

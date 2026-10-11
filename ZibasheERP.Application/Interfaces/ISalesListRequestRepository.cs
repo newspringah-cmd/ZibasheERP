@@ -12,7 +12,7 @@ public interface ISalesListRequestRepository
     Task SetGiftRecipientAsync(Guid requestId, string telegramUserId, string recipientIdentity, CancellationToken cancellationToken = default);
     Task<bool> IsGiftRecipientBottleOwnerAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task SelectBottleAsync(Guid requestId, string telegramUserId, Guid bottleId, decimal bottlePrice, CancellationToken cancellationToken = default);
-    Task ConfirmCurrentBottleAsync(Guid requestId, string telegramUserId, CancellationToken cancellationToken = default);
+    Task ConfirmCurrentBottleAsync(Guid requestId, string telegramUserId, CancellationToken cancellationToken = default, bool queueCompletion = false);
     Task CancelAsync(Guid requestId, string telegramUserId, CancellationToken cancellationToken = default);
     Task RemoveConfirmedAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task PromoteNextBottleOwnerAsync(Guid requestId, CancellationToken cancellationToken = default);
