@@ -309,9 +309,9 @@ public sealed partial class TelegramWebhookController
             $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
             $"شیشه: {bottleDescription}\n" +
             $"مبلغ کل: {total:N0} تومان";
-        if (!string.IsNullOrWhiteSpace(callback.Id))
-            await _sender.AnswerCallbackAsync(callback.Id, "نوع شیشه انتخاب شد.", cancellationToken);
         await EditRequestPromptAsync(request, confirmation, rows, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(callback.Id))
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
     private async Task EditRequestPromptAsync(
@@ -322,13 +322,17 @@ public sealed partial class TelegramWebhookController
         if (!request.SalesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         var original = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
-        var result = await _temporaryMessageCleaner.UpdatePromptAsync(
-            request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
-            prompt, rows, FormatChannelSalesList(request.SalesList, original),
-            BuildChannelVolumeButtons(request.SalesList), TimeSpan.FromSeconds(20), cancellationToken,
-            photoFileId: request.SalesList.TelegramPhotoFileId);
-        if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
-            throw new InvalidOperationException("نمایش گزینه‌ها روی پست لیست ناموفق بود.");
+        var chatId = request.SalesList.TelegramChannelId;
+        var postId = request.SalesList.TelegramMessageId.Value;
+        var originalCaption = FormatChannelSalesList(request.SalesList, original);
+        var originalRows = BuildChannelVolumeButtons(request.SalesList);
+        var cleaner = _temporaryMessageCleaner;
+        // Do not retain the request scope or its database entities after the response.
+        Response.OnCompleted(() =>
+        {
+            cleaner.QueuePrompt(chatId, postId, prompt, rows, originalCaption, originalRows);
+            return Task.CompletedTask;
+        });
     }
 
     private static string GiftRecipientLabel(SalesListRequest request) =>

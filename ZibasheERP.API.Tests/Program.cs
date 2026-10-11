@@ -7,6 +7,8 @@ using ZibasheERP.API.Telegram;
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
 static Task Restore(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
     .GetMethod("RestoreDueAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [DateTime.UtcNow.AddMinutes(1), CancellationToken.None])!;
+static Task Publish(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
+    .GetMethod("PublishPendingPromptsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [CancellationToken.None])!;
 IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows = new[] { new[] { new TelegramInlineButton("test", "test") } };
 var sender = DispatchProxy.Create<ITelegramMessageSender, SenderProxy>();
 var proxy = (SenderProxy)(object)sender;
@@ -67,6 +69,24 @@ keyboardCleaner.Cancel("channel", 2);
 var mediaBefore = keyboardProxy.Captions.Count;
 await Restore(keyboardCleaner);
 Check(keyboardProxy.Captions.Count == mediaBefore, "cancelled photo refresh cannot overwrite completed order");
+
+keyboardCleaner.QueuePrompt("channel", 2, "after response", rows, "perfume", rows);
+var deferredBefore = keyboardProxy.Captions.Count;
+Check(keyboardProxy.Captions.Count == deferredBefore && keyboardCleaner.IsScheduled("channel", 2), "queued prompt protects post without issuing Telegram edit");
+await Publish(keyboardCleaner);
+Check(keyboardProxy.Captions.Last() == "after response", "background publisher delivers queued step");
+deferredBefore = keyboardProxy.Captions.Count;
+await Publish(keyboardCleaner);
+Check(keyboardProxy.Captions.Count == deferredBefore, "queued step is published once");
+keyboardCleaner.QueuePrompt("channel", 2, "old step", rows, "perfume", rows);
+keyboardCleaner.QueuePrompt("channel", 2, "new step", rows, "perfume", rows);
+await Publish(keyboardCleaner);
+Check(keyboardProxy.Captions.Last() == "new step", "new queued step supersedes old step");
+keyboardCleaner.QueuePrompt("channel", 2, "cancelled step", rows, "perfume", rows);
+keyboardCleaner.Cancel("channel", 2);
+deferredBefore = keyboardProxy.Captions.Count;
+await Publish(keyboardCleaner);
+Check(keyboardProxy.Captions.Count == deferredBefore, "cancelled or confirmed queued step never appears");
 
 using var realSender = new TelegramMessageSender(Options.Create(new TelegramOptions { BotToken = "test-token" }));
 var handler = new MembershipHandler();

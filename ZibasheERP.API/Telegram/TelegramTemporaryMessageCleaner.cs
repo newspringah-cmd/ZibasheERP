@@ -13,6 +13,11 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         bool KeyboardOnly = false,
         string? PhotoFileId = null);
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), ScheduledRestore> _scheduled = new();
+    private sealed record PendingPrompt(string Caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows,
+        string OriginalCaption, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> OriginalRows,
+        ScheduledRestore Owner);
+    private readonly ConcurrentDictionary<(string ChatId, long MessageId), PendingPrompt> _pendingPrompts = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), SemaphoreSlim> _postGates = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), DateTime> _scheduledDeletes = new();
     private sealed record InteractionLock(long UserId, DateTime ExpiresAt);
@@ -27,6 +32,38 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     }
 
     public bool IsScheduled(string chatId, long messageId) => _scheduled.ContainsKey((chatId, messageId));
+
+    public void QueuePrompt(string chatId, long messageId, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        string originalCaption, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> originalRows)
+    {
+        var owner = new ScheduledRestore(DateTime.UtcNow.AddSeconds(20), originalCaption, originalRows);
+        _scheduled[(chatId, messageId)] = owner;
+        _pendingPrompts[(chatId, messageId)] = new(caption, rows, originalCaption, originalRows, owner);
+    }
+
+    internal async Task PublishPendingPromptsAsync(CancellationToken ct)
+    {
+        foreach (var item in _pendingPrompts.ToArray())
+        {
+            var gate = _postGates.GetOrAdd(item.Key, _ => new SemaphoreSlim(1, 1));
+            if (!await gate.WaitAsync(0, ct)) continue;
+            try
+            {
+                if (!_pendingPrompts.TryRemove(item.Key, out var pending)) continue;
+                if (!_scheduled.TryGetValue(item.Key, out var owner) || !ReferenceEquals(owner, pending.Owner)) continue;
+                var result = await _sender.EditPhotoCaptionAsync(item.Key.ChatId, item.Key.MessageId,
+                    pending.Caption, pending.Rows, ct);
+                _logger.LogInformation("Deferred reservation prompt chat={ChatId} post={PostId} successful={Successful} error={Error}",
+                    item.Key.ChatId, item.Key.MessageId, result.IsSuccessful, result.Error);
+                // Start the visible-step timeout after Telegram has responded.
+                _scheduled.TryUpdate(item.Key, owner with { ExpiresAt = DateTime.UtcNow.AddSeconds(20) }, owner);
+            }
+            catch (Exception error) when (!ct.IsCancellationRequested)
+            { _logger.LogWarning(error, "Deferred reservation prompt failed"); }
+            finally { gate.Release(); }
+        }
+    }
 
     public async Task<TelegramSendResult> UpdatePromptAsync(string chatId, long messageId,
         string prompt, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
@@ -134,20 +171,24 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay, bool keyboardOnly = false, string? photoFileId = null) =>
         _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows, keyboardOnly, photoFileId);
 
-    public void Cancel(string chatId, long messageId) =>
+    public void Cancel(string chatId, long messageId)
+    {
         _scheduled.TryRemove((chatId, messageId), out _);
+        _pendingPrompts.TryRemove((chatId, messageId), out _);
+    }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
         _scheduledDeletes[(chatId, messageId)] = DateTime.UtcNow.Add(delay);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             var now = DateTime.UtcNow;
             foreach (var item in _interactionLocks.Where(item => item.Value.ExpiresAt <= now).ToArray())
                 ((ICollection<KeyValuePair<(string, long), InteractionLock>>)_interactionLocks).Remove(item);
+            await PublishPendingPromptsAsync(stoppingToken);
             await RestoreDueAsync(now, stoppingToken);
             foreach (var item in _scheduledDeletes.Where(item => item.Value <= now).ToArray())
             {
