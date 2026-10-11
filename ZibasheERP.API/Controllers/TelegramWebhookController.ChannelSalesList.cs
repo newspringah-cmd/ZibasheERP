@@ -131,10 +131,6 @@ public sealed partial class TelegramWebhookController
                 salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
                 callback.From.Id, TimeSpan.FromSeconds(60)))
             throw new InvalidOperationException("کاربر دیگری در حال ثبت می‌باشد؛ لطفاً منتظر بمانید.");
-        var previous = await _salesListRequestRepository.GetConfirmedForUserAsync(
-            salesListId, callback.From.Id.ToString(), cancellationToken);
-        var sameVolumeCount = previous.Count(value => value.VolumeMl == volume);
-        var totalPrevious = previous.Sum(value => value.VolumeMl);
         var request = new SalesListRequest
         {
             Id = Guid.NewGuid(),
@@ -168,33 +164,16 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        var warning = sameVolumeCount > 0
-            ? $"⚠️ شما قبلاً {sameVolumeCount} بار مقدار {volume} میل را در این لیست ثبت کرده‌اید.\n"
-            : totalPrevious > 0
-                ? $"ℹ️ شما در حال حاضر مجموعاً {totalPrevious} میل در این لیست دارید.\n"
-                : string.Empty;
-        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
+        try
         {
-            new[] { new TelegramInlineButton("👤 برای خودم", $"slp:{EncodeCompactGuid(request.Id)}:self") }
-        };
-        rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
-        var prompt = $"کاربر {DisplayTelegramUser(callback.From)}\n{warning}این {volume} میل را برای خودتان ثبت می‌کنید؟";
-        var originalRequests = await _salesListRequestRepository.GetConfirmedAsync(salesList.Id, cancellationToken);
-        var channelResult = await _sender.EditPhotoCaptionAsync(
-            salesList.TelegramChannelId, salesList.TelegramMessageId.Value, prompt, rows, cancellationToken);
-        if (!channelResult.IsSuccessful)
+            await ShowChannelBottleSelectionAsync(callback, request.Id, cancellationToken);
+        }
+        catch
         {
             _temporaryMessageCleaner.ReleaseInteraction(salesList.TelegramChannelId,
                 salesList.TelegramMessageId.Value, callback.From.Id);
-            throw new InvalidOperationException($"نمایش گزینه‌های ثبت ناموفق بود: {channelResult.Error}");
+            throw;
         }
-        if (!string.IsNullOrWhiteSpace(callback.Id))
-            await _sender.AnswerCallbackAsync(callback.Id,
-                "گزینهٔ «برای خودم» را روی پست انتخاب کنید.", cancellationToken);
-        _temporaryMessageCleaner.ScheduleRestore(
-            salesList.TelegramChannelId, salesList.TelegramMessageId.Value,
-            FormatChannelSalesList(salesList, originalRequests), BuildChannelVolumeButtons(salesList),
-            TimeSpan.FromSeconds(45));
     }
 
     private async Task ShowChannelBottleSelectionAsync(
@@ -313,7 +292,7 @@ public sealed partial class TelegramWebhookController
         var channelResult = await _sender.EditPhotoCaptionAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             confirmation, rows, cancellationToken);
-        if (!channelResult.IsSuccessful)
+        if (!channelResult.IsSuccessful && !IsTelegramMessageUnchanged(channelResult.Error))
             throw new InvalidOperationException("نمایش تأیید روی پست لیست ناموفق بود.");
         _temporaryMessageCleaner.ScheduleRestore(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
@@ -335,7 +314,7 @@ public sealed partial class TelegramWebhookController
         var result = await _sender.EditPhotoCaptionAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, cancellationToken);
-        if (!result.IsSuccessful)
+        if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
             throw new InvalidOperationException($"نمایش گزینه‌ها روی پست لیست ناموفق بود: {result.Error}");
         _temporaryMessageCleaner.ScheduleRestore(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
