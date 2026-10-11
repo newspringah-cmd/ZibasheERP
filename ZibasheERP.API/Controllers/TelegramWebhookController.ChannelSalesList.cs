@@ -23,6 +23,9 @@ public sealed partial class TelegramWebhookController
         var data = callback.Data ?? string.Empty;
         if (!data.StartsWith("sl", StringComparison.Ordinal))
             return false;
+        var callbackTimer = System.Diagnostics.Stopwatch.StartNew();
+        _logger.LogInformation("Reservation callback received: {Data}, message {MessageId}",
+            data, callback.Message?.MessageId);
 
         try
         {
@@ -100,6 +103,11 @@ public sealed partial class TelegramWebhookController
                 "لیست هم‌زمان تغییر کرد و خودکار به‌روز می‌شود؛ چند لحظه بعد دوباره انتخاب کنید.",
                 cancellationToken);
             return true;
+        }
+        finally
+        {
+            _logger.LogInformation("Reservation callback finished: {Data}, duration {DurationMs}ms",
+                data, callbackTimer.ElapsedMilliseconds);
         }
 
         await _sender.AnswerCallbackAsync(callback.Id, "گزینه معتبر نیست.", cancellationToken);
@@ -332,6 +340,8 @@ public sealed partial class TelegramWebhookController
         var result = await _sender.EditPhotoCaptionAsync(
             request.SalesList.TelegramChannelId, request.SalesList.TelegramMessageId.Value,
             prompt, rows, cancellationToken);
+        _logger.LogInformation("Reservation prompt update: request {RequestId}, message {MessageId}, success {Success}, error {Error}",
+            request.Id, request.SalesList.TelegramMessageId, result.IsSuccessful, result.Error);
         if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
             throw new InvalidOperationException($"نمایش گزینه‌ها روی پست لیست ناموفق بود: {result.Error}");
         _temporaryMessageCleaner.ScheduleRestore(
