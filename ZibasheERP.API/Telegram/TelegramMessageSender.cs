@@ -183,7 +183,8 @@ public sealed record TelegramInlineButton(
     string Text,
     string? CallbackData = null,
     string? CopyText = null,
-    string? Url = null);
+    string? Url = null,
+    string? Style = null);
 public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
 {
     private readonly MemoryCache _membershipCache = new(new MemoryCacheOptions { SizeLimit = 10000 });
@@ -302,6 +303,8 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
     private static Dictionary<string, object> BuildInlineButton(TelegramInlineButton button)
     {
         var value = new Dictionary<string, object> { ["text"] = button.Text };
+        if (!string.IsNullOrWhiteSpace(button.Style))
+            value["style"] = button.Style;
         if (!string.IsNullOrWhiteSpace(button.CallbackData))
             value["callback_data"] = button.CallbackData;
         if (!string.IsNullOrWhiteSpace(button.CopyText))

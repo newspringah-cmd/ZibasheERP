@@ -195,11 +195,11 @@ public sealed partial class TelegramWebhookController
     {
         var rows = new IReadOnlyCollection<TelegramInlineButton>[]
         {
-            new[] { new TelegramInlineButton("👤 برای خودم", $"slp:{EncodeCompactGuid(request.Id)}:self") },
+            new[] { new TelegramInlineButton("ثبت", $"slp:{EncodeCompactGuid(request.Id)}:self", Style: "success") },
             new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") }
         };
         await EditRequestPromptAsync(request,
-            $"کاربر {DisplayTelegramUser(callback.From)}\nاین {request.VolumeMl} میل را برای خودتان ثبت می‌کنید؟",
+            $"کاربر {DisplayTelegramUser(callback.From)}\nبرای ادامهٔ ثبت {request.VolumeMl} میل، دکمهٔ ثبت را بزنید.",
             rows, cancellationToken);
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
