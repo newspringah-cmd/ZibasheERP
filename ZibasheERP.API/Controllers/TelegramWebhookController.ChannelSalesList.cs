@@ -151,7 +151,7 @@ public sealed partial class TelegramWebhookController
                 await ShowChannelConfirmationAsync(callback, pending,
                     $"{BottleLabel(pending.Bottle!.Type.ToString())} — {pending.BottlePrice:N0} تومان", cancellationToken);
             else
-                await ShowChannelBottleSelectionAsync(callback, pending.Id, cancellationToken);
+                await ShowChannelSelfSelectionAsync(callback, pending, cancellationToken);
             return;
         }
         var request = new SalesListRequest
@@ -187,7 +187,21 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        await ShowChannelBottleSelectionAsync(callback, request.Id, cancellationToken);
+        await ShowChannelSelfSelectionAsync(callback, request, cancellationToken);
+    }
+
+    private async Task ShowChannelSelfSelectionAsync(
+        TelegramCallbackQuery callback, SalesListRequest request, CancellationToken cancellationToken)
+    {
+        var rows = new IReadOnlyCollection<TelegramInlineButton>[]
+        {
+            new[] { new TelegramInlineButton("👤 برای خودم", $"slp:{EncodeCompactGuid(request.Id)}:self") },
+            new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") }
+        };
+        await EditRequestPromptAsync(request,
+            $"کاربر {DisplayTelegramUser(callback.From)}\nاین {request.VolumeMl} میل را برای خودتان ثبت می‌کنید؟",
+            rows, cancellationToken);
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
     }
 
     private async Task ShowChannelBottleSelectionAsync(
