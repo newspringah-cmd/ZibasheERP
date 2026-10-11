@@ -5,11 +5,11 @@ namespace ZibasheERP.API.Telegram;
 public sealed class TelegramBotMenuInitializer(
     ITelegramMessageSender sender,
     IOptions<TelegramOptions> options,
-    ILogger<TelegramBotMenuInitializer> logger) : IHostedService
+    ILogger<TelegramBotMenuInitializer> logger) : BackgroundService
 {
     private readonly TelegramOptions _options = options.Value;
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.BotToken) ||
             string.IsNullOrWhiteSpace(_options.AdminChatId))
@@ -38,5 +38,4 @@ public sealed class TelegramBotMenuInitializer(
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
