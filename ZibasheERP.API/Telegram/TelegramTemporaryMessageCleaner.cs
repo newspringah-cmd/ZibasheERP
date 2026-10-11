@@ -56,17 +56,6 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
                     pending.Caption, pending.Rows, ct);
                 _logger.LogInformation("Deferred reservation prompt chat={ChatId} post={PostId} successful={Successful} error={Error}",
                     item.Key.ChatId, item.Key.MessageId, result.IsSuccessful, result.Error);
-                if ((result.IsSuccessful || result.Error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true) &&
-                    _scheduled.TryGetValue(item.Key, out var active) && ReferenceEquals(active, owner))
-                {
-                    // Refresh the CURRENT step once, never the initial volume keyboard.
-                    // Keep callback payloads identical so no order action is replayed.
-                    var refreshedRows = pending.Rows.Select(row => (IReadOnlyCollection<TelegramInlineButton>)row
-                        .Select(button => button with { Text = button.Text + "\u2063" }).ToArray()).ToArray();
-                    var refresh = await _sender.EditReplyMarkupAsync(item.Key.ChatId, item.Key.MessageId, refreshedRows, ct);
-                    _logger.LogInformation("Reservation post refresh chat={ChatId} post={PostId} successful={Successful} error={Error}",
-                        item.Key.ChatId, item.Key.MessageId, refresh.IsSuccessful, refresh.Error);
-                }
                 // Start the visible-step timeout after Telegram has responded.
                 _scheduled.TryUpdate(item.Key, owner with { ExpiresAt = DateTime.UtcNow.AddSeconds(20) }, owner);
             }

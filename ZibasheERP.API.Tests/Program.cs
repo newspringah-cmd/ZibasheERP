@@ -73,15 +73,16 @@ Check(keyboardProxy.Captions.Count == mediaBefore, "cancelled photo refresh cann
 keyboardCleaner.QueuePrompt("channel", 2, "after response", rows, "perfume", rows);
 var deferredBefore = keyboardProxy.Captions.Count;
 Check(keyboardProxy.Captions.Count == deferredBefore && keyboardCleaner.IsScheduled("channel", 2), "queued prompt protects post without issuing Telegram edit");
+var keyboardEditsBefore = keyboardProxy.KeyboardEdits;
 await Publish(keyboardCleaner);
 Check(keyboardProxy.Captions.Last() == "after response", "background publisher delivers queued step");
-var refreshedBefore = keyboardProxy.KeyboardEdits;
-Check(keyboardProxy.LastRows!.First().First().Text == rows.First().First().Text + "\u2063" &&
+Check(keyboardProxy.Captions.Count == deferredBefore + 1 && keyboardProxy.KeyboardEdits == keyboardEditsBefore &&
+    keyboardProxy.LastRows!.First().First().Text == rows.First().First().Text &&
     keyboardProxy.LastRows!.First().First().CallbackData == rows.First().First().CallbackData,
-    "post refresh forces a new keyboard without replaying or changing the order action");
+    "queued step sends caption and original buttons once without an extra keyboard refresh");
 deferredBefore = keyboardProxy.Captions.Count;
 await Publish(keyboardCleaner);
-Check(keyboardProxy.Captions.Count == deferredBefore && keyboardProxy.KeyboardEdits == refreshedBefore, "queued step and post refresh are published once");
+Check(keyboardProxy.Captions.Count == deferredBefore && keyboardProxy.KeyboardEdits == keyboardEditsBefore, "published step is not sent again");
 keyboardCleaner.QueuePrompt("channel", 2, "old step", rows, "perfume", rows);
 keyboardCleaner.QueuePrompt("channel", 2, "new step", rows, "perfume", rows);
 await Publish(keyboardCleaner);
