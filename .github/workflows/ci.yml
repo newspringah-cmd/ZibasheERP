@@ -107,6 +107,14 @@ jobs:
           --no-build
           --no-restore
 
+      - name: Run API behavior tests
+        run: >-
+          dotnet run
+          --project ZibasheERP.API.Tests/ZibasheERP.API.Tests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+
   container-build:
     needs: build-and-test
     runs-on: ubuntu-latest
