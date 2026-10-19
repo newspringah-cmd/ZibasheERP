@@ -1,6 +1,7 @@
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 using ZibasheERP.Application.Notifications;
+using ZibasheERP.Application.Services;
 using ZibasheERP.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
@@ -90,7 +91,8 @@ public sealed partial class TelegramWebhookController
         }
         catch (InvalidOperationException exception)
         {
-            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken);
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken,
+                showAlert: exception.Message == CustomerListReservationPolicy.DuplicateMessage);
             return true;
         }
         catch (DbUpdateConcurrencyException)
@@ -123,11 +125,18 @@ public sealed partial class TelegramWebhookController
 
         var initialList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
             ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
+        var adminRegistration = false;
+        if (await _salesListRequestRepository.HasCustomerItemAsync(salesListId, callback.From.Id.ToString(),
+                callback.From.Username, cancellationToken: cancellationToken))
+        {
+            adminRegistration = await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, cancellationToken);
+            if (!adminRegistration) throw new InvalidOperationException(CustomerListReservationPolicy.DuplicateMessage);
+        }
         var membershipChatId = initialList.TelegramChannelId ?? _options.SalesChannelId;
         if (!await _sender.IsChatMemberAsync(membershipChatId, callback.From.Id.ToString(), cancellationToken))
             throw new InvalidOperationException("برای ثبت درخواست باید عضو کانال فروش باشید.");
         var salesList = initialList;
-        if (salesList.Status != SalesListStatus.Open || volume < salesList.MinimumRequestVolumeMl || volume > salesList.RemainingVolume)
+        if (!salesList.CanReserveVolume(volume))
             throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {salesList.RemainingVolume} میل است.");
         if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
@@ -166,7 +175,8 @@ public sealed partial class TelegramWebhookController
             Kind = SalesListRequestKind.CurrentBottle,
             Status = SalesListRequestStatus.PendingConfirmation,
             ExpiresAt = DateTime.UtcNow.AddMinutes(10),
-            ExternalReference = $"telegram-channel:{Guid.NewGuid():N}"
+            ExternalReference = $"telegram-channel:{Guid.NewGuid():N}",
+            CreatedByAdmin = adminRegistration
         };
         await _salesListRequestRepository.AddAsync(request, cancellationToken);
         await _salesListRequestRepository.SaveChangesAsync(cancellationToken);
@@ -288,11 +298,9 @@ public sealed partial class TelegramWebhookController
         TelegramCallbackQuery callback, SalesListRequest request, string bottleDescription,
         CancellationToken cancellationToken)
     {
-        var previous = await _salesListRequestRepository.GetConfirmedForUserAsync(
-            request.SalesListId, request.TelegramUserId, cancellationToken);
-        var duplicate = previous.Any(value => value.VolumeMl == request.VolumeMl)
-            ? $"⚠️ قبلاً همین مقدار را ثبت کرده‌اید. با تأیید، {request.VolumeMl} میل دیگر اضافه می‌شود.\n"
-            : string.Empty;
+        if (CustomerListReservationPolicy.RequiresSingleItem(request) && await _salesListRequestRepository.HasCustomerItemAsync(
+                request.SalesListId, request.TelegramUserId, request.TelegramUsername, request.Id, cancellationToken))
+            throw new InvalidOperationException(CustomerListReservationPolicy.DuplicateMessage);
         var total = request.PerfumePricePerMl * request.VolumeMl + request.BottlePrice;
         var rows = new IReadOnlyCollection<TelegramInlineButton>[]
         {
@@ -304,7 +312,6 @@ public sealed partial class TelegramWebhookController
         };
         var confirmation =
             $"کاربر {DisplayTelegramUser(callback.From)}، آیا از ثبت این درخواست مطمئن هستید؟\n\n" +
-            duplicate +
             (request.IsGift ? $"🎁 هدیه برای: {GiftRecipientLabel(request)}\n" : string.Empty) +
             $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
             $"شیشه: {bottleDescription}\n" +
@@ -732,7 +739,7 @@ public sealed partial class TelegramWebhookController
     {
         continuationMessageId ??= list.TelegramContinuationMessageId;
         var values = ChannelVolumes
-            .Where(value => value >= list.MinimumRequestVolumeMl && value <= list.RemainingVolume)
+            .Where(list.CanReserveVolume)
             .ToArray();
         var rows = values.Chunk(3)
             .Select(valuesRow => (IReadOnlyCollection<TelegramInlineButton>)valuesRow.Select(value =>
@@ -754,30 +761,28 @@ public sealed partial class TelegramWebhookController
 
     internal static (string Main, string? Continuation) FormatChannelSalesListPages(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests,
-        bool aggregateBottleOwnerGifts = false)
+        bool aggregateProductionGifts = false)
+        => FormatSalesListPages(list, requests, aggregateProductionGifts, 1000);
+
+    private static (string Main, string? Continuation) FormatSalesListPages(
+        SalesList list, IReadOnlyCollection<SalesListRequest> requests,
+        bool aggregateProductionGifts, int safeCaptionLength)
     {
-        const int safeCaptionLength = 1000;
         var currentRequests = requests
             .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
             .ToArray();
-        var bottleOwner = aggregateBottleOwnerGifts
-            ? currentRequests.FirstOrDefault(value => value.IsBottleOwner)
-            : null;
-        var bottleOwnerGiftVolume = bottleOwner is null
-            ? 0
-            : currentRequests.Where(value => value.IsGift && IsBottleOwnerGift(value, bottleOwner))
-                .Sum(value => value.VolumeMl);
-        var rosterGroups = currentRequests
-            .Where(value => bottleOwner is null || !value.IsGift || !IsBottleOwnerGift(value, bottleOwner))
-            .Select(value => new
-            {
-                Request = value,
-                VolumeMl = value.VolumeMl + (value.IsBottleOwner ? bottleOwnerGiftVolume : 0)
-            })
+        var productionRows = aggregateProductionGifts
+            ? SalesListProductionGrouping.Build(currentRequests)
+            : currentRequests.Select(request => new SalesListProductionRow(request, request.VolumeMl)).ToArray();
+        var rosterGroups = productionRows
             .GroupBy(value => value.VolumeMl)
             .OrderByDescending(value => value.Key)
             .Select(value => (Volume: value.Key,
-                Users: value.Select(item => Html(DisplayUser(item.Request))).ToArray()))
+                Users: value.Select(item => Html(item.Request.IsGift && item.SourceCount > 1
+                    ? GiftRecipientLabel(item.Request) + " 🎁" + FancyBottleMarker(item.Request.Bottle) +
+                      (item.Request.OmitIdentityOnLabel ? " B Id" :
+                          !string.IsNullOrWhiteSpace(item.Request.LabelIdentityText) ? $" {item.Request.LabelIdentityText}=L" : "")
+                    : DisplayUser(item.Request))).ToArray()))
             .ToArray();
         var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle)
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
@@ -799,7 +804,7 @@ public sealed partial class TelegramWebhookController
             notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
             $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
-            $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل\n\n" +
+            $"حداقل درخواست: {list.EffectiveMinimumRequestVolumeMl} میل\n\n" +
             $"باقی‌مانده: {list.RemainingVolume} میل";
         var nextUsers = next.Select(item =>
             item.VolumeMl == 30
@@ -814,7 +819,7 @@ public sealed partial class TelegramWebhookController
                 FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
                 $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
                 $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
-                $"حداقل: {list.MinimumRequestVolumeMl} میل\n\n" +
+                $"حداقل: {list.EffectiveMinimumRequestVolumeMl} میل\n\n" +
                 $"باقی‌مانده: {list.RemainingVolume} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);
         var rosterLines = rosterGroups.SelectMany(group =>
@@ -918,19 +923,6 @@ public sealed partial class TelegramWebhookController
     }
     private static string? NormalizeUsername(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimStart('@');
-    private static bool IsBottleOwnerGift(
-        SalesListRequest gift, SalesListRequest bottleOwner)
-    {
-        if (!string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUserId) &&
-            string.Equals(gift.GiftRecipientTelegramUserId.Trim(), bottleOwner.TelegramUserId.Trim(),
-                StringComparison.OrdinalIgnoreCase))
-            return true;
-        var giftRecipientUsername = NormalizeUsername(gift.GiftRecipientTelegramUsername);
-        var ownerUsername = NormalizeUsername(bottleOwner.TelegramUsername);
-        return !string.IsNullOrWhiteSpace(giftRecipientUsername) &&
-               !string.IsNullOrWhiteSpace(ownerUsername) &&
-               string.Equals(giftRecipientUsername, ownerUsername, StringComparison.OrdinalIgnoreCase);
-    }
     private static string BottleLabel(string type) =>
         string.Equals(type, nameof(BottleType.Fancy), StringComparison.OrdinalIgnoreCase) ? "شیشه فانتزی" : "شیشه نرمال";
     private static string EncodeCompactGuid(Guid value) => TelegramCallbackParser.EncodeGuid(value);

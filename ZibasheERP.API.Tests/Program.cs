@@ -130,7 +130,12 @@ using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload
 await realSender.AnswerCallbackAsync("error", "access denied", showAlert: true);
 using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload!))
     Check(payload.RootElement.GetProperty("text").GetString() == "access denied" && payload.RootElement.GetProperty("show_alert").GetBoolean(), "explicit callback alerts preserved");
-Console.WriteLine("All reservation interaction tests passed.");
+ProductionGiftGroupingTests.Run(Check);
+await DecantListDeliveryTests.Run(Check);
+SmallRemainderReservationTests.Run(Check);
+AdminItemActivityTests.Run(Check);
+CustomerListReservationTests.Run(Check);
+Console.WriteLine("All API tests passed.");
 
 public class SenderProxy : DispatchProxy
 {

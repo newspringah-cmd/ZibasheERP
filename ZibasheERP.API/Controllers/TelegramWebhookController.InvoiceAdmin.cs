@@ -313,6 +313,12 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("invoiceadmin:admin-activity", StringComparison.Ordinal))
+        {
+            await HandleAdminItemActivityReportAsync(callback, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("invoiceadmin:group-report", StringComparison.Ordinal))
         {
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -1707,6 +1713,8 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("🔎 گزارش وضعیت عطر مشتری", "invoiceadmin:customer-perfume-status")
             }
         };
+        if (IsPrimaryOwner(chatId))
+            buttons.Add(new[] { new TelegramInlineButton("📊 عملکرد ادمین‌ها", "invoiceadmin:admin-activity") });
         if (IsAccountantLearningManager(actorUsername))
             buttons.Add(new[]
             {
@@ -3738,12 +3746,18 @@ public sealed partial class TelegramWebhookController
     private async Task<bool> IsAuthorizedInvoiceAdminAsync(long chatId, long userId, CancellationToken ct)
     {
         if (IsPrimaryOwner(userId))
+        {
+            _adminActivityContext.Authorize(userId);
             return true;
+        }
 
         var isPrivateChat = chatId == userId;
         if (AuthorizedAdminUntil.TryGetValue(userId, out var expiresAt) &&
             expiresAt > DateTime.UtcNow)
+        {
+            _adminActivityContext.Authorize(userId);
             return true;
+        }
 
         var hasAdminChat = long.TryParse(_options.AdminChatId, out var adminChatId);
         if (isPrivateChat && !hasAdminChat)
@@ -3753,16 +3767,23 @@ public sealed partial class TelegramWebhookController
         var isAdministrator = await _sender.IsChatAdministratorAsync(
             authorizationChatId.ToString(), userId.ToString(), ct);
         if (isAdministrator)
+        {
             AuthorizedAdminUntil[userId] = DateTime.UtcNow.AddMinutes(3);
+            _adminActivityContext.Authorize(userId);
+        }
         else
             AuthorizedAdminUntil.TryRemove(userId, out _);
         return isAdministrator;
     }
 
-    private async Task<bool> IsAuthorizedInvoiceActionAdminAsync(long userId, CancellationToken ct) =>
-        IsPrimaryOwner(userId) ||
-        (!string.IsNullOrWhiteSpace(_options.AdminChatId) &&
-         await _sender.IsChatAdministratorAsync(_options.AdminChatId.Trim(), userId.ToString(), ct));
+    private async Task<bool> IsAuthorizedInvoiceActionAdminAsync(long userId, CancellationToken ct)
+    {
+        var authorized = IsPrimaryOwner(userId) ||
+            (!string.IsNullOrWhiteSpace(_options.AdminChatId) &&
+             await _sender.IsChatAdministratorAsync(_options.AdminChatId.Trim(), userId.ToString(), ct));
+        if (authorized) _adminActivityContext.Authorize(userId);
+        return authorized;
+    }
 
     private static bool TryNormalizeCard(string value, out string card)
     {

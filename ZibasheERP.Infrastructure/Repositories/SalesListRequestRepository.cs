@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
+using ZibasheERP.Application.Services;
 
 namespace ZibasheERP.Infrastructure.Repositories;
 
@@ -9,6 +10,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
 {
     private readonly AppDbContext _dbContext;
     public SalesListRequestRepository(AppDbContext dbContext) => _dbContext = dbContext;
+
+    public Task<bool> HasCustomerItemAsync(Guid listId, string userId, string? username, Guid? excluding = null, CancellationToken cancellationToken = default) =>
+        _dbContext.SalesListRequests.AnyAsync(CustomerListReservationPolicy.ExistingItem(listId, userId, username, excluding), cancellationToken);
 
     public Task<SalesListRequest?> GetAsync(Guid id, CancellationToken cancellationToken = default) =>
         _dbContext.SalesListRequests
@@ -105,6 +109,13 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         Guid requestId, string telegramUserId, CancellationToken cancellationToken = default, bool queueCompletion = false)
     {
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var listId = await _dbContext.SalesListRequests.AsNoTracking().Where(value => value.Id == requestId && !value.IsDeleted)
+            .Select(value => value.SalesListId).SingleOrDefaultAsync(cancellationToken);
+        // Serialize customer confirmations for this cycle across processes before
+        // checking for an existing item, so two pending requests cannot both pass.
+        var lockedList = await _dbContext.SalesLists.FromSqlInterpolated($"SELECT * FROM [SalesLists] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={listId}")
+            .AsNoTracking().SingleOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
         var request = await _dbContext.SalesListRequests
             .Include(value => value.SalesList)
             .FirstOrDefaultAsync(value => value.Id == requestId && !value.IsDeleted, cancellationToken)
@@ -115,6 +126,11 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             throw new InvalidOperationException("صف بطری بعدی فقط توسط ادمین مدیریت می‌شود.");
         if (request.Status == SalesListRequestStatus.Confirmed)
             return;
+        _dbContext.Entry(request.SalesList).CurrentValues.SetValues(lockedList);
+        _dbContext.Entry(request.SalesList).OriginalValues.SetValues(lockedList);
+        if (CustomerListReservationPolicy.RequiresSingleItem(request) && await HasCustomerItemAsync(
+                request.SalesListId, request.TelegramUserId, request.TelegramUsername, request.Id, cancellationToken))
+            throw new InvalidOperationException(CustomerListReservationPolicy.DuplicateMessage);
         if (request.Status != SalesListRequestStatus.PendingConfirmation || request.ExpiresAt <= DateTime.UtcNow)
             throw new InvalidOperationException("مهلت تأیید این درخواست تمام شده است.");
         if (string.IsNullOrWhiteSpace(request.TelegramUsername))
@@ -123,8 +139,8 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
             !await IsGiftRecipientBottleOwnerAsync(request.Id, cancellationToken))
             throw new InvalidOperationException("نوع شیشه برای این درخواست مشخص نشده است.");
-        if (request.SalesList.Status != SalesListStatus.Open || request.VolumeMl > request.SalesList.RemainingVolume)
-            throw new InvalidOperationException($"ظرفیت کافی نیست. باقی‌مانده فعلی {request.SalesList.RemainingVolume} میل است.");
+        if (!request.SalesList.CanReserveVolume(request.VolumeMl))
+            throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ حداقل فعلی {request.SalesList.EffectiveMinimumRequestVolumeMl} میل و باقی‌مانده {request.SalesList.RemainingVolume} میل است.");
         if (request.IsBottleOwner && request.SalesList.HasBottleOwner)
             throw new InvalidOperationException("صاحب باتل این لیست قبلاً مشخص شده است.");
 

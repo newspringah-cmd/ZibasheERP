@@ -34,6 +34,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Database
+builder.Services.AddScoped<ZibasheERP.Application.Services.AdminActivityContext>();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -149,6 +150,8 @@ builder.Services.AddSingleton<IPerfumeLabelPdfService, PerfumeLabelPdfService>()
 builder.Services.AddScoped<ITrackingImportService, TrackingImportService>();
 builder.Services.AddSingleton<TrackingImportDraftStore>();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
+builder.Services.AddScoped<IDecantListDeliveryStore, DecantListDeliveryStore>();
+builder.Services.AddScoped<TelegramDecantListDelivery>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
 builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();

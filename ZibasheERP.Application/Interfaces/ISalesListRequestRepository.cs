@@ -4,6 +4,7 @@ namespace ZibasheERP.Application.Interfaces;
 
 public interface ISalesListRequestRepository
 {
+    Task<bool> HasCustomerItemAsync(Guid listId, string userId, string? username, Guid? excluding = null, CancellationToken cancellationToken = default);
     Task<SalesListRequest?> GetAsync(Guid id, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<SalesListRequest>> GetConfirmedAsync(Guid salesListId, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<SalesListRequest>> GetForLabelAdministrationAsync(Guid salesListId, CancellationToken cancellationToken = default);

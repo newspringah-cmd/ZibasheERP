@@ -11,6 +11,9 @@ namespace ZibasheERP.API.Telegram;
 
 public interface ITelegramMessageSender
 {
+    Task<TelegramSendResult> SendDecantListPartAsync(string chatId, string? photo, string text,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, CancellationToken cancellationToken = default);
+
     Task<TelegramSendResult> ConfigureAssistantIdentityAsync(
         CancellationToken cancellationToken = default);
 
@@ -748,10 +751,20 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         }
     }
 
+    public Task<TelegramSendResult> SendDecantListPartAsync(string chatId, string? photo, string text,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, CancellationToken cancellationToken = default)
+    {
+        var keyboard = new { inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray() };
+        return string.IsNullOrWhiteSpace(photo)
+            ? SendRequestAsync("sendMessage", new { chat_id = chatId, text, parse_mode = "HTML", reply_markup = keyboard }, cancellationToken, false)
+            : SendRequestAsync("sendPhoto", new { chat_id = chatId, photo, caption = text, parse_mode = "HTML", reply_markup = keyboard }, cancellationToken, false);
+    }
+
     private async Task<TelegramSendResult> SendRequestAsync(
         string method,
         object request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool retryServerErrors = true)
     {
         if (string.IsNullOrWhiteSpace(_botToken))
             return new TelegramSendResult(false, "Telegram bot token is not configured.");
@@ -787,7 +800,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 }
                 _logger.LogWarning("Telegram request rejected method={Method} attempt={Attempt} http={HttpStatus} retryAfter={RetryAfter} error={Error}",
                     method, attempt + 1, (int)response.StatusCode, body?.Parameters?.RetryAfter, body?.Description);
-                var retryable = (int)response.StatusCode == 429 || (int)response.StatusCode >= 500;
+                var retryable = (int)response.StatusCode == 429 || (retryServerErrors && (int)response.StatusCode >= 500);
                 if (!retryable || attempt == 2)
                     return new TelegramSendResult(false,
                         body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.");

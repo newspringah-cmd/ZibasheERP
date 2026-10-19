@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Features.Invoices.IssueInvoice;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Application.Notifications;
+using ZibasheERP.Application.Services;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 
@@ -1040,14 +1041,18 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     private static string FormatOrderList(SalesList list)
     {
         var header = FormatOrderHeader(list);
-        var roster = list.Requests
-            .Where(request => request.Kind == SalesListRequestKind.CurrentBottle)
-            .GroupBy(request => request.VolumeMl)
+        var roster = SalesListProductionGrouping.Build(list.Requests)
+            .GroupBy(row => row.VolumeMl)
             .OrderByDescending(group => group.Key)
             .Select(group => $"{group.Key} ml:\n" + string.Join("\n", group
-                .OrderBy(request => request.ConfirmedAt)
-                .ThenBy(request => request.CreatedAt)
-                .Select(ProductionIdentity)))
+                .OrderBy(row => row.Request.ConfirmedAt)
+                .ThenBy(row => row.Request.CreatedAt)
+                .Select(row => row.Request.IsGift && row.SourceCount > 1
+                    ? GiftRecipientIdentity(row.Request) + " 🎁" +
+                      (row.Request.Bottle?.Type == BottleType.Fancy ? " F" : "") +
+                      (row.Request.OmitIdentityOnLabel ? " B Id" :
+                          !string.IsNullOrWhiteSpace(row.Request.LabelIdentityText) ? $" {row.Request.LabelIdentityText}=L" : "")
+                    : ProductionIdentity(row.Request))))
             .ToArray();
         return string.Join("\n\n", new[]
         {
@@ -1118,25 +1123,11 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
     private static string FormatLabelList(SalesList list)
     {
-        var owner = list.Requests.FirstOrDefault(request =>
-            request.Kind == SalesListRequestKind.CurrentBottle && request.IsBottleOwner);
-        var ownerGiftVolume = owner is null
-            ? 0
-            : list.Requests.Where(request =>
-                    request.Kind == SalesListRequestKind.CurrentBottle &&
-                    request.IsGift && IsGiftFor(request, owner))
-                .Sum(request => request.VolumeMl);
         var labelRows = new List<(int Volume, DateTime SortAt, string Identity)>();
-        foreach (var request in list.Requests
-                     .Where(request => request.Kind == SalesListRequestKind.CurrentBottle)
-                     .OrderBy(request => request.ConfirmedAt)
-                     .ThenBy(request => request.CreatedAt))
+        foreach (var row in SalesListProductionGrouping.Build(list.Requests))
         {
-            if (request.IsGift && owner is not null && IsGiftFor(request, owner))
-                continue;
-            var volume = request.IsBottleOwner
-                ? request.VolumeMl + ownerGiftVolume
-                : request.VolumeMl;
+            var request = row.Request;
+            var volume = row.VolumeMl;
             var identity = !string.IsNullOrWhiteSpace(request.LabelIdentityText)
                 ? request.LabelIdentityText.Trim()
                 : request.IsGift
@@ -1160,19 +1151,6 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             .ToArray();
         return FormatOrderHeader(list) + "\n\n" + string.Join("\n\n", roster) +
                "\n\n" + FormatNextBottleSection(list);
-    }
-
-    private static bool IsGiftFor(SalesListRequest gift, SalesListRequest recipient)
-    {
-        if (!string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUserId) &&
-            string.Equals(gift.GiftRecipientTelegramUserId.Trim(), recipient.TelegramUserId.Trim(),
-                StringComparison.OrdinalIgnoreCase))
-            return true;
-        var giftRecipientUsername = NormalizeCustomerUsername(gift.GiftRecipientTelegramUsername);
-        var recipientUsername = NormalizeCustomerUsername(recipient.TelegramUsername);
-        return !string.IsNullOrWhiteSpace(giftRecipientUsername) &&
-               !string.IsNullOrWhiteSpace(recipientUsername) &&
-               string.Equals(giftRecipientUsername, recipientUsername, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GiftRecipientIdentity(SalesListRequest request) =>

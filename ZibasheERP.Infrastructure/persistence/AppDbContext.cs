@@ -1,13 +1,19 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Application.Services;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace ZibasheERP.Infrastructure.Persistence;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options)
+    private readonly AdminActivityContext? adminActivity;
+
+    public AppDbContext(DbContextOptions<AppDbContext> options, AdminActivityContext? adminActivity = null)
         : base(options)
     {
+        this.adminActivity = adminActivity;
     }
 
     public DbSet<Customer> Customers => Set<Customer>();
@@ -37,6 +43,7 @@ public class AppDbContext : DbContext
     public DbSet<InvoiceIssuanceBatch> InvoiceIssuanceBatches => Set<InvoiceIssuanceBatch>();
     public DbSet<InvoiceIssuanceBatchSalesList> InvoiceIssuanceBatchSalesLists => Set<InvoiceIssuanceBatchSalesList>();
     public DbSet<NotificationOutbox> NotificationOutbox => Set<NotificationOutbox>();
+    public DbSet<AdminItemActivity> AdminItemActivities => Set<AdminItemActivity>();
     public DbSet<IntegrationDeliveryFailure> IntegrationDeliveryFailures => Set<IntegrationDeliveryFailure>();
     public DbSet<InvoicePaymentAccount> InvoicePaymentAccounts => Set<InvoicePaymentAccount>();
     public DbSet<InvoiceTelegramSetting> InvoiceTelegramSettings => Set<InvoiceTelegramSetting>();
@@ -73,6 +80,74 @@ public class AppDbContext : DbContext
         ConfigureInvoicePaymentAccount(modelBuilder);
         ConfigureInvoiceTelegramSetting(modelBuilder);
         ConfigureTrackingImports(modelBuilder);
+        modelBuilder.Entity<AdminItemActivity>().Property(row => row.ActorUsername).HasMaxLength(100);
+        modelBuilder.Entity<AdminItemActivity>().Property(row => row.ActorDisplayName).HasMaxLength(128);
+        modelBuilder.Entity<AdminItemActivity>().HasIndex(row => new { row.ActorTelegramUserId, row.CreatedAt });
+        modelBuilder.Entity<AdminItemActivity>().HasIndex(row => new { row.CreatedAt, row.Action });
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        CaptureAdminItemActivities();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        CaptureAdminItemActivities();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void CaptureAdminItemActivities()
+    {
+        var actor = adminActivity?.AuthorizedActor;
+        if (actor is null) return;
+        ChangeTracker.DetectChanges();
+        // Rebuild unsaved audit rows if EF is retrying a failed save. They commit
+        // in the same database transaction as the item changes they describe.
+        foreach (var pending in ChangeTracker.Entries<AdminItemActivity>().Where(entry => entry.State == EntityState.Added &&
+                     entry.Entity.SourceUpdateId == actor.UpdateId).ToArray())
+            pending.State = EntityState.Detached;
+        static bool Active(SalesListRequestStatus status) => status is SalesListRequestStatus.Confirmed or
+            SalesListRequestStatus.Promoted or SalesListRequestStatus.QueuedForInvoice or SalesListRequestStatus.Invoiced;
+        var entries = ChangeTracker.Entries<SalesListRequest>().Where(entry =>
+            entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToArray();
+        var trackedLists = ChangeTracker.Entries<SalesList>().Select(entry => entry.Entity).ToDictionary(list => list.Id);
+        var unknownLists = entries.Where(entry => entry.Entity.SalesList is null && !trackedLists.ContainsKey(entry.Entity.SalesListId))
+            .Select(entry => entry.Entity.SalesListId).Distinct().ToArray();
+        var inventoryLists = trackedLists.Values.Where(list => list.IsInventoryOffer).Select(list => list.Id).ToHashSet();
+        if (unknownLists.Length > 0)
+            inventoryLists.UnionWith(SalesLists.AsNoTracking().Where(list => unknownLists.Contains(list.Id) && list.IsInventoryOffer)
+                .Select(list => list.Id).ToArray());
+        foreach (var entry in entries)
+        {
+            var request = entry.Entity;
+            if (request.SalesList?.IsInventoryOffer == true || inventoryLists.Contains(request.SalesListId)) continue;
+            var beforeActive = entry.State != EntityState.Added &&
+                !entry.OriginalValues.GetValue<bool>(nameof(SalesListRequest.IsDeleted)) &&
+                Active(entry.OriginalValues.GetValue<SalesListRequestStatus>(nameof(SalesListRequest.Status)));
+            var afterActive = entry.State != EntityState.Deleted && !request.IsDeleted && Active(request.Status);
+            var oldVolume = entry.State == EntityState.Added ? (int?)null : entry.OriginalValues.GetValue<int>(nameof(SalesListRequest.VolumeMl));
+            AdminItemAction? action = !beforeActive && afterActive ? AdminItemAction.Registered :
+                beforeActive && !afterActive ? AdminItemAction.Removed :
+                beforeActive && afterActive && oldVolume != request.VolumeMl ? AdminItemAction.VolumeChanged : null;
+            if (!action.HasValue) continue;
+            if (action == AdminItemAction.Registered && entry.State == EntityState.Added &&
+                request.ExternalReference.StartsWith("auto-next:", StringComparison.Ordinal)) continue;
+            int? previous = action == AdminItemAction.Registered ? null : oldVolume;
+            int? next = action == AdminItemAction.Removed ? null : request.VolumeMl;
+            var identity = FormattableString.Invariant($"admin-item:{actor.UpdateId}:{actor.UserId}:{request.Id:N}:{(int)action.Value}:{previous}:{next}");
+            var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(identity))[..16]);
+            if (ChangeTracker.Entries<AdminItemActivity>().Any(existing => existing.Entity.Id == id)) continue;
+            AdminItemActivities.Add(new AdminItemActivity
+            {
+                Id = id, CreatedAt = DateTime.UtcNow, ActorTelegramUserId = actor.UserId,
+                ActorUsername = actor.Username?[..Math.Min(actor.Username.Length, 100)],
+                ActorDisplayName = actor.DisplayName[..Math.Min(actor.DisplayName.Length, 128)],
+                SourceUpdateId = actor.UpdateId, SalesListId = request.SalesListId,
+                SalesListRequestId = request.Id, Action = action.Value, PreviousVolumeMl = previous, NewVolumeMl = next
+            });
+        }
     }
 
     private static void ConfigureTrackingImports(ModelBuilder modelBuilder)

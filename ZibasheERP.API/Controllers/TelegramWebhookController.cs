@@ -32,6 +32,7 @@ using ZibasheERP.Application.Features.SalesLists.GetOpenSalesLists;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Application.Notifications;
 using ZibasheERP.Infrastructure.Persistence;
+using ZibasheERP.Application.Services;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -46,6 +47,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private static readonly ConcurrentDictionary<long, DateTime> AuthorizedAdminUntil = new();
     private readonly IMediator _mediator;
     private readonly ITelegramMessageSender _sender;
+    private readonly TelegramDecantListDelivery _decantListDelivery;
+    private readonly AdminActivityContext _adminActivityContext;
     private readonly TelegramOptions _options;
     private readonly ILogger<TelegramWebhookController> _logger;
     private readonly ITelegramOrderDraftRepository _draftRepository;
@@ -110,6 +113,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramInvoiceInventoryDraftStore invoiceInventoryDrafts,
         TelegramDecantPhotoDraftStore decantPhotoDrafts,
         TelegramOrderFlowDraftStore orderFlowDrafts,
+        TelegramDecantListDelivery decantListDelivery,
+        AdminActivityContext adminActivityContext,
         TelegramSalesListRebuildWorker salesListRebuildWorker,
         TelegramProductionCopyResendWorker productionCopyResendWorker,
         IInvoiceInventoryService invoiceInventoryService,
@@ -149,6 +154,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _invoiceInventoryDrafts = invoiceInventoryDrafts;
         _decantPhotoDrafts = decantPhotoDrafts;
         _orderFlowDrafts = orderFlowDrafts;
+        _decantListDelivery = decantListDelivery;
+        _adminActivityContext = adminActivityContext;
         _salesListRebuildWorker = salesListRebuildWorker;
         _productionCopyResendWorker = productionCopyResendWorker;
         _invoiceInventoryService = invoiceInventoryService;
@@ -182,6 +189,12 @@ public sealed partial class TelegramWebhookController : ControllerBase
             await _groupMembershipTracker.TrackAsync(update.MyChatMember, cancellationToken);
             return Ok();
         }
+
+        var activityActor = update.CallbackQuery?.From ?? update.Message?.From;
+        if (activityActor is not null)
+            _adminActivityContext.SetSource(activityActor.Id, activityActor.Username,
+                string.Join(" ", new[] { activityActor.FirstName, activityActor.LastName }.Where(value => !string.IsNullOrWhiteSpace(value))),
+                update.UpdateId);
 
         if (update.CallbackQuery is not null)
         {

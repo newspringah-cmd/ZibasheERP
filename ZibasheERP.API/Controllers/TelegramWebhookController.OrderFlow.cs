@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Orders.AdvanceFulfillment;
 using ZibasheERP.Application.Features.Shipments.CreateShipment;
+using ZibasheERP.Application.Services;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.API.Controllers;
@@ -724,26 +725,29 @@ public sealed partial class TelegramWebhookController
             return;
         }
         var now = DateTime.UtcNow;
-        var arrivingListIds = await _db.OrderItems.AsNoTracking()
-            .Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
-                selected.Contains(value.SalesListId.Value) &&
-                value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
-            .Select(value => value.SalesListId!.Value).Distinct().ToArrayAsync(ct);
-        var affected = await _db.OrderItems.Where(value => !value.IsDeleted && value.SalesListId.HasValue &&
-                selected.Contains(value.SalesListId.Value) &&
-                value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(value => value.FulfillmentStatus, OrderItemFulfillmentStatus.DecantQueue)
-                .SetProperty(value => value.ArrivedInIranAt, now)
-                .SetProperty(value => value.EnteredDecantQueueAt, now)
-                .SetProperty(value => value.UpdatedAt, now), ct);
+        var arrivingListIds = new List<Guid>();
+        var affected = 0;
         var failures = new List<string>();
         foreach (var list in lists)
         {
+            // Preserve historical deliveries made before durable receipts existed.
+            var previouslyEntered = await _db.OrderItems.AnyAsync(value => !value.IsDeleted && value.SalesListId == list.Id &&
+                (value.EnteredDecantQueueAt.HasValue || value.FulfillmentStatus >= OrderItemFulfillmentStatus.DecantQueue), ct);
+            var changed = await _db.OrderItems.Where(value => !value.IsDeleted && value.SalesListId == list.Id &&
+                    value.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(value => value.FulfillmentStatus, OrderItemFulfillmentStatus.DecantQueue)
+                    .SetProperty(value => value.ArrivedInIranAt, now)
+                    .SetProperty(value => value.EnteredDecantQueueAt, now)
+                    .SetProperty(value => value.UpdatedAt, now), ct);
+            affected += changed;
+            if (changed == 0) continue;
+            arrivingListIds.Add(list.Id);
+            if (previouslyEntered) continue;
             var result = await SendDecantQueueListAsync(list, ct);
             if (!result.IsSuccessful) failures.Add($"{list.DisplayCode}: {result.Error}");
         }
-        if (affected > 0 && arrivingListIds.Length > 0)
+        if (affected > 0 && arrivingListIds.Count > 0)
         {
             var copies = await _invoiceIssuanceService.GetProductionCopiesAsync(arrivingListIds, ct);
             var labelFailures = await SendProductionCopiesAsync(copies, ct);
@@ -753,7 +757,7 @@ public sealed partial class TelegramWebhookController
         await _sender.AnswerCallbackAsync(callback.Id, $"{affected} آیتم وارد صف دکانت شد ✅", ct, true);
         await ReplyAsync(chatId,
             failures.Count == 0
-                ? $"✅ {lists.Length} عطر به صف دکانت ارسال شد."
+                ? $"✅ {arrivingListIds.Count} عطر وارد صف دکانت شد. لیست‌های قبلاً واردشده دوباره ارسال نشدند."
                 : $"⚠️ وضعیت ثبت شد اما ارسال {failures.Count} پیام صف یا چاپ لیبل ناموفق بود:\n{string.Join("\n", failures)}", ct);
         await SendOrderFlowDashboardAsync(chatId, ct);
     }
@@ -772,22 +776,22 @@ public sealed partial class TelegramWebhookController
                  value.Status == SalesListRequestStatus.Invoiced))
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
             .ToArrayAsync(ct);
-        var pages = FormatChannelSalesListPages(list, requests, aggregateBottleOwnerGifts: true);
+        var pages = FormatDecantQueueListPages(list, requests);
         var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
         {
             new[] { new TelegramInlineButton("📸 ارسال عکس دکانت", $"decantphoto:list:{list.Id:N}") }
         };
-        TelegramSendResult result;
-        var caption = "🧴 <b>دکانت جدید</b>\n\n" + pages.Main;
-        if (!string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
-            result = await _sender.SendPhotoWithKeyboardAsync(
-                _options.DecantChatId.Trim(), list.TelegramPhotoFileId, caption, buttons, ct);
-        else
-            result = await _sender.SendInlineKeyboardAsync(
-                _options.DecantChatId.Trim(), caption, buttons, ct);
-        if (result.IsSuccessful && !string.IsNullOrWhiteSpace(pages.Continuation))
-            await _sender.SendHtmlAsync(_options.DecantChatId.Trim(), pages.Continuation, ct);
-        return result;
+        return await _decantListDelivery.SendAsync(list.Id, _options.DecantChatId,
+            list.TelegramPhotoFileId, pages.Main, buttons, pages.Continuation, ct);
+    }
+
+    private static (string Main, string? Continuation) FormatDecantQueueListPages(
+        SalesList list, IReadOnlyCollection<SalesListRequest> requests)
+    {
+        var heading = $"📅 <b>تاریخ تکمیل لیست: {SalesListCompletionDate.Format(list, requests)}</b>\n" +
+                      "🧴 <b>دکانت جدید</b>\n\n";
+        var pages = FormatSalesListPages(list, requests, true, 1000 - heading.Length);
+        return (heading + pages.Main, pages.Continuation);
     }
 
     private async Task SendOrderFlowListAsync(long chatId, OrderStatus status, int page, CancellationToken ct)

@@ -90,6 +90,60 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.ToTable("Addresses");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.AdminItemActivity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Action")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ActorDisplayName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("ActorTelegramUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ActorUsername")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<int?>("NewVolumeMl")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("PreviousVolumeMl")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("SalesListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("SalesListRequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("SourceUpdateId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorTelegramUserId", "CreatedAt");
+
+                    b.HasIndex("CreatedAt", "Action");
+
+                    b.ToTable("AdminItemActivities");
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Batch", b =>
                 {
                     b.Property<Guid>("Id")

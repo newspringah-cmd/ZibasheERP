@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.PerfumeLabels;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Application.Services;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.API.Controllers;
@@ -158,39 +159,25 @@ public sealed partial class TelegramWebhookController
                  request.Status == SalesListRequestStatus.Promoted ||
                  request.Status == SalesListRequestStatus.QueuedForInvoice ||
                  request.Status == SalesListRequestStatus.Invoiced)))
+            .ThenInclude(request => request.Bottle)
             .FirstOrDefaultAsync(value => value.Id == salesListId && !value.IsDeleted, ct);
 
     private static IReadOnlyCollection<PerfumeLabelEntry> BuildPerfumeLabelEntries(SalesList list)
     {
-        var requests = list.Requests.ToArray();
-        var owner = requests.FirstOrDefault(value => value.IsBottleOwner);
-        return requests
-            .Where(request => !request.IsGift || owner is null || !IsPerfumeLabelGiftFor(request, owner))
+        return SalesListProductionGrouping.Build(list.Requests)
             // Print the bottle owner's username-only label first, then keep equal
             // volumes next to each other from the largest volume down.
-            .OrderByDescending(request => request.IsBottleOwner)
-            .ThenByDescending(request => request.VolumeMl)
-            .ThenBy(request => request.ConfirmedAt ?? request.CreatedAt)
-            .Select(request => request.IsBottleOwner
-                ? new PerfumeLabelEntry(null, NormalizePerfumeLabelUsername(request.TelegramUsername))
-                : new PerfumeLabelEntry(request.VolumeMl))
+            .OrderByDescending(row => row.Request.IsBottleOwner)
+            .ThenByDescending(row => row.VolumeMl)
+            .ThenBy(row => row.Request.ConfirmedAt ?? row.Request.CreatedAt)
+            .Select(row => row.Request.IsBottleOwner
+                ? new PerfumeLabelEntry(null, NormalizePerfumeLabelUsername(row.Request.TelegramUsername))
+                : new PerfumeLabelEntry(row.VolumeMl))
             .ToArray();
     }
 
     private static string NormalizePerfumeLabelUsername(string? username) =>
         username?.Trim().TrimStart('@') ?? string.Empty;
-
-    private static bool IsPerfumeLabelGiftFor(SalesListRequest gift, SalesListRequest recipient)
-    {
-        if (!string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUserId) &&
-            string.Equals(gift.GiftRecipientTelegramUserId.Trim(), recipient.TelegramUserId.Trim(),
-                StringComparison.Ordinal))
-            return true;
-        var giftUsername = gift.GiftRecipientTelegramUsername?.Trim().TrimStart('@');
-        var recipientUsername = recipient.TelegramUsername?.Trim().TrimStart('@');
-        return !string.IsNullOrWhiteSpace(giftUsername) && !string.IsNullOrWhiteSpace(recipientUsername) &&
-               string.Equals(giftUsername, recipientUsername, StringComparison.OrdinalIgnoreCase);
-    }
 
     private static string PerfumeLabelName(SalesList list) =>
         string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;

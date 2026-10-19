@@ -85,6 +85,14 @@ public class SalesList : BaseEntity
     // حجم باقی مانده
     public int RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
 
+    // Let customers finish the last small remainder without lowering the list's
+    // configured minimum for ordinary reservations or subsequent bottle cycles.
+    public int EffectiveMinimumRequestVolumeMl => RemainingVolume > 0 && RemainingVolume < MinimumRequestVolumeMl
+        ? 1 : MinimumRequestVolumeMl;
+
+    public bool CanReserveVolume(int volumeMl) => Status == SalesListStatus.Open && volumeMl > 0 &&
+        volumeMl >= EffectiveMinimumRequestVolumeMl && volumeMl <= RemainingVolume;
+
     // Persisted alert markers prevent repeated Telegram notifications when a
     // request is edited or removed after the list crosses a threshold.
     public DateTime? LowStockAlertSentAt { get; set; }
