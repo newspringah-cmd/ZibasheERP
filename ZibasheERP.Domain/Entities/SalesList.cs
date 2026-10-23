@@ -90,8 +90,11 @@ public class SalesList : BaseEntity
     public int EffectiveMinimumRequestVolumeMl => RemainingVolume > 0 && RemainingVolume < MinimumRequestVolumeMl
         ? 1 : MinimumRequestVolumeMl;
 
-    public bool CanReserveVolume(int volumeMl) => Status == SalesListStatus.Open && volumeMl > 0 &&
-        volumeMl >= EffectiveMinimumRequestVolumeMl && volumeMl <= RemainingVolume;
+    public bool CanReserveVolume(int volumeMl) => CanReserveVolume(volumeMl, false);
+
+    // Admin entry may bypass the minimum, but never capacity or list status.
+    public bool CanReserveVolume(int volumeMl, bool createdByAdmin) => Status == SalesListStatus.Open && volumeMl > 0 &&
+        (createdByAdmin || volumeMl >= EffectiveMinimumRequestVolumeMl) && volumeMl <= RemainingVolume;
 
     // Persisted alert markers prevent repeated Telegram notifications when a
     // request is edited or removed after the list crosses a threshold.

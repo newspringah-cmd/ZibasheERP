@@ -38,12 +38,28 @@ public static class SmallRemainderReservationTests
         list.ReservedVolume = 50;
         check(!list.CanReserveVolume(2) && list.MinimumRequestVolumeMl == 5,
             "restored capacity disables stale small-volume requests without changing the configured minimum");
+        foreach (var isGift in new[] { false, true })
+        {
+            var request = new SalesListRequest { VolumeMl = 1, CreatedByAdmin = true, IsGift = isGift };
+            check(list.CanReserveVolume(request.VolumeMl, request.CreatedByAdmin),
+                $"admin can register a below-minimum {(isGift ? "gift" : "ordinary item")}");
+            request.CreatedByAdmin = false;
+            check(!list.CanReserveVolume(request.VolumeMl, request.CreatedByAdmin),
+                $"customer cannot bypass minimum for a {(isGift ? "gift" : "ordinary item")}");
+        }
+        check(!list.CanReserveVolume(0, true) && !list.CanReserveVolume(-1, true) &&
+                !list.CanReserveVolume(51, true) && list.CanReserveVolume(50, true),
+            "admin exemption preserves positive-volume and remaining-capacity limits");
+        check(VolumeButtons().All(button => !button.Text.StartsWith("1 ml")) && list.MinimumRequestVolumeMl == 5,
+            "admin exemption does not lower public channel buttons or configured minimum");
         list.ReservedVolume = 100;
         check(!list.CanReserveVolume(1) && VolumeButtons().Length == 0,
             "completed list has no reservable volume");
+        check(!list.CanReserveVolume(1, true), "admin cannot reserve beyond a completed list's capacity");
         list.ReservedVolume = 98;
         list.Status = SalesListStatus.Closed;
         check(!list.CanReserveVolume(1) && VolumeButtons().Length == 0,
             "closed list cannot be reserved through the small-remainder exception");
+        check(!list.CanReserveVolume(1, true), "admin minimum exemption cannot reopen a closed list");
     }
 }

@@ -126,17 +126,19 @@ public sealed partial class TelegramWebhookController
         var initialList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
             ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
         var adminRegistration = false;
+        if (volume > 0 && volume < initialList.EffectiveMinimumRequestVolumeMl)
+            adminRegistration = await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, cancellationToken);
         if (await _salesListRequestRepository.HasCustomerItemAsync(salesListId, callback.From.Id.ToString(),
                 callback.From.Username, cancellationToken: cancellationToken))
         {
-            adminRegistration = await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, cancellationToken);
+            adminRegistration = adminRegistration || await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, cancellationToken);
             if (!adminRegistration) throw new InvalidOperationException(CustomerListReservationPolicy.DuplicateMessage);
         }
         var membershipChatId = initialList.TelegramChannelId ?? _options.SalesChannelId;
         if (!await _sender.IsChatMemberAsync(membershipChatId, callback.From.Id.ToString(), cancellationToken))
             throw new InvalidOperationException("برای ثبت درخواست باید عضو کانال فروش باشید.");
         var salesList = initialList;
-        if (!salesList.CanReserveVolume(volume))
+        if (!salesList.CanReserveVolume(volume, adminRegistration))
             throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {salesList.RemainingVolume} میل است.");
         if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");

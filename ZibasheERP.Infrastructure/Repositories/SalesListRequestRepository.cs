@@ -139,7 +139,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
             !await IsGiftRecipientBottleOwnerAsync(request.Id, cancellationToken))
             throw new InvalidOperationException("نوع شیشه برای این درخواست مشخص نشده است.");
-        if (!request.SalesList.CanReserveVolume(request.VolumeMl))
+        if (!request.SalesList.CanReserveVolume(request.VolumeMl, request.CreatedByAdmin))
             throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ حداقل فعلی {request.SalesList.EffectiveMinimumRequestVolumeMl} میل و باقی‌مانده {request.SalesList.RemainingVolume} میل است.");
         if (request.IsBottleOwner && request.SalesList.HasBottleOwner)
             throw new InvalidOperationException("صاحب باتل این لیست قبلاً مشخص شده است.");
