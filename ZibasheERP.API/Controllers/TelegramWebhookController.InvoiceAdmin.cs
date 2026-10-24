@@ -313,6 +313,13 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("invoiceadmin:invoiced-lists", StringComparison.Ordinal))
+        {
+            await HandleInvoicedListReportCallbackAsync(callback, ct);
+            return true;
+        }
+        InvoicedListReportDrafts.TryRemove((callback.Message.Chat.Id, callback.From.Id), out _);
+
         if (callback.Data.StartsWith("invoiceadmin:admin-activity", StringComparison.Ordinal))
         {
             await HandleAdminItemActivityReportAsync(callback, ct);
@@ -1714,7 +1721,10 @@ public sealed partial class TelegramWebhookController
             }
         };
         if (IsPrimaryOwner(chatId))
+        {
             buttons.Add(new[] { new TelegramInlineButton("📊 عملکرد ادمین‌ها", "invoiceadmin:admin-activity") });
+            buttons.Add(new[] { new TelegramInlineButton("🧴 تعداد عطرهای فاکتورشده", "invoiceadmin:invoiced-lists") });
+        }
         if (IsAccountantLearningManager(actorUsername))
             buttons.Add(new[]
             {

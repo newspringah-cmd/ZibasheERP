@@ -1034,6 +1034,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleInvoicedListReportMessageAsync(message, cancellationToken))
+            return true;
+
         if (await TryHandleGroupShippingStatusCommandAsync(message, cancellationToken))
             return true;
 

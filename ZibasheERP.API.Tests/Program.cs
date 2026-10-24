@@ -133,6 +133,7 @@ using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload
 ProductionGiftGroupingTests.Run(Check);
 await DecantListDeliveryTests.Run(Check);
 SmallRemainderReservationTests.Run(Check);
+InvoicedSalesListReportTests.Run(Check);
 AdminItemActivityTests.Run(Check);
 CustomerListReservationTests.Run(Check);
 Console.WriteLine("All API tests passed.");
