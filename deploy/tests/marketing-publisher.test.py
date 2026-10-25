@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -75,13 +76,21 @@ class PublisherTests(unittest.TestCase):
             captured = []
             def fake_post(url, payload, headers, timeout):
                 captured.append((url, payload))
-                return {'data': [{'b64_json': base64.b64encode(b'\x89PNG\r\n\x1a\n' + b'dummy').decode()}]}
+                if url.endswith('/images/generations'):
+                    return {'data': [{'b64_json': base64.b64encode(b'\x89PNG\r\n\x1a\n' + b'dummy').decode()}]}
+                verdict = {'adult_human_main_subject': True, 'adult_woman_visible': True,
+                           'bottle_or_brand_logo_visible': False, 'overlay_text_or_watermark_visible': False}
+                return {'status': 'completed', 'output': [{'type': 'message', 'content': [
+                    {'type': 'output_text', 'text': json.dumps(verdict)}]}]}
             name, digest, model = images.generate_vibe({'AddressLabel__OpenAiApiKey': 'test'},
                 {'EnglishName': 'Test Perfume', 'TopNotes': 'rose'}, Path(folder), fake_post)
             self.assertTrue(name.startswith('ai-vibe-'))
             self.assertTrue((Path(folder)/name).is_file())
             self.assertEqual(captured[0][1]['n'], 1)
             self.assertIn('No perfume bottle', captured[0][1]['prompt'])
+            self.assertEqual(len(captured), 2)
+            self.assertTrue(captured[1][0].endswith('/responses'))
+            self.assertIn('clearly visible fictional adult human', captured[0][1]['prompt'])
 
 
 if __name__ == '__main__': unittest.main()
