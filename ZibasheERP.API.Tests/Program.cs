@@ -136,6 +136,7 @@ SmallRemainderReservationTests.Run(Check);
 InvoicedSalesListReportTests.Run(Check);
 AddressReadyItemsTests.Run(Check);
 SharedDecantGroupTests.Run(Check);
+SilentGroupTests.Run(Check);
 AdminItemActivityTests.Run(Check);
 CustomerListReservationTests.Run(Check);
 Console.WriteLine("All API tests passed.");

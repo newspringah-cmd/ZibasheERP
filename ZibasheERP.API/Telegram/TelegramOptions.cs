@@ -26,6 +26,13 @@ public sealed class TelegramOptions
     public string InvoiceGreetingStickerFileId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
     public string ShippingOperatorUserIds { get; set; } = string.Empty;
+    // Ignore inbound activity in announcement-only groups while retaining outbound publishing.
+    public string SilentGroupChatIds { get; set; } = string.Empty;
+
+    public bool IsSilentGroup(TelegramChat? chat) => chat is not null && chat.Id < 0 &&
+        (chat.Type == "group" || chat.Type == "supergroup") &&
+        SilentGroupChatIds.Split(new[] { ',', ';', ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Any(value => long.TryParse(value.Trim(), out var id) && id == chat.Id);
     public int PollIntervalSeconds { get; set; } = 10;
     public int BatchSize { get; set; } = 20;
     public int MaxAttempts { get; set; } = 5;

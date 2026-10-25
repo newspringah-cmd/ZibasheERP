@@ -184,6 +184,15 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return Unauthorized();
         }
 
+        var incomingChat = update.CallbackQuery?.Message?.Chat ?? update.Message?.Chat ?? update.MyChatMember?.Chat;
+        if (_options.IsSilentGroup(incomingChat))
+        {
+            // No commands, customer linking, learning, greetings or order side effects here.
+            if (update.CallbackQuery is not null)
+                await _sender.AnswerCallbackAsync(update.CallbackQuery.Id, cancellationToken: cancellationToken);
+            return Ok();
+        }
+
         if (update.MyChatMember is not null)
         {
             await _groupMembershipTracker.TrackAsync(update.MyChatMember, cancellationToken);
