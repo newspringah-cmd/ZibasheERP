@@ -45,7 +45,7 @@ def config(container):
     return dict(item.split('=', 1) for item in json.loads(result.stdout)[0]['Config']['Env'] if '=' in item)
 
 
-def query(sqlenv, list_id=None, test_code=None):
+def query(sqlenv, list_id=None, test_code=None, maximum_remaining=10):
     suffix = ''
     if list_id is not None:
         import uuid
@@ -53,7 +53,7 @@ def query(sqlenv, list_id=None, test_code=None):
     if test_code is not None:
         suffix += f' AND COALESCE(StablePublicCode,PublicCode)={int(test_code)}'
     else:
-        suffix += ' AND TotalVolume-ReservedVolume<10'
+        suffix += f' AND TotalVolume-ReservedVolume<{int(maximum_remaining)}'
     sql = '''SET NOCOUNT ON; SELECT Id,PublicCode,StablePublicCode,EnglishName,PersianName,
         DisplayBrand,TopNotes,MiddleNotes,BaseNotes,Accords,Status,IsDeleted,IsInventoryOffer,
         TotalVolume,ReservedVolume,TelegramPhotoFileId,TelegramChannelId,TelegramMessageId,ProductPageUrl
@@ -229,17 +229,29 @@ def main():
                 "SELECT perfume_key FROM slots WHERE perfume_key IS NOT NULL AND at>? "
                 "AND status IN ('sent','sending','unknown')", (day_ago,)))
             maximum = 2**31 if args.test_code else 10
-            eligible_rows = [row for row in query(sqlenv, test_code=args.test_code) if eligible(row, maximum)]
-            candidates = []
             daily_limit_skipped = False
-            for candidate in eligible_rows:
-                if not args.test_code and candidate['Id'].lower() in {x.lower() for x in recent if x}:
-                    continue
-                key = perfume_frequency_key(candidate)
-                if daily_counts[key] >= 2:
-                    daily_limit_skipped = True
-                    continue
-                candidates.append((candidate, key))
+
+            def select_candidates(rows, volume_limit):
+                nonlocal daily_limit_skipped
+                result = []
+                for candidate in rows:
+                    if not eligible(candidate, volume_limit):
+                        continue
+                    if not args.test_code and candidate['Id'].lower() in {x.lower() for x in recent if x}:
+                        continue
+                    key = perfume_frequency_key(candidate)
+                    if daily_counts[key] >= 2:
+                        daily_limit_skipped = True
+                        continue
+                    result.append((candidate, key))
+                return result
+
+            eligible_rows = query(sqlenv, test_code=args.test_code, maximum_remaining=10)
+            candidates = select_candidates(eligible_rows, maximum)
+            if not candidates and not args.test_code:
+                eligible_rows = query(sqlenv, maximum_remaining=20)
+                maximum = 20
+                candidates = select_candidates(eligible_rows, maximum)
             if not args.dry_run:
                 db.execute('INSERT INTO slots (slot,status,list_id,at,message_id,error,perfume_key) VALUES(?,?,?,?,?,?,?)',
                            (slot, 'researching', None, now, None, None, None))
@@ -273,7 +285,7 @@ def main():
                     images, image_status = images_module.prepare(cfg, row, STATE, post)
                 except Exception as image_error:
                     image_status = 'Image verification unavailable: ' + str(image_error)[:180]
-                fresh = query(sqlenv, row['Id'], test_code=args.test_code)
+                fresh = query(sqlenv, row['Id'], test_code=args.test_code, maximum_remaining=maximum)
                 if len(fresh) != 1 or not eligible(fresh[0], maximum):
                     raise ValueError('Selected list completed or no longer eligible; skip this slot')
                 row = fresh[0]; text = caption(row, content)

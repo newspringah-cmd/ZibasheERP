@@ -13,6 +13,8 @@ claims and message receipts are stored in `~/.local/state/zibashe-marketing/` wi
 private permissions. Failed/unknown delivery is never automatically repeated in
 the same slot. The same perfume is limited to two sent or possibly sent ads in
 any rolling 24-hour period, and an individual sales list remains on a seven-day cooldown.
+The publisher prioritizes lists with less than 10 ml remaining; when none are
+eligible, it falls back to lists with less than 20 ml remaining.
 No eligible new list means no message. Research failure means no advertisement;
 the reason is stored in the state database and publisher log.
 
