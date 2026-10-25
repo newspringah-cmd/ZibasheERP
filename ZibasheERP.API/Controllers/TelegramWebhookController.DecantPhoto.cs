@@ -414,15 +414,9 @@ public sealed partial class TelegramWebhookController
             _db.Customers.Add(customer);
         }
 
-        var conflictingGroup = await _db.CustomerTelegramGroups.FirstOrDefaultAsync(value =>
+        var sharedGroups = await _db.CustomerTelegramGroups.Where(value =>
             value.ChatId == message.Chat.Id.ToString() && !value.IsDeleted &&
-            value.CustomerId != customer.Id, ct);
-        if (conflictingGroup is not null)
-        {
-            await ReplyAsync(message.Chat.Id,
-                "این گروه قبلاً به مشتری دیگری متصل شده است؛ اتصال تغییر نکرد.", ct);
-            return true;
-        }
+            value.CustomerId != customer.Id).ToArrayAsync(ct);
         if (customer.TelegramGroup is not null &&
             !string.Equals(customer.TelegramGroup.ChatId, message.Chat.Id.ToString(), StringComparison.Ordinal))
         {
@@ -442,7 +436,7 @@ public sealed partial class TelegramWebhookController
                     : message.Chat.Title.Trim(),
                 Username = NormalizeDecantUsername(message.Chat.Username),
                 IsActive = true,
-                IsPrimaryForShipping = true,
+                IsPrimaryForShipping = CanUseDecantShippingPrimary(sharedGroups),
                 LinkedAt = DateTime.UtcNow,
                 LastSeenAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
@@ -451,6 +445,9 @@ public sealed partial class TelegramWebhookController
         }
         else
         {
+            customer.TelegramGroup.IsDeleted = false;
+            if (!CanUseDecantShippingPrimary(sharedGroups))
+                customer.TelegramGroup.IsPrimaryForShipping = false;
             customer.TelegramGroup.IsActive = true;
             customer.TelegramGroup.RestoreOnBotRejoin = false;
             customer.TelegramGroup.LastSeenAt = DateTime.UtcNow;
@@ -489,6 +486,10 @@ public sealed partial class TelegramWebhookController
             $"✅ اتصال دائمی عکس دکانت انجام شد و {matches.Length} عکس معوق در صف ارسال قرار گرفت.", ct);
         return true;
     }
+
+    // Multiple decant recipients may share a chat; keep its shipping primary unique.
+    private static bool CanUseDecantShippingPrimary(IEnumerable<CustomerTelegramGroup> otherLinks) =>
+        !otherLinks.Any(link => !link.IsDeleted && link.IsPrimaryForShipping);
 
     private async Task<IReadOnlyList<DecantTarget>> ResolveDecantTargetsAsync(
         Guid salesListId,
