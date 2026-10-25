@@ -210,7 +210,7 @@ def main():
                 try:
                     images, image_status = image_provider().prepare(cfg, row, STATE, post)
                 except Exception as image_error:
-                    image_status = 'Image verification unavailable: ' + type(image_error).__name__
+                    image_status = 'Image verification unavailable: ' + str(image_error)[:180]
                 fresh = query(sqlenv, row['Id'], test_code=args.test_code)
                 if len(fresh) != 1 or not eligible(fresh[0], maximum):
                     raise ValueError('Selected list completed or no longer eligible; skip this slot')
