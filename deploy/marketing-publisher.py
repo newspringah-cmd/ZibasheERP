@@ -17,10 +17,18 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import importlib.util
 
 CHAT = '-1001283018740'
 DOMAINS = ['fragrantica.com', 'parfumo.com']
 STATE = Path.home() / '.local/state/zibashe-marketing'
+
+
+def image_provider():
+    spec = importlib.util.spec_from_file_location('marketing_images', Path(__file__).with_name('marketing-images.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def eligible(row, maximum=10):
@@ -161,6 +169,7 @@ def main():
         with sqlite3.connect(STATE / 'history.sqlite') as db:
             db.execute('CREATE TABLE IF NOT EXISTS slots (slot INTEGER PRIMARY KEY,status TEXT,list_id TEXT,at REAL,message_id INTEGER,error TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS cache (list_id TEXT PRIMARY KEY,at REAL,content TEXT)')
+            db.execute('CREATE TABLE IF NOT EXISTS albums (slot INTEGER PRIMARY KEY,status TEXT,receipt TEXT)')
             now = dt.datetime.now(dt.timezone.utc).timestamp()
             slot = -int(now) if args.test_code else int(now // 7200)
             if db.execute('SELECT 1 FROM slots WHERE slot=?', (slot,)).fetchone() and not args.dry_run:
@@ -197,6 +206,11 @@ def main():
                 content = json.loads(cached[0]) if cached else research(cfg, row)
                 validate_content(content)
                 db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)', (row['Id'], now, json.dumps(content, ensure_ascii=False))); db.commit()
+                images, image_status = [], 'not_checked'
+                try:
+                    images, image_status = image_provider().prepare(cfg, row, STATE, post)
+                except Exception as image_error:
+                    image_status = 'Image verification unavailable: ' + type(image_error).__name__
                 fresh = query(sqlenv, row['Id'], test_code=args.test_code)
                 if len(fresh) != 1 or not eligible(fresh[0], maximum):
                     raise ValueError('Selected list completed or no longer eligible; skip this slot')
@@ -206,7 +220,8 @@ def main():
                 if args.dry_run:
                     print(json.dumps({'status': 'validated_without_posting', 'code': row['PublicCode'],
                                       'remaining_ml': row['TotalVolume']-row['ReservedVolume'], 'caption': text,
-                                      'review_sources': len(content['sources'])}, ensure_ascii=False))
+                                      'review_sources': len(content['sources']), 'official_images': len(images),
+                                      'image_status': image_status}, ensure_ascii=False))
                     return
                 db.execute("UPDATE slots SET status='sending',list_id=? WHERE slot=?", (row['Id'], slot)); db.commit()
                 link = 'https://t.me/c/' + row['TelegramChannelId'][4:] + '/' + str(row['TelegramMessageId'])
@@ -217,6 +232,18 @@ def main():
                     raise RuntimeError('Telegram rejected publication')
                 db.execute("UPDATE slots SET status='sent',message_id=? WHERE slot=?", (result['result']['message_id'], slot)); db.commit()
                 print(json.dumps({'status': 'sent', 'code': row['PublicCode'], 'message_id': result['result']['message_id']}))
+                if len(images) == 3:
+                    db.execute('INSERT INTO albums VALUES(?,?,?)', (slot, 'sending', '')); db.commit()
+                    try:
+                        ids = image_provider().send_album(cfg, CHAT, images)
+                        db.execute("UPDATE albums SET status='sent',receipt=? WHERE slot=?", (json.dumps(ids), slot)); db.commit()
+                        print(json.dumps({'official_album': 'sent', 'message_ids': ids}))
+                    except Exception as album_error:
+                        db.execute("UPDATE albums SET status='unknown',receipt=? WHERE slot=?", (str(album_error)[:200], slot)); db.commit()
+                        print(json.dumps({'official_album': 'unknown_not_retried'}))
+                else:
+                    db.execute('INSERT INTO albums VALUES(?,?,?)', (slot, 'skipped', image_status)); db.commit()
+                    print(json.dumps({'official_album': 'skipped', 'reason': image_status}))
             except Exception as error:
                 if not args.dry_run:
                     db.execute("UPDATE slots SET status=CASE WHEN status='sending' THEN 'unknown' ELSE 'failed' END,error=? WHERE slot=?",

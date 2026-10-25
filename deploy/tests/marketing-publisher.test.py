@@ -44,5 +44,16 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn('تومان', text)
         self.assertNotIn('قیمت', text)
 
+    def test_official_image_origins_and_duplicates(self):
+        images = publisher.image_provider()
+        self.assertTrue(images.official_page('https://us.diptyqueparis.com/products/do-son', ['diptyqueparis.com']))
+        for url in ('https://diptyqueparis.com.evil.com/image', 'http://diptyqueparis.com/image', 'https://retailer.com/image'):
+            self.assertFalse(images.official_page(url, ['diptyqueparis.com']))
+        page = '<img src="https://cdn.example.com/a.jpg?width=500"><img src="https://cdn.example.com/a.jpg?width=900"><img src="//cdn.example.com/b.png">'
+        self.assertEqual(len(images.image_urls(page, 'https://brand.com/product')), 2)
+        for url in ('http://example.com/a.jpg', 'https://user:password@example.com/a.jpg', 'https://example.com:8443/a.jpg', 'https://127.0.0.1/a.jpg'):
+            with self.assertRaises(ValueError): images.public_url(url)
+        with self.assertRaises(ValueError): images.send_album({}, '-1001', [])
+
 
 if __name__ == '__main__': unittest.main()

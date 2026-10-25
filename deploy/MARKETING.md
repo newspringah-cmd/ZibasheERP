@@ -17,3 +17,11 @@ the reason is stored in the state database and publisher log.
 Destination is the explicitly authorized Zibashe perfume discussion group.
 Incoming bot replies remain suppressed using `Telegram__SilentGroupChatIds`.
 Stopping the cron entry disables publishing without affecting the ERP API.
+
+After the primary promotion, an album of exactly three official product images is
+sent when verified. The initial first-party registry covers Diptyque, Creed and
+Roja. Unsupported brands or fewer than three safe distinct images skip the album;
+the primary ad still publishes. Sources must come from the brand product page.
+Vision verification rejects wrong variants, retailer names and overlaid watermarks.
+Bottle branding is allowed. Images are not edited or watermarks removed. Album
+claims/receipts are separate from the primary post to prevent ambiguous retries.
