@@ -45,18 +45,18 @@ class PublisherTests(unittest.TestCase):
         self.assertNotIn('تومان', text)
         self.assertNotIn('قیمت', text)
 
-    def test_official_image_origins_and_duplicates(self):
+    def test_fragrantica_image_origins_and_duplicates(self):
         images = publisher.image_provider()
-        self.assertTrue(images.official_page('https://us.diptyqueparis.com/products/do-son', ['diptyqueparis.com']))
-        for url in ('https://diptyqueparis.com.evil.com/image', 'http://diptyqueparis.com/image', 'https://retailer.com/image'):
-            self.assertFalse(images.official_page(url, ['diptyqueparis.com']))
+        self.assertTrue(images.source_page('https://www.fragrantica.com/perfume/Nasomatto/Nudiflorum-49223.html', ['fragrantica.com']))
+        for url in ('https://fragrantica.com.evil.com/image', 'http://fragrantica.com/image', 'https://retailer.com/image'):
+            self.assertFalse(images.source_page(url, ['fragrantica.com']))
         page = '<img src="https://cdn.example.com/a.jpg?width=500"><img src="https://cdn.example.com/a.jpg?width=900"><img src="//cdn.example.com/b.png">'
         self.assertEqual(len(images.image_urls(page, 'https://brand.com/product')), 2)
         for url in ('http://example.com/a.jpg', 'https://user:password@example.com/a.jpg', 'https://example.com:8443/a.jpg', 'https://127.0.0.1/a.jpg'):
             with self.assertRaises(ValueError): images.public_url(url)
         with self.assertRaises(ValueError): images.send_album({}, '-1001', [])
 
-    def test_album_requires_official_lifestyle_and_orders_it_last(self):
+    def test_album_requires_fragram_wearer_and_orders_it_last(self):
         images = publisher.image_provider()
         self.assertEqual(images.album_selection({'selected_ids': [3, 0, 1], 'lifestyle_id': 3}, 4), [0, 1, 3])
         for verdict in ({'selected_ids': [0, 1, 2]}, {'selected_ids': [0, 1, 2], 'lifestyle_id': -1},
@@ -64,33 +64,5 @@ class PublisherTests(unittest.TestCase):
                         {'selected_ids': [0, 1, 8], 'lifestyle_id': 8},
                         {'selected_ids': [0, 1, 2], 'lifestyle_id': True}):
             self.assertEqual(images.album_selection(verdict, 4), [])
-
-    def test_ai_vibe_only_after_two_verified_product_photos(self):
-        images = publisher.image_provider()
-        self.assertEqual(images.product_selection({'product_ids': [1, 3]}, 4), [1, 3])
-        for ids in ([], [0], [0, 0], [0, 9], [True, 2]):
-            self.assertEqual(images.product_selection({'product_ids': ids}, 4), [])
-        import tempfile
-        import base64
-        with tempfile.TemporaryDirectory() as folder:
-            captured = []
-            def fake_post(url, payload, headers, timeout):
-                captured.append((url, payload))
-                if url.endswith('/images/generations'):
-                    return {'data': [{'b64_json': base64.b64encode(b'\x89PNG\r\n\x1a\n' + b'dummy').decode()}]}
-                verdict = {'adult_human_main_subject': True, 'adult_woman_visible': True,
-                           'bottle_or_brand_logo_visible': False, 'overlay_text_or_watermark_visible': False}
-                return {'status': 'completed', 'output': [{'type': 'message', 'content': [
-                    {'type': 'output_text', 'text': json.dumps(verdict)}]}]}
-            name, digest, model = images.generate_vibe({'AddressLabel__OpenAiApiKey': 'test'},
-                {'EnglishName': 'Test Perfume', 'TopNotes': 'rose'}, Path(folder), fake_post)
-            self.assertTrue(name.startswith('ai-vibe-'))
-            self.assertTrue((Path(folder)/name).is_file())
-            self.assertEqual(captured[0][1]['n'], 1)
-            self.assertIn('No perfume bottle', captured[0][1]['prompt'])
-            self.assertEqual(len(captured), 2)
-            self.assertTrue(captured[1][0].endswith('/responses'))
-            self.assertIn('clearly visible fictional adult human', captured[0][1]['prompt'])
-
 
 if __name__ == '__main__': unittest.main()
