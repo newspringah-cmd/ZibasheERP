@@ -27,15 +27,16 @@ Fragrantica perfume page or its Fragram gallery is sent when verified. Verified
 image sets are saved on the VPS using the perfume brand, exact
 variant name and product page identity, and reused if the perfume appears in a
 different sales list. Review research text is shared across those lists and
-refreshed every 30 days. If fewer than three safe, distinct images including a
-wearer photo are found on Fragrantica, the album is skipped; the primary ad still
-publishes. Images must come from the exact Fragrantica perfume page or its
-Fragram gallery.
+refreshed every 30 days. The first two album images are verified product photos
+from the exact Fragrantica perfume page or its Fragram gallery. The third is a
+matching wearer photo from Fragram when available; otherwise it is an AI-created
+human lifestyle image. If two safe product photos cannot be verified, the album
+is skipped while the primary ad still publishes.
 Vision verification rejects wrong variants, retailer names and overlaid watermarks.
 Bottle branding is allowed. Images are not edited or watermarks removed. Album
 claims/receipts are separate from the primary post to prevent ambiguous retries.
-The album consists of two Fragrantica product/packaging photos followed by one
-Fragrantica lifestyle image with a clearly visible adult human wearer, prioritizing
-women where the fragrance positioning allows. If no suitable wearer photo is
-available, the album is skipped. Album photos have no captions. Older image
-caches are rebuilt to enforce the Fragrantica-only source requirement.
+The album consists of two Fragrantica product/packaging photos followed by a
+clearly visible adult human wearer, prioritizing women for all scents.
+The wearer image comes from Fragram or, if none is suitable, is AI-generated
+without a perfume bottle, brand logo or watermark. Album photos have no captions.
+Older image caches are rebuilt to enforce the first-two-photo source requirement.

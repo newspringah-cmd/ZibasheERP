@@ -58,11 +58,19 @@ class PublisherTests(unittest.TestCase):
 
     def test_album_requires_fragram_wearer_and_orders_it_last(self):
         images = publisher.image_provider()
-        self.assertEqual(images.album_selection({'selected_ids': [3, 0, 1], 'lifestyle_id': 3}, 4), [0, 1, 3])
-        for verdict in ({'selected_ids': [0, 1, 2]}, {'selected_ids': [0, 1, 2], 'lifestyle_id': -1},
+        self.assertEqual(images.album_selection({'selected_ids': [3, 0, 1], 'product_ids': [0, 1], 'lifestyle_id': 3}, 4), [0, 1, 3])
+        for verdict in ({'selected_ids': [3, 0, 1], 'lifestyle_id': 3},
+                        {'selected_ids': [0, 1, 2], 'product_ids': [0, 1], 'lifestyle_id': -1},
                         {'selected_ids': [0, 1, 1], 'lifestyle_id': 1},
-                        {'selected_ids': [0, 1, 8], 'lifestyle_id': 8},
-                        {'selected_ids': [0, 1, 2], 'lifestyle_id': True}):
+                        {'selected_ids': [0, 1, 8], 'product_ids': [0, 1], 'lifestyle_id': 8},
+                        {'selected_ids': [0, 1, 2], 'product_ids': [0, 1], 'lifestyle_id': True},
+                        {'selected_ids': [0, 1, 2], 'product_ids': [0, 2], 'lifestyle_id': 2}):
             self.assertEqual(images.album_selection(verdict, 4), [])
+
+    def test_product_selection_requires_two_distinct_fragrantica_photos(self):
+        images = publisher.image_provider()
+        self.assertEqual(images.product_selection({'product_ids': [1, 3]}, 4), [1, 3])
+        for ids in ([], [0], [0, 0], [0, 9], [True, 2]):
+            self.assertEqual(images.product_selection({'product_ids': ids}, 4), [])
 
 if __name__ == '__main__': unittest.main()
