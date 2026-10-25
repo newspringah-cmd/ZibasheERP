@@ -134,6 +134,7 @@ ProductionGiftGroupingTests.Run(Check);
 await DecantListDeliveryTests.Run(Check);
 SmallRemainderReservationTests.Run(Check);
 InvoicedSalesListReportTests.Run(Check);
+AddressReadyItemsTests.Run(Check);
 AdminItemActivityTests.Run(Check);
 CustomerListReservationTests.Run(Check);
 Console.WriteLine("All API tests passed.");

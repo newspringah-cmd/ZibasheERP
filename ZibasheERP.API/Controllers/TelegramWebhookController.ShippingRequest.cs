@@ -414,11 +414,10 @@ public sealed partial class TelegramWebhookController
             item.UpdatedAt = now;
         }
         await _db.SaveChangesAsync(ct);
-        var lines = items.Select((item, index) => FormatShippingItemLine(item, index));
         var message = $"📦 درخواست ارسال جدید\n\nمشتری: {OrderCustomerLabel(customer)}\n" +
             $"گیرنده: {address.ReceiverName}\nموبایل: {address.Mobile}\nکدپستی: {address.PostalCode}\n" +
-            $"آدرس: {address.Province}، {address.City}، {address.FullAddress}\n\nاقلام آماده ارسال:\n{string.Join("\n", lines)}";
-        var sent = await _sender.SendInlineKeyboardAsync(_options.ShippingChatId.Trim(), message,
+            $"آدرس: {address.Province}، {address.City}، {address.FullAddress}";
+        var sent = await SendAddressWithReadyItemsAsync(_options.ShippingChatId.Trim(), message, customer,
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[]
@@ -638,8 +637,8 @@ public sealed partial class TelegramWebhookController
                     $"shipping:trackingcustomer:{customer.Id:N}")
             }
         };
-        var sent = await _sender.SendInlineKeyboardAsync(
-            _options.ShippingChatId.Trim(), shippingMessage, buttons, ct);
+        var sent = await SendAddressWithReadyItemsAsync(
+            _options.ShippingChatId.Trim(), shippingMessage, customer, buttons, ct);
         if (!sent.IsSuccessful)
         {
             await ReplyAsync(draft.ChatId,
@@ -1086,8 +1085,8 @@ public sealed partial class TelegramWebhookController
                     $"shipping:trackingcustomer:{customer.Id:N}")
             });
         }
-        var sent = await _sender.SendInlineKeyboardAsync(
-            _options.ShippingChatId.Trim(), shippingMessage, shippingButtons, ct);
+        var sent = await SendAddressWithReadyItemsAsync(
+            _options.ShippingChatId.Trim(), shippingMessage, customer, shippingButtons, ct);
         if (!sent.IsSuccessful)
         {
             foreach (var item in items) { item.ShippingRequestId = null; item.ShippingRequestedAt = null; }
@@ -1348,7 +1347,10 @@ public sealed partial class TelegramWebhookController
             : item.SourceSalesListRequest?.OmitIdentityOnLabel == true
                 ? "، لیبل: بدون آیدی"
                 : string.Empty;
-        return $"شیشه: {bottle}{labelText}{FormatShippingInventoryMarker(item)}";
+        var fancyComment = item.Bottle?.Type == BottleType.Fancy &&
+            !string.IsNullOrWhiteSpace(item.SourceSalesListRequest?.AdminNotes)
+            ? $"، توضیحات شیشه: {item.SourceSalesListRequest.AdminNotes.Trim()}" : string.Empty;
+        return $"شیشه: {bottle}{fancyComment}{labelText}{FormatShippingInventoryMarker(item)}";
     }
 
     private static string FormatShippingBottleCategory(OrderItem item)
