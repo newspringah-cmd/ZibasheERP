@@ -4,6 +4,7 @@ import hashlib
 import html
 import ipaddress
 import json
+from pathlib import Path
 import re
 import socket
 import urllib.parse
@@ -89,6 +90,40 @@ def product_selection(verdict, candidate_count):
         type(i) is int and 0 <= i < candidate_count for i in ids) else []
 
 
+def perfume_cache_key(row):
+    """Stable identity shared by separate sales lists for the same perfume variant."""
+    def normalize(value):
+        return ' '.join(str(value or '').casefold().split())
+
+    parsed = urllib.parse.urlsplit(row.get('ProductPageUrl') or '')
+    product_url = urllib.parse.urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(),
+                                           parsed.path.rstrip('/').casefold(), '', ''))
+    identity = json.dumps([normalize(row.get('DisplayBrand')), normalize(row.get('EnglishName')),
+                           normalize(product_url)], ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(identity.encode('utf-8')).hexdigest()
+
+
+def cached_images(state, cache, row, key, versions):
+    try:
+        metadata = json.loads(cache.read_text())
+        files, hashes = metadata.get('files', []), metadata.get('hashes', [])
+        version = metadata.get('version')
+        if (version not in versions
+                or (version == 4 and metadata.get('product_key') != key)
+                or (version == 3 and metadata.get('product_key') not in (None, key))
+                or len(files) != 3 or len(hashes) != 3):
+            return None
+        if not all(
+                isinstance(name, str) and Path(name).name == name and isinstance(digest, str)
+                and (state / name).is_file()
+                and hashlib.sha256((state / name).read_bytes()).hexdigest() == digest
+                for name, digest in zip(files, hashes)):
+            return None
+        return [state / name for name in metadata['files']], metadata
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 def generate_vibe(cfg, row, state, post):
     """Production API integration: concept art only, never a fabricated product shot."""
     model = cfg.get('Marketing__ImageModel', 'gpt-image-2')
@@ -115,6 +150,24 @@ def generate_vibe(cfg, row, state, post):
 
 
 def prepare(cfg, row, state, post):
+    key = perfume_cache_key(row)
+    cache = state / ('perfume-images-' + key + '.json')
+    if cache.exists():
+        cached = cached_images(state, cache, row, key, {4})
+        if cached:
+            return cached[0], 'cached_verified'
+
+    # Migrate a verified image set already saved for this list to the shared
+    # perfume key so relisted copies can reuse it without another API call.
+    legacy_cache = state / ('official-images-' + row['Id'] + '.json')
+    if legacy_cache.exists():
+        cached = cached_images(state, legacy_cache, row, key, {3, 4})
+        if cached:
+            paths, metadata = cached
+            metadata = {**metadata, 'version': 4, 'product_key': key}
+            cache.write_text(json.dumps(metadata, ensure_ascii=False))
+            return paths, 'cached_verified'
+
     brand = re.sub(r'[^a-z]', '', row['DisplayBrand'].lower())
     domains = BRANDS.get(brand)
     if not domains:
@@ -122,13 +175,6 @@ def prepare(cfg, row, state, post):
     product = row['EnglishName'] + ' / ' + row['PersianName']
     headers = {'Authorization': 'Bearer ' + cfg['AddressLabel__OpenAiApiKey']}
     model = cfg.get('AddressLabel__OpenAiModel', 'gpt-5-mini')
-    cache = state / ('official-images-' + row['Id'] + '.json')
-    if cache.exists():
-        metadata = json.loads(cache.read_text())
-        if (metadata.get('version') == 3 and len(metadata.get('files', [])) == len(metadata.get('hashes', [])) == 3
-                and all((state / name).is_file() and hashlib.sha256((state / name).read_bytes()).hexdigest() == digest
-                        for name, digest in zip(metadata['files'], metadata['hashes']))):
-            return [state / name for name in metadata['files']], 'cached_verified'
     response = post('https://api.openai.com/v1/responses', {
         'model': model, 'store': False, 'reasoning': {'effort': 'low'}, 'max_output_tokens': 1800,
         'tools': [{'type': 'web_search', 'filters': {'allowed_domains': domains}}],
@@ -207,7 +253,8 @@ def prepare(cfg, row, state, post):
     if generated:
         name, digest, image_model = generated
         files.append(name); digests.append(digest); sources.append('generated:' + image_model)
-    cache.write_text(json.dumps({'version': 3, 'page': final, 'files': files, 'sources': sources, 'hashes': digests,
+    cache.write_text(json.dumps({'version': 4, 'product_key': key, 'page': final, 'files': files,
+                                'sources': sources, 'hashes': digests,
                                 'verification': verdict}, ensure_ascii=False))
     return [state / name for name in files], 'verified'
 

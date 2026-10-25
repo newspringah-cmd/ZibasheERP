@@ -20,7 +20,9 @@ Stopping the cron entry disables publishing without affecting the ERP API.
 
 After the primary promotion, an album of exactly three official product images is
 sent when verified. The initial first-party registry covers Diptyque, Creed and
-Roja. Unsupported brands or fewer than three safe distinct images skip the album;
+Roja. Verified image sets are saved on the VPS using the perfume brand, exact
+variant name and product page identity, and reused if the perfume appears in a
+different sales list. Unsupported brands or fewer than three safe distinct images skip the album;
 the primary ad still publishes. Sources must come from the brand product page.
 Vision verification rejects wrong variants, retailer names and overlaid watermarks.
 Bottle branding is allowed. Images are not edited or watermarks removed. Album
