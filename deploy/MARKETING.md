@@ -22,20 +22,22 @@ Destination is the explicitly authorized Zibashe perfume discussion group.
 Incoming bot replies remain suppressed using `Telegram__SilentGroupChatIds`.
 Stopping the cron entry disables publishing without affecting the ERP API.
 
-After the primary promotion, an album of exactly three official product images is
-sent when verified. The initial first-party registry covers Diptyque, Creed and
-Roja. Verified image sets are saved on the VPS using the perfume brand, exact
+After the primary promotion, an album of exactly three images from the matching
+Fragrantica perfume page or its Fragram gallery is sent when verified. Verified
+image sets are saved on the VPS using the perfume brand, exact
 variant name and product page identity, and reused if the perfume appears in a
 different sales list. Review research text is shared across those lists and
-refreshed every 30 days. Unsupported brands or fewer than three safe distinct images skip the album;
-the primary ad still publishes. Sources must come from the brand product page.
+refreshed every 30 days. If fewer than two safe product images are found on the
+Fragrantica page, the album is skipped; the primary ad still publishes. Images
+must come from the exact Fragrantica perfume page or its Fragram gallery.
 Vision verification rejects wrong variants, retailer names and overlaid watermarks.
 Bottle branding is allowed. Images are not edited or watermarks removed. Album
 claims/receipts are separate from the primary post to prevent ambiguous retries.
-The album consists of two product/packaging photos followed by one official
-lifestyle/campaign image with a clearly visible adult human wearer, prioritizing
-women where the fragrance positioning allows. If the official lifestyle image is unavailable, an independent AI concept image is generated without a
-fabricated bottle or brand logo. It carries an explicit AI-generated caption.
-The first two photos must still be verified official product images, or the album
+The album consists of two Fragrantica product/packaging photos followed by one
+Fragrantica lifestyle image with a clearly visible adult human wearer, prioritizing
+women where the fragrance positioning allows. If no suitable wearer photo is
+available, an independent AI concept image is generated without a fabricated
+bottle or brand logo. It carries an explicit AI-generated caption.
+The first two photos must still be verified Fragrantica product images, or the album
 is skipped. `Marketing__ImageModel` defaults to `gpt-image-2` for this conditional
 generation. Older image caches are rebuilt to apply the human-wearer requirement.
