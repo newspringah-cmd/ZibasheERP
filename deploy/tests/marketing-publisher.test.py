@@ -55,5 +55,14 @@ class PublisherTests(unittest.TestCase):
             with self.assertRaises(ValueError): images.public_url(url)
         with self.assertRaises(ValueError): images.send_album({}, '-1001', [])
 
+    def test_album_requires_official_lifestyle_and_orders_it_last(self):
+        images = publisher.image_provider()
+        self.assertEqual(images.album_selection({'selected_ids': [3, 0, 1], 'lifestyle_id': 3}, 4), [0, 1, 3])
+        for verdict in ({'selected_ids': [0, 1, 2]}, {'selected_ids': [0, 1, 2], 'lifestyle_id': -1},
+                        {'selected_ids': [0, 1, 1], 'lifestyle_id': 1},
+                        {'selected_ids': [0, 1, 8], 'lifestyle_id': 8},
+                        {'selected_ids': [0, 1, 2], 'lifestyle_id': True}):
+            self.assertEqual(images.album_selection(verdict, 4), [])
+
 
 if __name__ == '__main__': unittest.main()

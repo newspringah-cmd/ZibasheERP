@@ -25,3 +25,6 @@ the primary ad still publishes. Sources must come from the brand product page.
 Vision verification rejects wrong variants, retailer names and overlaid watermarks.
 Bottle branding is allowed. Images are not edited or watermarks removed. Album
 claims/receipts are separate from the primary post to prevent ambiguous retries.
+The album consists of two product/packaging photos followed by one official
+lifestyle/campaign image conveying the wearer's style. If that third image cannot
+be verified, the album is skipped. Cached older bottle-only albums are revalidated.
