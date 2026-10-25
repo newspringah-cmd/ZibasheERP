@@ -32,6 +32,11 @@ public sealed partial class TelegramWebhookController
         var trackingSince = await _db.AdminItemActivities.AsNoTracking().Where(row => row.Action == AdminItemAction.TrackingStarted)
             .Select(row => (DateTime?)row.CreatedAt).MinAsync(ct);
         var report = AdminItemActivityReport.Summarize(events, since, until);
+        var customerRegistrations = await AdminItemActivityReport.CustomerRegistrations(
+                _db.SalesListRequests.AsNoTracking(), since, until)
+            .Where(request => !_db.AdminItemActivities.Any(activity => !activity.IsDeleted &&
+                activity.SalesListRequestId == request.Id && activity.Action == AdminItemAction.Registered))
+            .CountAsync(ct);
         var heading = $"📊 عملکرد ادمین‌ها — {days} روز گذشته\n" +
             $"بازه: {FormatShippingPersianDate(since)} تا {FormatShippingPersianDate(until)}\n" +
             "عملیات موفق روی آیتم‌های لیست فروش و صف باتل\n" +
@@ -41,7 +46,9 @@ public sealed partial class TelegramWebhookController
             $"{index + 1}. {(!string.IsNullOrWhiteSpace(row.Username) ? "@" + row.Username : string.IsNullOrWhiteSpace(row.DisplayName) ? row.UserId.ToString() : row.DisplayName)}\n" +
             $"شناسه: {row.UserId}\nثبت: {row.Registered} | حذف: {row.Removed} | تغییر میل: {row.VolumeChanged}");
         var body = heading + "\n" + (report.Count == 0 ? "در این بازه عملیاتی ثبت نشده است." : string.Join("\n\n", lines)) +
-            $"\n\nمجموع: ثبت {report.Sum(row => row.Registered)} | حذف {report.Sum(row => row.Removed)} | تغییر میل {report.Sum(row => row.VolumeChanged)}";
+            $"\n\nمجموع: ثبت {report.Sum(row => row.Registered)} | حذف {report.Sum(row => row.Removed)} | تغییر میل {report.Sum(row => row.VolumeChanged)}" +
+            $"\n\n👥 گزارش کاربران — {days} روز گذشته\nتعداد آیتم ثبت‌شده توسط کاربران: {customerRegistrations}\n" +
+            "ثبت‌های تأییدشدهٔ لیست فروش؛ حذف بعدی آیتم از آمار ثبت کم نمی‌کند.";
         foreach (var part in SplitTelegramMessage(body))
             await ReplyAsync(callback.Message.Chat.Id, part, ct);
         await _sender.SendInlineKeyboardAsync(callback.Message.Chat.Id.ToString(), "بازه گزارش عملکرد ادمین‌ها را انتخاب کنید:",

@@ -10,6 +10,12 @@ public sealed record AdminItemActivitySummary(long UserId, string? Username, str
 
 public static class AdminItemActivityReport
 {
+    // ConfirmedAt survives cancellation: this is registration activity, not current stock.
+    public static IQueryable<SalesListRequest> CustomerRegistrations(IQueryable<SalesListRequest> requests,
+        DateTime since, DateTime until) => requests.Where(request => !request.CreatedByAdmin &&
+            request.ConfirmedAt.HasValue && request.ConfirmedAt >= since && request.ConfirmedAt < until &&
+            !request.ExternalReference.StartsWith("auto-next:") && !request.SalesList.IsInventoryOffer);
+
     public static bool CanView(long userId, long chatId, string chatType, string ownerId) =>
         userId > 0 && long.TryParse(ownerId, out var owner) && owner == userId && chatId == userId &&
         string.Equals(chatType, "private", StringComparison.OrdinalIgnoreCase);

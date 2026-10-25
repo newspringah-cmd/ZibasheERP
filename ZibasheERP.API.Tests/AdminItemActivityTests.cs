@@ -136,5 +136,38 @@ public static class AdminItemActivityTests
         check(AdminItemActivityReport.Summarize(rows, now.AddDays(-15), now).Sum(row => row.Registered) == 2 &&
             AdminItemActivityReport.Summarize(rows, now.AddDays(-30), now).Sum(row => row.Registered) == 3,
             "fifteen-day and monthly reports use their own activity windows");
+
+        SalesListRequest CustomerRequest(DateTime? at) => new()
+        {
+            Id = Guid.NewGuid(), SalesList = new SalesList(), ConfirmedAt = at,
+            Status = at.HasValue ? SalesListRequestStatus.Confirmed : SalesListRequestStatus.PendingConfirmation,
+            ExternalReference = "telegram-channel:" + Guid.NewGuid().ToString("N")
+        };
+        var customerRows = new[] { CustomerRequest(now.AddDays(-7)), CustomerRequest(now.AddDays(-10)),
+            CustomerRequest(now.AddDays(-20)), CustomerRequest(now.AddDays(-31)), CustomerRequest(now), CustomerRequest(null) };
+        int CountCustomers(int days, IEnumerable<SalesListRequest>? source = null) =>
+            AdminItemActivityReport.CustomerRegistrations((source ?? customerRows).AsQueryable(), now.AddDays(-days), now).Count();
+        check(CountCustomers(7) == 1 && CountCustomers(15) == 2 && CountCustomers(30) == 3,
+            "customer registrations use the same weekly, fifteen-day and monthly boundaries, excluding unfinished drafts");
+        var cancelledCustomer = CustomerRequest(now.AddDays(-1));
+        cancelledCustomer.Status = SalesListRequestStatus.Cancelled;
+        cancelledCustomer.IsDeleted = true;
+        check(CountCustomers(7, new[] { cancelledCustomer }) == 1,
+            "successful customer registration remains counted after later cancellation or soft deletion");
+        var adminRequest = CustomerRequest(now.AddDays(-1)); adminRequest.CreatedByAdmin = true;
+        var rolloverRequest = CustomerRequest(now.AddDays(-1)); rolloverRequest.ExternalReference = "auto-next:old:new";
+        var inventoryRequest = CustomerRequest(now.AddDays(-1)); inventoryRequest.SalesList.IsInventoryOffer = true;
+        check(CountCustomers(7, new[] { adminRequest, rolloverRequest, inventoryRequest }) == 0,
+            "customer report excludes admin entries, automatic queue carryover and inventory offers");
+        var invoicedCustomer = CustomerRequest(now.AddDays(-1)); invoicedCustomer.Status = SalesListRequestStatus.Invoiced;
+        var giftCustomer = CustomerRequest(now.AddDays(-1)); giftCustomer.IsGift = true;
+        check(CountCustomers(7, new[] { invoicedCustomer, giftCustomer }) == 2,
+            "invoicing or gift registration does not remove a customer's successful registration from activity totals");
+        using var queryDb = new AppDbContext(options);
+        var querySql = AdminItemActivityReport.CustomerRegistrations(queryDb.SalesListRequests, now.AddDays(-7), now)
+            .Where(request => !queryDb.AdminItemActivities.Any(activity => !activity.IsDeleted &&
+                activity.SalesListRequestId == request.Id && activity.Action == AdminItemAction.Registered)).ToQueryString();
+        check(querySql.Contains("ConfirmedAt") && querySql.Contains("NOT EXISTS") && querySql.Contains("CreatedByAdmin"),
+            "customer count translates to SQL and excludes registrations attributed to admin audit events");
     }
 }
