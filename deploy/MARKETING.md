@@ -4,13 +4,15 @@ AddressLabel OpenAI configuration. It reads only public product catalogue fields
 
 Run `python3 deploy/marketing-publisher.py --dry-run` to verify research, content
 validation and fresh list eligibility without sending a message. The optional
-`--test-code CODE` is an explicit manual sample, bypassing only the remaining-volume
-threshold and cooldown; never use it in scheduled execution.
+`--test-code CODE` is an explicit manual sample, bypassing the remaining-volume
+threshold and same-list cooldown; the two-per-perfume 24-hour cap still applies.
+Never use it in scheduled execution.
 
 The server crontab runs the script every two hours. State, research sources, slot
 claims and message receipts are stored in `~/.local/state/zibashe-marketing/` with
 private permissions. Failed/unknown delivery is never automatically repeated in
-the same slot. A seven-day cycle cooldown prevents repetitive advertising.
+the same slot. The same perfume is limited to two sent or possibly sent ads in
+any rolling 24-hour period, and an individual sales list remains on a seven-day cooldown.
 No eligible new list means no message. Research failure means no advertisement;
 the reason is stored in the state database and publisher log.
 
@@ -22,7 +24,8 @@ After the primary promotion, an album of exactly three official product images i
 sent when verified. The initial first-party registry covers Diptyque, Creed and
 Roja. Verified image sets are saved on the VPS using the perfume brand, exact
 variant name and product page identity, and reused if the perfume appears in a
-different sales list. Unsupported brands or fewer than three safe distinct images skip the album;
+different sales list. Review research text is shared across those lists and
+refreshed every 30 days. Unsupported brands or fewer than three safe distinct images skip the album;
 the primary ad still publishes. Sources must come from the brand product page.
 Vision verification rejects wrong variants, retailer names and overlaid watermarks.
 Bottle branding is allowed. Images are not edited or watermarks removed. Album

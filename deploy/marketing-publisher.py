@@ -6,6 +6,7 @@ State lives outside the checkout and survives app deployments and host restarts.
 """
 import argparse
 import datetime as dt
+import hashlib
 import html
 import json
 import os
@@ -18,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import importlib.util
+from collections import Counter
 
 CHAT = '-1001283018740'
 DOMAINS = ['fragrantica.com', 'parfumo.com']
@@ -66,6 +68,28 @@ def query(sqlenv, list_id=None, test_code=None):
     if result.returncode:
         raise RuntimeError('Catalogue query failed; inspect SQL server health')
     return json.loads(''.join(result.stdout.splitlines()) or '[]')
+
+
+def perfume_row(sqlenv, list_id):
+    import uuid
+    list_id = str(uuid.UUID(list_id))
+    sql = f"SET NOCOUNT ON; SELECT Id,DisplayBrand,EnglishName,ProductPageUrl FROM SalesLists WHERE Id='{list_id}' FOR JSON PATH;"
+    result = subprocess.run(['docker', 'exec', '-e', 'SQLCMDPASSWORD=' + sqlenv['MSSQL_SA_PASSWORD'],
+                             'deploy-sqlserver-1', '/opt/mssql-tools18/bin/sqlcmd', '-S', 'localhost',
+                             '-U', 'sa', '-C', '-d', 'ZibasheERPDb', '-b', '-y', '0', '-w', '65535', '-Q', sql],
+                            capture_output=True, text=True, timeout=35)
+    if result.returncode:
+        raise RuntimeError('Perfume identity lookup failed; inspect SQL server health')
+    rows = json.loads(''.join(result.stdout.splitlines()) or '[]')
+    return rows[0] if rows else None
+
+
+def perfume_frequency_key(row):
+    """Use brand and exact variant name to count the same scent across different links/lists."""
+    identity = json.dumps([' '.join(str(row.get('DisplayBrand') or '').casefold().split()),
+                           ' '.join(str(row.get('EnglishName') or '').casefold().split())],
+                          ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(identity.encode('utf-8')).hexdigest()
 
 
 def post(url, payload, headers=None, timeout=120):
@@ -156,7 +180,8 @@ def caption(row, content):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dry-run', action='store_true')
-    parser.add_argument('--test-code', type=int, help='Explicit manual sample: bypass only remainder threshold and cooldown')
+    parser.add_argument('--test-code', type=int,
+                        help='Explicit manual sample: bypass remainder threshold and sales-list cooldown; daily perfume cap still applies')
     args = parser.parse_args()
     os.umask(0o077)
     STATE.mkdir(parents=True, exist_ok=True)
@@ -170,6 +195,8 @@ def main():
             db.execute('CREATE TABLE IF NOT EXISTS slots (slot INTEGER PRIMARY KEY,status TEXT,list_id TEXT,at REAL,message_id INTEGER,error TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS cache (list_id TEXT PRIMARY KEY,at REAL,content TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS albums (slot INTEGER PRIMARY KEY,status TEXT,receipt TEXT)')
+            if 'perfume_key' not in {column[1] for column in db.execute('PRAGMA table_info(slots)')}:
+                db.execute('ALTER TABLE slots ADD COLUMN perfume_key TEXT')
             now = dt.datetime.now(dt.timezone.utc).timestamp()
             slot = -int(now) if args.test_code else int(now // 7200)
             if db.execute('SELECT 1 FROM slots WHERE slot=?', (slot,)).fetchone() and not args.dry_run:
@@ -178,7 +205,7 @@ def main():
             sample = Path('/home/zibashe/backups/promo-sample-over70-20261026/sent.json')
             if sample.exists() and not db.execute('SELECT 1 FROM slots WHERE slot=-1').fetchone():
                 receipt = json.loads(sample.read_text())
-                db.execute('INSERT INTO slots VALUES(-1,?,?,?,?,?)',
+                db.execute('INSERT INTO slots (slot,status,list_id,at,message_id,error,perfume_key) VALUES(-1,?,?,?,?,?,NULL)',
                            ('sent', '6CF03EA0-9A8A-48F9-A3AC-72EE9152CF7B', sample.stat().st_mtime,
                             receipt['message_id'], None))
                 db.commit()
@@ -187,28 +214,63 @@ def main():
                 raise RuntimeError('Advertising destination must remain a silent group')
             recent = {row[0] for row in db.execute("SELECT list_id FROM slots WHERE status IN ('sent','sending','unknown') AND at>?", (now - 7*86400,))}
             recent.update(row[0] for row in db.execute("SELECT list_id FROM slots WHERE status='failed' AND at>?", (now - 86400,)))
+            images_module = image_provider()
+            day_ago = now - 86400
+            missing_keys = {row[0] for row in db.execute(
+                "SELECT DISTINCT list_id FROM slots WHERE list_id IS NOT NULL AND perfume_key IS NULL AND at>? "
+                "AND status IN ('sent','sending','unknown')", (day_ago,))}
+            for old_list_id in missing_keys:
+                identity = perfume_row(sqlenv, old_list_id)
+                if identity:
+                    db.execute("UPDATE slots SET perfume_key=? WHERE list_id=? AND perfume_key IS NULL",
+                               (perfume_frequency_key(identity), old_list_id))
+            db.commit()
+            daily_counts = Counter(row[0] for row in db.execute(
+                "SELECT perfume_key FROM slots WHERE perfume_key IS NOT NULL AND at>? "
+                "AND status IN ('sent','sending','unknown')", (day_ago,)))
             maximum = 2**31 if args.test_code else 10
-            candidates = [row for row in query(sqlenv, test_code=args.test_code) if eligible(row, maximum) and
-                          (args.test_code or row['Id'].lower() not in {x.lower() for x in recent if x})]
+            eligible_rows = [row for row in query(sqlenv, test_code=args.test_code) if eligible(row, maximum)]
+            candidates = []
+            daily_limit_skipped = False
+            for candidate in eligible_rows:
+                if not args.test_code and candidate['Id'].lower() in {x.lower() for x in recent if x}:
+                    continue
+                key = perfume_frequency_key(candidate)
+                if daily_counts[key] >= 2:
+                    daily_limit_skipped = True
+                    continue
+                candidates.append((candidate, key))
             if not args.dry_run:
-                db.execute('INSERT INTO slots VALUES(?,?,?,?,?,?)', (slot, 'researching', None, now, None, None))
+                db.execute('INSERT INTO slots (slot,status,list_id,at,message_id,error,perfume_key) VALUES(?,?,?,?,?,?,?)',
+                           (slot, 'researching', None, now, None, None, None))
                 db.commit()
             if not candidates:
                 if not args.dry_run:
                     db.execute("UPDATE slots SET status='empty' WHERE slot=?", (slot,)); db.commit()
-                print(json.dumps({'status': 'no_new_eligible_list'}))
+                reason = 'daily_perfume_limit' if daily_limit_skipped else 'no_new_eligible_list_or_sales_list_cooldown'
+                print(json.dumps({'status': 'no_new_eligible_list', 'reason': reason}))
                 return
             try:
-                row = candidates[0]
+                row, perfume_key = candidates[0]
                 if not args.dry_run:
-                    db.execute('UPDATE slots SET list_id=? WHERE slot=?', (row['Id'], slot)); db.commit()
-                cached = db.execute('SELECT content FROM cache WHERE list_id=? AND at>?', (row['Id'], now - 7*86400)).fetchone()
+                    db.execute('UPDATE slots SET list_id=?,perfume_key=? WHERE slot=?',
+                               (row['Id'], perfume_key, slot)); db.commit()
+                shared_text_key = 'perfume:' + perfume_key
+                cached = db.execute('SELECT content FROM cache WHERE list_id=? AND at>?',
+                                    (shared_text_key, now - 30*86400)).fetchone()
+                if not cached:
+                    cached = db.execute('SELECT content FROM cache WHERE list_id=? AND at>?',
+                                        (row['Id'], now - 30*86400)).fetchone()
                 content = json.loads(cached[0]) if cached else research(cfg, row)
                 validate_content(content)
-                db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)', (row['Id'], now, json.dumps(content, ensure_ascii=False))); db.commit()
+                db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)',
+                           (shared_text_key, now, json.dumps(content, ensure_ascii=False)))
+                db.execute('INSERT OR REPLACE INTO cache VALUES(?,?,?)',
+                           (row['Id'], now, json.dumps(content, ensure_ascii=False)))
+                db.commit()
                 images, image_status = [], 'not_checked'
                 try:
-                    images, image_status = image_provider().prepare(cfg, row, STATE, post)
+                    images, image_status = images_module.prepare(cfg, row, STATE, post)
                 except Exception as image_error:
                     image_status = 'Image verification unavailable: ' + str(image_error)[:180]
                 fresh = query(sqlenv, row['Id'], test_code=args.test_code)
@@ -223,7 +285,8 @@ def main():
                                       'review_sources': len(content['sources']), 'official_images': len(images),
                                       'image_status': image_status}, ensure_ascii=False))
                     return
-                db.execute("UPDATE slots SET status='sending',list_id=? WHERE slot=?", (row['Id'], slot)); db.commit()
+                db.execute("UPDATE slots SET status='sending',list_id=?,perfume_key=? WHERE slot=?",
+                           (row['Id'], perfume_key, slot)); db.commit()
                 link = 'https://t.me/c/' + row['TelegramChannelId'][4:] + '/' + str(row['TelegramMessageId'])
                 result = post('https://api.telegram.org/bot' + cfg['Telegram__BotToken'] + '/sendPhoto', {
                     'chat_id': CHAT, 'photo': row['TelegramPhotoFileId'], 'caption': text, 'parse_mode': 'HTML',
@@ -235,7 +298,7 @@ def main():
                 if len(images) == 3:
                     db.execute('INSERT INTO albums VALUES(?,?,?)', (slot, 'sending', '')); db.commit()
                     try:
-                        ids = image_provider().send_album(cfg, CHAT, images)
+                        ids = images_module.send_album(cfg, CHAT, images)
                         db.execute("UPDATE albums SET status='sent',receipt=? WHERE slot=?", (json.dumps(ids), slot)); db.commit()
                         print(json.dumps({'official_album': 'sent', 'message_ids': ids}))
                     except Exception as album_error:
