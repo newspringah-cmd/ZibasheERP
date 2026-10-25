@@ -54,7 +54,7 @@ def query(sqlenv, list_id=None, test_code=None, maximum_remaining=10):
         suffix += f' AND COALESCE(StablePublicCode,PublicCode)={int(test_code)}'
     else:
         suffix += f' AND TotalVolume-ReservedVolume<{int(maximum_remaining)}'
-    sql = '''SET NOCOUNT ON; SELECT Id,PublicCode,StablePublicCode,EnglishName,PersianName,
+    sql = '''SET NOCOUNT ON; SELECT Id,PublicCode,StablePublicCode,EnglishName,PersianName,Gender,
         DisplayBrand,TopNotes,MiddleNotes,BaseNotes,Accords,Status,IsDeleted,IsInventoryOffer,
         TotalVolume,ReservedVolume,TelegramPhotoFileId,TelegramChannelId,TelegramMessageId,ProductPageUrl
         FROM SalesLists WHERE IsDeleted=0 AND IsInventoryOffer=0 AND Status=1

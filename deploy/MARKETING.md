@@ -33,9 +33,9 @@ Vision verification rejects wrong variants, retailer names and overlaid watermar
 Bottle branding is allowed. Images are not edited or watermarks removed. Album
 claims/receipts are separate from the primary post to prevent ambiguous retries.
 The album consists of two product/packaging photos followed by one official
-lifestyle/campaign image conveying the wearer's style. If the official lifestyle
-image is unavailable, an independent AI concept image is generated without a
+lifestyle/campaign image with a clearly visible adult human wearer, prioritizing
+women where the fragrance positioning allows. If the official lifestyle image is unavailable, an independent AI concept image is generated without a
 fabricated bottle or brand logo. It carries an explicit AI-generated caption.
 The first two photos must still be verified official product images, or the album
 is skipped. `Marketing__ImageModel` defaults to `gpt-image-2` for this conditional
-generation. Cached older bottle-only albums are revalidated.
+generation. Older image caches are rebuilt to apply the human-wearer requirement.
