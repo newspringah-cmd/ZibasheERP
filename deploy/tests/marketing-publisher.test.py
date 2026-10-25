@@ -64,5 +64,24 @@ class PublisherTests(unittest.TestCase):
                         {'selected_ids': [0, 1, 2], 'lifestyle_id': True}):
             self.assertEqual(images.album_selection(verdict, 4), [])
 
+    def test_ai_vibe_only_after_two_verified_product_photos(self):
+        images = publisher.image_provider()
+        self.assertEqual(images.product_selection({'product_ids': [1, 3]}, 4), [1, 3])
+        for ids in ([], [0], [0, 0], [0, 9], [True, 2]):
+            self.assertEqual(images.product_selection({'product_ids': ids}, 4), [])
+        import tempfile
+        import base64
+        with tempfile.TemporaryDirectory() as folder:
+            captured = []
+            def fake_post(url, payload, headers, timeout):
+                captured.append((url, payload))
+                return {'data': [{'b64_json': base64.b64encode(b'\x89PNG\r\n\x1a\n' + b'dummy').decode()}]}
+            name, digest, model = images.generate_vibe({'AddressLabel__OpenAiApiKey': 'test'},
+                {'EnglishName': 'Test Perfume', 'TopNotes': 'rose'}, Path(folder), fake_post)
+            self.assertTrue(name.startswith('ai-vibe-'))
+            self.assertTrue((Path(folder)/name).is_file())
+            self.assertEqual(captured[0][1]['n'], 1)
+            self.assertIn('No perfume bottle', captured[0][1]['prompt'])
+
 
 if __name__ == '__main__': unittest.main()
