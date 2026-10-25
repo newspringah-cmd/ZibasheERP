@@ -61,6 +61,9 @@ jobs:
           deploy/render-caddyfile.sh deploy/audit-vps.sh
           deploy/backup-sqlserver.sh deploy/verify-sqlserver-restore.sh
 
+      - name: Test scheduled perfume promotions
+        run: python3 deploy/tests/marketing-publisher.test.py
+
       - name: Validate Caddy template rendering
         run: |
           bash deploy/render-caddyfile.sh erp.zibashe.ir n8n.zibashe.ir ops@zibashe.ir
