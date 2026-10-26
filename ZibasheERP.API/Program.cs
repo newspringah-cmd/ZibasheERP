@@ -152,6 +152,8 @@ builder.Services.AddSingleton<TrackingImportDraftStore>();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddScoped<IDecantListDeliveryStore, DecantListDeliveryStore>();
 builder.Services.AddScoped<TelegramDecantListDelivery>();
+builder.Services.AddScoped<IProductionCopyDeliveryStore, ProductionCopyDeliveryStore>();
+builder.Services.AddScoped<TelegramProductionCopyDelivery>();
 builder.Services.AddSingleton<ITelegramUpdateDeduplicator, TelegramUpdateDeduplicator>();
 builder.Services.AddSingleton<TelegramAdminSalesListDraftStore>();
 builder.Services.AddSingleton<TelegramOwnerPricingDraftStore>();

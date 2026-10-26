@@ -48,6 +48,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
     private readonly IMediator _mediator;
     private readonly ITelegramMessageSender _sender;
     private readonly TelegramDecantListDelivery _decantListDelivery;
+    private readonly TelegramProductionCopyDelivery _productionCopyDelivery;
     private readonly AdminActivityContext _adminActivityContext;
     private readonly TelegramOptions _options;
     private readonly ILogger<TelegramWebhookController> _logger;
@@ -114,6 +115,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramDecantPhotoDraftStore decantPhotoDrafts,
         TelegramOrderFlowDraftStore orderFlowDrafts,
         TelegramDecantListDelivery decantListDelivery,
+        TelegramProductionCopyDelivery productionCopyDelivery,
         AdminActivityContext adminActivityContext,
         TelegramSalesListRebuildWorker salesListRebuildWorker,
         TelegramProductionCopyResendWorker productionCopyResendWorker,
@@ -155,6 +157,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         _decantPhotoDrafts = decantPhotoDrafts;
         _orderFlowDrafts = orderFlowDrafts;
         _decantListDelivery = decantListDelivery;
+        _productionCopyDelivery = productionCopyDelivery;
         _adminActivityContext = adminActivityContext;
         _salesListRebuildWorker = salesListRebuildWorker;
         _productionCopyResendWorker = productionCopyResendWorker;

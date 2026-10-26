@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using ZibasheERP.Application.Interfaces;
@@ -114,6 +113,8 @@ public sealed class TelegramProductionCopyResendWorker : BackgroundService
         SalesListProductionCopy copy,
         CancellationToken cancellationToken)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var delivery = scope.ServiceProvider.GetRequiredService<TelegramProductionCopyDelivery>();
         var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
         {
             new[]
@@ -125,77 +126,17 @@ public sealed class TelegramProductionCopyResendWorker : BackgroundService
             }
         };
         var header = $"🏷 لیست چاپ {copy.PublicCode}\n{copy.PerfumeName}";
-        var headerResult = await SendWithRetryAsync(
-            () => !string.IsNullOrWhiteSpace(copy.TelegramPhotoFileId)
-                ? _sender.SendPhotoWithKeyboardAsync(
-                    destinationChatId, copy.TelegramPhotoFileId, header, buttons, cancellationToken)
-                : _sender.SendInlineKeyboardAsync(
-                    destinationChatId, header + "\n⚠️ عکس عطر ثبت نشده است.", buttons, cancellationToken),
-            copy.PublicCode,
-            cancellationToken);
-        if (!headerResult.IsSuccessful)
-            return false;
-
-        foreach (var message in SplitMessage(copy.LabelPrintMessage))
+        var result = await delivery.SendAsync(copy.SalesListId, destinationChatId,
+            copy.TelegramPhotoFileId, header, buttons, copy.LabelPrintMessage, cancellationToken);
+        if (result.IsSuccessful)
         {
-            var result = await SendWithRetryAsync(
-                () => _sender.SendAsync(destinationChatId, message, cancellationToken),
-                copy.PublicCode,
-                cancellationToken);
-            if (!result.IsSuccessful)
-                return false;
+            await Task.Delay(TimeSpan.FromMilliseconds(3100), cancellationToken);
+            return true;
         }
-        return true;
+
+        _logger.LogWarning("Production copy {PublicCode} was not sent or needs review: {Error}",
+            copy.PublicCode, result.Error);
+        return false;
     }
 
-    private async Task<TelegramSendResult> SendWithRetryAsync(
-        Func<Task<TelegramSendResult>> send,
-        int publicCode,
-        CancellationToken cancellationToken)
-    {
-        TelegramSendResult? result = null;
-        for (var attempt = 1; attempt <= 5; attempt++)
-        {
-            result = await send();
-            if (result.IsSuccessful)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(3100), cancellationToken);
-                return result;
-            }
-            if (!TryGetRetryAfter(result.Error, out var retryAfterSeconds) || attempt == 5)
-            {
-                _logger.LogWarning(
-                    "Production copy {PublicCode} failed on attempt {Attempt}: {Error}",
-                    publicCode, attempt, result.Error);
-                return result;
-            }
-            await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(retryAfterSeconds + 1, 2, 90)), cancellationToken);
-        }
-        return result ?? new TelegramSendResult(false, "Telegram send was not attempted.");
-    }
-
-    private static bool TryGetRetryAfter(string? error, out int seconds)
-    {
-        seconds = 0;
-        if (string.IsNullOrWhiteSpace(error)) return false;
-        var match = Regex.Match(error, @"retry after\s+(\d+)", RegexOptions.IgnoreCase);
-        return match.Success && int.TryParse(match.Groups[1].Value, out seconds);
-    }
-
-    private static IReadOnlyCollection<string> SplitMessage(string message)
-    {
-        const int maxLength = 3900;
-        if (message.Length <= maxLength) return new[] { message };
-        var parts = new List<string>();
-        var remaining = message;
-        while (remaining.Length > maxLength)
-        {
-            var splitAt = remaining.LastIndexOf('\n', maxLength);
-            if (splitAt < maxLength / 2) splitAt = maxLength;
-            parts.Add(remaining[..splitAt].Trim());
-            remaining = remaining[splitAt..].TrimStart();
-        }
-        if (remaining.Length > 0) parts.Add(remaining);
-        return parts;
-    }
 }

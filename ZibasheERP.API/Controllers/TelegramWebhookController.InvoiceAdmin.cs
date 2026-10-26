@@ -3219,32 +3219,11 @@ public sealed partial class TelegramWebhookController
                     new TelegramInlineButton("🖨 چاپ لوگو", $"plogo:print:{copy.SalesListId:N}")
                 }
             };
-            TelegramSendResult headerResult;
             var header = $"🏷 لیست چاپ {copy.PublicCode}\n{copy.PerfumeName}";
-            if (!string.IsNullOrWhiteSpace(copy.TelegramPhotoFileId))
-                headerResult = await _sender.SendPhotoWithKeyboardAsync(
-                    destinationChatId, copy.TelegramPhotoFileId, header, buttons, ct);
-            else
-                headerResult = await _sender.SendInlineKeyboardAsync(
-                    destinationChatId, header + "\n⚠️ عکس عطر ثبت نشده است.", buttons, ct);
-            if (!headerResult.IsSuccessful)
-            {
-                failures.Add($"{destinationName}، لیست {copy.PublicCode}: {headerResult.Error ?? "خطای نامشخص"}");
-                continue;
-            }
-
-            var part = 0;
-            foreach (var message in SplitTelegramMessage(messageSelector(copy)))
-            {
-                part++;
-                var result = await _sender.SendAsync(destinationChatId, message, ct);
-                if (result.IsSuccessful)
-                    continue;
-
-                var suffix = part == 1 ? string.Empty : $" (بخش {part})";
-                failures.Add($"{destinationName}، لیست {copy.PublicCode}{suffix}: {result.Error ?? "خطای نامشخص"}");
-                break;
-            }
+            var result = await _productionCopyDelivery.SendAsync(copy.SalesListId, destinationChatId,
+                copy.TelegramPhotoFileId, header, buttons, messageSelector(copy), ct);
+            if (!result.IsSuccessful)
+                failures.Add($"{destinationName}، لیست {copy.PublicCode}: {result.Error ?? "خطای نامشخص"}");
         }
     }
 

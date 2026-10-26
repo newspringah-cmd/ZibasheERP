@@ -132,6 +132,7 @@ using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload
     Check(payload.RootElement.GetProperty("text").GetString() == "access denied" && payload.RootElement.GetProperty("show_alert").GetBoolean(), "explicit callback alerts preserved");
 ProductionGiftGroupingTests.Run(Check);
 await DecantListDeliveryTests.Run(Check);
+await ProductionCopyDeliveryTests.Run(Check);
 SmallRemainderReservationTests.Run(Check);
 InvoicedSalesListReportTests.Run(Check);
 AddressReadyItemsTests.Run(Check);
