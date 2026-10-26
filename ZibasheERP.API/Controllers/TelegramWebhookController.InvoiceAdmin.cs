@@ -4586,7 +4586,14 @@ public sealed partial class TelegramWebhookController
                     item.Order != null &&
                     !item.Order.IsDeleted &&
                     customerIds.Contains(item.Order.CustomerId) &&
-                    item.Order.Status != OrderStatus.Cancelled)
+                    item.Order.Status != OrderStatus.Cancelled &&
+                    (item.SourceSalesListRequest == null ||
+                     !item.SourceSalesListRequest.IsGift ||
+                     (item.SourceSalesListRequest.GiftRecipientTelegramUserId != null &&
+                      telegramIds.Contains(item.SourceSalesListRequest.GiftRecipientTelegramUserId)) ||
+                     (item.SourceSalesListRequest.GiftRecipientTelegramUsername != null &&
+                      (item.SourceSalesListRequest.GiftRecipientTelegramUsername.ToLower() == normalizedLower ||
+                       item.SourceSalesListRequest.GiftRecipientTelegramUsername.ToLower() == "@" + normalizedLower))))
                 .OrderByDescending(item => item.UpdatedAt ?? item.CreatedAt)
                 .Take(250)
                 .Select(item => new CustomerItemStatusRow(
@@ -4615,10 +4622,11 @@ public sealed partial class TelegramWebhookController
                 request.Status != SalesListRequestStatus.PendingConfirmation &&
                 request.Status != SalesListRequestStatus.Cancelled &&
                 request.Status != SalesListRequestStatus.Expired &&
-                ((request.TelegramUsername != null &&
-                  (request.TelegramUsername.ToLower() == normalizedLower ||
-                   request.TelegramUsername.ToLower() == "@" + normalizedLower)) ||
-                 (telegramIds.Length > 0 && telegramIds.Contains(request.TelegramUserId)) ||
+                ((!request.IsGift &&
+                  ((request.TelegramUsername != null &&
+                    (request.TelegramUsername.ToLower() == normalizedLower ||
+                     request.TelegramUsername.ToLower() == "@" + normalizedLower)) ||
+                   (telegramIds.Length > 0 && telegramIds.Contains(request.TelegramUserId)))) ||
                  (request.IsGift &&
                   ((request.GiftRecipientTelegramUsername != null &&
                     (request.GiftRecipientTelegramUsername.ToLower() == normalizedLower ||
