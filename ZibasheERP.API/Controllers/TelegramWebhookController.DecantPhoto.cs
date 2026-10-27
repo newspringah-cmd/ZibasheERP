@@ -532,7 +532,7 @@ public sealed partial class TelegramWebhookController
         string? labelIdentity)
     {
         var labelMatch = Regex.Match(labelIdentity ?? string.Empty,
-            @"(?i)\bfor\s+@?(?<recipient>[A-Za-z0-9_]{5,})\b");
+            @"(?i)\bfor\s+(?:@(?<recipient>[A-Za-z0-9_]{5,})\b|(?<bareRecipient>[A-Za-z0-9_]{5,})(?=\s*(?:=L)?\s*$))");
         var labelGift = labelMatch.Success;
         var hasRecipient = !string.IsNullOrWhiteSpace(recipientUsername) ||
             !string.IsNullOrWhiteSpace(recipientTelegramId);
@@ -540,7 +540,10 @@ public sealed partial class TelegramWebhookController
         {
             var username = NormalizeDecantUsername(recipientUsername);
             if (username is null && labelGift)
-                username = NormalizeDecantUsername(labelMatch.Groups["recipient"].Value);
+                username = NormalizeDecantUsername(
+                    labelMatch.Groups["recipient"].Success
+                        ? labelMatch.Groups["recipient"].Value
+                        : labelMatch.Groups["bareRecipient"].Value);
             return new DecantIdentity(username, NormalizeDecantTelegramId(recipientTelegramId));
         }
         return new DecantIdentity(giverUsername, giverTelegramId);
