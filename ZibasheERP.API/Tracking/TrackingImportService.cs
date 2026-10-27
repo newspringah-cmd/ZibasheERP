@@ -407,7 +407,32 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 value.UpdatedAt ?? value.CreatedAt, false))
             .ToArrayAsync(ct);
         var recentResult = SelectUnique(target, destination, recent, requireExact: false);
-        if (recentResult is not null) return recentResult;
+        if (recentResult is not null)
+        {
+            // A tracking row can match the customer's saved address even when its
+            // delivery-address row did not win the global active-request match
+            // (for example, multiple customers share a receiver name). If this
+            // customer has exactly one outstanding shipping request, safely link
+            // the tracking code to it so successful delivery updates its perfume
+            // items to Shipped for every carrier, including post express and Chapar.
+            if (recentResult.Status == TrackingDispatchStatus.Ready && recentResult.CustomerId.HasValue)
+            {
+                var customerRequests = active
+                    .Where(value => value.CustomerId == recentResult.CustomerId.Value)
+                    .Select(value => value.ShippingRequestId)
+                    .Distinct()
+                    .ToArray();
+                if (customerRequests.Length == 1)
+                {
+                    return new TrackingMatch(
+                        recentResult.CustomerId,
+                        customerRequests[0],
+                        TrackingDispatchStatus.Ready,
+                        "تطبیق با آدرس یکتای مشتری و تنها درخواست ارسال فعال");
+                }
+            }
+            return recentResult;
+        }
 
         var old = await _db.Addresses.AsNoTracking()
             .Where(value => !value.IsDeleted && (value.UpdatedAt ?? value.CreatedAt) < recentCutoff)

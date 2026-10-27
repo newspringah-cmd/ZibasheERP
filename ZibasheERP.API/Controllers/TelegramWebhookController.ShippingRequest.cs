@@ -1077,8 +1077,8 @@ public sealed partial class TelegramWebhookController
         }
         else
         {
-            // Legacy address-only requests can still receive and deliver a tracking photo.
-            // Guid.Empty prevents unrelated order items from being marked as shipped.
+            // Address-only requests have no shipping-request ID; tracking completion
+            // updates only this customer's unassigned ready-to-ship items.
             shippingButtons.Add(new[]
             {
                 new TelegramInlineButton("📸 ارسال کد رهگیری",
@@ -1260,10 +1260,14 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
-        var shippedItems = await _db.OrderItems.Include(value => value.Order)
-            .Where(value => !value.IsDeleted &&
-                value.ShippingRequestId == draft.ShippingRequestId)
-            .ToArrayAsync(ct);
+        var shippedItemsQuery = _db.OrderItems.Include(value => value.Order)
+            .Where(value => !value.IsDeleted && value.Order != null);
+        shippedItemsQuery = draft.ShippingRequestId == Guid.Empty
+            ? shippedItemsQuery.Where(value => value.Order!.CustomerId == draft.CustomerId &&
+                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
+                value.ShippingRequestId == null)
+            : shippedItemsQuery.Where(value => value.ShippingRequestId == draft.ShippingRequestId);
+        var shippedItems = await shippedItemsQuery.ToArrayAsync(ct);
         var shippedAt = DateTime.UtcNow;
         foreach (var item in shippedItems.Where(value =>
                      value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped))
@@ -1272,12 +1276,13 @@ public sealed partial class TelegramWebhookController
             item.ShippedAt = shippedAt;
             item.UpdatedAt = shippedAt;
         }
+        var shippedItemIds = shippedItems.Select(value => value.Id).ToArray();
         foreach (var order in shippedItems.Select(value => value.Order)
                      .Where(value => value is not null).Distinct()!)
         {
             var hasUnshipped = await _db.OrderItems.AnyAsync(value =>
                 !value.IsDeleted && value.OrderId == order!.Id &&
-                value.ShippingRequestId != draft.ShippingRequestId &&
+                !shippedItemIds.Contains(value.Id) &&
                 value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped, ct);
             if (!hasUnshipped)
             {
@@ -1311,7 +1316,7 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id,
                 $"⚠️ عکس کد رهگیری ارسال شد اما وضعیت دکمه بروزرسانی نشد: {markupResult.Error}", ct);
         await ReplyAsync(message.Chat.Id,
-            $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد و {shippedItems.Length} دکانت به وضعیت ارسال‌شده تغییر کرد.", ct);
+            $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد و {shippedItems.Length} آیتم به وضعیت ارسال‌شده تغییر کرد.", ct);
         return true;
     }
 
