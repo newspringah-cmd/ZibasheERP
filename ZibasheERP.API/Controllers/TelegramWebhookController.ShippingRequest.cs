@@ -214,11 +214,10 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مسئول ارسال ندارید.", ct, true);
                 return true;
             }
-            var selected = _orderFlowDrafts.GetShippingSelection(callback.Message.Chat.Id, callback.From.Id);
-            var added = selected.Add(selectedRequestId);
-            if (!added) selected.Remove(selectedRequestId);
+            var (added, selectedCount) = _orderFlowDrafts.ToggleShippingSelection(
+                callback.Message.Chat.Id, callback.From.Id, selectedRequestId);
             await _sender.AnswerCallbackAsync(callback.Id,
-                added ? $"انتخاب شد؛ مجموع انتخاب‌ها: {selected.Count}" : $"از انتخاب خارج شد؛ مجموع: {selected.Count}", ct, true);
+                added ? $"انتخاب شد؛ مجموع انتخاب‌ها: {selectedCount}" : $"از انتخاب خارج شد؛ مجموع: {selectedCount}", ct, true);
             return true;
         }
 
@@ -1148,7 +1147,7 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "دسترسی مسئول ارسال ندارید.", ct, true);
             return;
         }
-        var selected = _orderFlowDrafts.GetShippingSelection(callback.Message.Chat.Id, callback.From.Id);
+        var selected = _orderFlowDrafts.GetShippingSelectionSnapshot(callback.Message.Chat.Id, callback.From.Id);
         if (selected.Count == 0)
         {
             await _sender.AnswerCallbackAsync(callback.Id, "ابتدا چند درخواست را انتخاب کنید.", ct, true);
@@ -1194,6 +1193,7 @@ public sealed partial class TelegramWebhookController
         await ReplyAsync(callback.Message.Chat.Id,
             $"📊 گزارش کلی ارسال\nدرخواست انتخاب‌شده: {selected.Count}\nتعداد کل دکانت: {items.Length}\nمجموع میل: {items.Sum(value => value.RequestedVolumeMl)}", ct);
         await SendShippingTextChunksAsync(callback.Message.Chat.Id, "تفکیک عطرها:", groups, ct);
+        _orderFlowDrafts.ClearShippingSelection(callback.Message.Chat.Id, callback.From.Id, selected);
     }
 
     private async Task<bool> TryHandleShippingTrackingPhotoMessageAsync(

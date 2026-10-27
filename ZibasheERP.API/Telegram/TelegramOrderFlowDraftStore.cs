@@ -105,8 +105,28 @@ public sealed class TelegramOrderFlowDraftStore
     public void ClearShippingPreparation(long chatId, long userId) =>
         _shippingPreparations.TryRemove((chatId, userId), out _);
 
-    public HashSet<Guid> GetShippingSelection(long chatId, long userId) =>
-        _shippingSelections.GetOrAdd((chatId, userId), _ => []);
+    public (bool Added, int Count) ToggleShippingSelection(long chatId, long userId, Guid requestId)
+    {
+        var selection = _shippingSelections.GetOrAdd((chatId, userId), _ => []);
+        lock (selection)
+        {
+            if (selection.Add(requestId)) return (true, selection.Count);
+            selection.Remove(requestId);
+            return (false, selection.Count);
+        }
+    }
+
+    public HashSet<Guid> GetShippingSelectionSnapshot(long chatId, long userId)
+    {
+        var selection = _shippingSelections.GetOrAdd((chatId, userId), _ => []);
+        lock (selection) return [.. selection];
+    }
+
+    public void ClearShippingSelection(long chatId, long userId, IEnumerable<Guid> reportedRequestIds)
+    {
+        if (!_shippingSelections.TryGetValue((chatId, userId), out var selection)) return;
+        lock (selection) selection.ExceptWith(reportedRequestIds);
+    }
 
     public void SetShippingTrackingPhoto(TelegramShippingTrackingPhotoDraft draft) =>
         _shippingTrackingPhotos[(draft.ChatId, draft.UserId)] = draft;

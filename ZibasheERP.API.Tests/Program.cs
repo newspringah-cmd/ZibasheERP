@@ -130,6 +130,15 @@ using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload
 await realSender.AnswerCallbackAsync("error", "access denied", showAlert: true);
 using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload!))
     Check(payload.RootElement.GetProperty("text").GetString() == "access denied" && payload.RootElement.GetProperty("show_alert").GetBoolean(), "explicit callback alerts preserved");
+var shippingSelectionStore = new TelegramOrderFlowDraftStore();
+var firstShippingRequest = Guid.NewGuid();
+var nextShippingRequest = Guid.NewGuid();
+shippingSelectionStore.ToggleShippingSelection(100, 200, firstShippingRequest);
+var reportedShippingSelection = shippingSelectionStore.GetShippingSelectionSnapshot(100, 200);
+shippingSelectionStore.ToggleShippingSelection(100, 200, nextShippingRequest);
+shippingSelectionStore.ClearShippingSelection(100, 200, reportedShippingSelection);
+Check(shippingSelectionStore.GetShippingSelectionSnapshot(100, 200).SetEquals([nextShippingRequest]),
+    "shipping report clears reported address selections but preserves later selections");
 ProductionGiftGroupingTests.Run(Check);
 await DecantListDeliveryTests.Run(Check);
 await ProductionCopyDeliveryTests.Run(Check);
