@@ -5750,7 +5750,7 @@ public sealed partial class TelegramWebhookController
             ? _options.AdminChatId
             : _options.SalesAuditChatId;
         var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
-        var adminIdentity = DisplayTelegramUser(callback.From);
+        var adminIdentity = DisplaySalesListRegistrationActor(callback.From);
         if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
         {
             var bottleLabel = draft.IsBottleOwner

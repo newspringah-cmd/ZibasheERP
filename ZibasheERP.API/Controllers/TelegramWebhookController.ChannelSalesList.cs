@@ -923,6 +923,11 @@ public sealed partial class TelegramWebhookController
         var identity = string.IsNullOrWhiteSpace(user.Username) ? user.Id.ToString() : $"@{user.Username}";
         return string.IsNullOrWhiteSpace(fullName) ? identity : $"{fullName} ({identity})";
     }
+
+    private static string DisplaySalesListRegistrationActor(TelegramUser user) => user.Id == 741471928
+        ? "@zahraa_frj"
+        : DisplayTelegramUser(user);
+
     private static string? NormalizeUsername(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimStart('@');
     private static string BottleLabel(string type) =>
