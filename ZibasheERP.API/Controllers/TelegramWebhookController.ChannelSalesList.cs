@@ -139,7 +139,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("برای ثبت درخواست باید عضو کانال فروش باشید.");
         var salesList = initialList;
         if (!salesList.CanReserveVolume(volume, adminRegistration))
-            throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {salesList.RemainingVolume} میل است.");
+            throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {FormatSalesListVolume(salesList.RemainingVolume)} میل است.");
         if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         if (!_temporaryMessageCleaner.TryAcquireInteraction(
@@ -523,7 +523,7 @@ public sealed partial class TelegramWebhookController
                 _options.LowStockAlertChatId,
                 "⚠️ <b>هشدار کاهش موجودی لیست فروش</b>\n\n" +
                 $"عطر: {Html(list.EnglishName)}\n" +
-                $"باقی‌مانده: <b>{list.RemainingVolume} میل</b>\n\n" +
+                $"باقی‌مانده: <b>{FormatSalesListVolume(list.RemainingVolume)} میل</b>\n\n" +
                 $"<a href=\"{Html(postUrl)}\">مشاهده پست در کانال</a>",
                 cancellationToken);
             if (result.IsSuccessful)
@@ -541,7 +541,7 @@ public sealed partial class TelegramWebhookController
                 _options.PromotionAlertChatId,
                 "📣 <b>این لیست نیاز به تبلیغات دارد</b>\n\n" +
                 $"عطر: {Html(list.EnglishName)}\n" +
-                $"فقط <b>{list.RemainingVolume} میل</b> باقی مانده است.\n\n" +
+                $"فقط <b>{FormatSalesListVolume(list.RemainingVolume)} میل</b> باقی مانده است.\n\n" +
                 $"<a href=\"{Html(postUrl)}\">مشاهده پست و شروع تبلیغات</a>",
                 cancellationToken);
             if (result.IsSuccessful)
@@ -805,9 +805,9 @@ public sealed partial class TelegramWebhookController
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
             notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
-            $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
-            $"حداقل درخواست: {list.EffectiveMinimumRequestVolumeMl} میل\n\n" +
-            $"باقی‌مانده: {list.RemainingVolume} میل";
+            $"حجم کل: {FormatSalesListVolume(list.TotalVolume)}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
+            $"حداقل درخواست: {FormatSalesListVolume(decimal.Ceiling(list.EffectiveMinimumRequestVolumeMl))} میل\n\n" +
+            $"باقی‌مانده: {FormatSalesListVolume(list.RemainingVolume)} میل";
         var nextUsers = next.Select(item =>
             item.VolumeMl == 30
                 ? Html(DisplayUser(item))
@@ -820,9 +820,9 @@ public sealed partial class TelegramWebhookController
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
                 FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
                 $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
-                $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
-                $"حداقل: {list.EffectiveMinimumRequestVolumeMl} میل\n\n" +
-                $"باقی‌مانده: {list.RemainingVolume} میل";
+                $"حجم: {FormatSalesListVolume(list.TotalVolume)}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
+                $"حداقل: {FormatSalesListVolume(decimal.Ceiling(list.EffectiveMinimumRequestVolumeMl))} میل\n\n" +
+                $"باقی‌مانده: {FormatSalesListVolume(list.RemainingVolume)} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);
         var rosterLines = rosterGroups.SelectMany(group =>
             new[] { $"{group.Volume} ml:" }.Concat(group.Users)).ToArray();
@@ -923,6 +923,9 @@ public sealed partial class TelegramWebhookController
         var identity = string.IsNullOrWhiteSpace(user.Username) ? user.Id.ToString() : $"@{user.Username}";
         return string.IsNullOrWhiteSpace(fullName) ? identity : $"{fullName} ({identity})";
     }
+
+    private static string FormatSalesListVolume(decimal volumeMl) =>
+        decimal.Truncate(volumeMl).ToString("0", CultureInfo.InvariantCulture);
 
     private static string DisplaySalesListRegistrationActor(TelegramUser user) => user.Id == 741471928
         ? "@zahraa_frj"
