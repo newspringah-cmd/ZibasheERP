@@ -1372,7 +1372,8 @@ public sealed partial class TelegramWebhookController
         => $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل" +
            $" | {FormatShippingBottleAndLabel(item)}";
 
-    private static string FormatShippingBottleAndLabel(OrderItem item)
+    private static string FormatShippingBottleAndLabel(
+        OrderItem item, IReadOnlyCollection<string>? otherSelectedFancyModels = null)
     {
         var bottle = item.IsBottleOwner
             ? "صاحب باتل"
@@ -1389,19 +1390,15 @@ public sealed partial class TelegramWebhookController
                 ? "، لیبل: بدون آیدی"
                 : string.Empty;
         var adminNotes = item.SourceSalesListRequest?.AdminNotes?.Trim();
-        var hasSelectedFancyModel = HasSelectedFancyModel(adminNotes) || HasSelectedFancyModel(item.Bottle?.Name);
+        var selectedFancyModel = GetSelectedFancyModel(adminNotes, item.Bottle?.Name);
         var fancyComment = item.Bottle?.Type == BottleType.Fancy
-            ? (!string.IsNullOrWhiteSpace(adminNotes) ? $"، توضیحات شیشه: {adminNotes}" : string.Empty) +
-              (hasSelectedFancyModel ? string.Empty : "، مدل تعیین نشده")
+            ? selectedFancyModel is not null
+                ? (!string.IsNullOrWhiteSpace(adminNotes) ? $"، توضیحات شیشه: {adminNotes}" : string.Empty)
+                : otherSelectedFancyModels is null
+                    ? "، مدل تعیین نشده"
+                    : $"، {FormatFancyModelAvailability(otherSelectedFancyModels)}"
             : string.Empty;
         return $"شیشه: {bottle}{fancyComment}{labelText}{FormatShippingInventoryMarker(item)}";
-    }
-
-    private static bool HasSelectedFancyModel(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        string[] selectedModels = ["قرمز", "سیاه", "مشکی", "طلایی", "نقره‌ای", "نقره اي", "رزگلد", "red", "black", "gold", "silver", "rose gold"];
-        return selectedModels.Any(model => value.Contains(model, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string FormatShippingBottleCategory(OrderItem item)
