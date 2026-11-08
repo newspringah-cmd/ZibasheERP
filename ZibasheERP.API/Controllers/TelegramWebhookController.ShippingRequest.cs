@@ -1388,10 +1388,20 @@ public sealed partial class TelegramWebhookController
             : item.SourceSalesListRequest?.OmitIdentityOnLabel == true
                 ? "، لیبل: بدون آیدی"
                 : string.Empty;
-        var fancyComment = item.Bottle?.Type == BottleType.Fancy &&
-            !string.IsNullOrWhiteSpace(item.SourceSalesListRequest?.AdminNotes)
-            ? $"، توضیحات شیشه: {item.SourceSalesListRequest.AdminNotes.Trim()}" : string.Empty;
+        var adminNotes = item.SourceSalesListRequest?.AdminNotes?.Trim();
+        var hasSelectedFancyModel = HasSelectedFancyModel(adminNotes) || HasSelectedFancyModel(item.Bottle?.Name);
+        var fancyComment = item.Bottle?.Type == BottleType.Fancy
+            ? (!string.IsNullOrWhiteSpace(adminNotes) ? $"، توضیحات شیشه: {adminNotes}" : string.Empty) +
+              (hasSelectedFancyModel ? string.Empty : "، مدل تعیین نشده")
+            : string.Empty;
         return $"شیشه: {bottle}{fancyComment}{labelText}{FormatShippingInventoryMarker(item)}";
+    }
+
+    private static bool HasSelectedFancyModel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        string[] selectedModels = ["قرمز", "سیاه", "مشکی", "طلایی", "نقره‌ای", "نقره اي", "رزگلد", "red", "black", "gold", "silver", "rose gold"];
+        return selectedModels.Any(model => value.Contains(model, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string FormatShippingBottleCategory(OrderItem item)
