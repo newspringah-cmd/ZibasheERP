@@ -172,7 +172,7 @@ public sealed partial class TelegramWebhookController
             .ThenBy(row => row.Request.ConfirmedAt ?? row.Request.CreatedAt)
             .Select(row => row.Request.IsBottleOwner
                 ? new PerfumeLabelEntry(null, NormalizePerfumeLabelUsername(row.Request.TelegramUsername))
-                : new PerfumeLabelEntry(row.VolumeMl))
+                : new PerfumeLabelEntry(decimal.ToInt32(decimal.Truncate(row.VolumeMl))))
             .ToArray();
     }
 

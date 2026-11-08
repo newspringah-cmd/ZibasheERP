@@ -2,7 +2,7 @@ using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.Application.Services;
 
-public sealed record SalesListProductionRow(SalesListRequest Request, int VolumeMl, int SourceCount = 1);
+public sealed record SalesListProductionRow(SalesListRequest Request, decimal VolumeMl, int SourceCount = 1);
 
 /// <summary>Combines physical gift portions without changing reservations or billing.</summary>
 public static class SalesListProductionGrouping

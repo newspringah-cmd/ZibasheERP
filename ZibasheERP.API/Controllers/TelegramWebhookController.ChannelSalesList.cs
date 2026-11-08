@@ -209,7 +209,7 @@ public sealed partial class TelegramWebhookController
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.TelegramUserId != callback.From.Id.ToString())
             throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
-        var bottles = await _mediator.Send(new GetAvailableBottlesQuery(request.VolumeMl), cancellationToken);
+        var bottles = await _mediator.Send(new GetAvailableBottlesQuery(decimal.ToInt32(decimal.Truncate(request.VolumeMl))), cancellationToken);
         if (bottles.Count == 1)
         {
             var onlyBottle = bottles.Single();
@@ -286,7 +286,7 @@ public sealed partial class TelegramWebhookController
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.TelegramUserId != callback.From.Id.ToString())
             throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
-        var bottles = await _mediator.Send(new GetAvailableBottlesQuery(request.VolumeMl), cancellationToken);
+        var bottles = await _mediator.Send(new GetAvailableBottlesQuery(decimal.ToInt32(decimal.Truncate(request.VolumeMl))), cancellationToken);
         var bottle = bottles.FirstOrDefault(value => value.Id == bottleId)
             ?? throw new InvalidOperationException("این شیشه دیگر قابل انتخاب نیست.");
         await _salesListRequestRepository.SelectBottleAsync(
@@ -741,7 +741,7 @@ public sealed partial class TelegramWebhookController
     {
         continuationMessageId ??= list.TelegramContinuationMessageId;
         var values = ChannelVolumes
-            .Where(list.CanReserveVolume)
+            .Where(value => list.CanReserveVolume(value))
             .ToArray();
         var rows = values.Chunk(3)
             .Select(valuesRow => (IReadOnlyCollection<TelegramInlineButton>)valuesRow.Select(value =>

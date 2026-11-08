@@ -74,26 +74,26 @@ public class SalesList : BaseEntity
     public decimal PricePerMl { get; set; }
 
     // حجم کل شیشه اصلی
-    public int TotalVolume { get; set; } = 100;
+    public decimal TotalVolume { get; set; } = 100;
 
     // Smallest volume shown to customers on the channel post.
-    public int MinimumRequestVolumeMl { get; set; } = 1;
+    public decimal MinimumRequestVolumeMl { get; set; } = 1;
 
     // حجم رزرو شده
-    public int ReservedVolume { get; set; }
+    public decimal ReservedVolume { get; set; }
 
     // حجم باقی مانده
-    public int RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
+    public decimal RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
 
     // Let customers finish the last small remainder without lowering the list's
     // configured minimum for ordinary reservations or subsequent bottle cycles.
-    public int EffectiveMinimumRequestVolumeMl => RemainingVolume > 0 && RemainingVolume < MinimumRequestVolumeMl
+    public decimal EffectiveMinimumRequestVolumeMl => RemainingVolume > 0 && RemainingVolume < MinimumRequestVolumeMl
         ? 1 : MinimumRequestVolumeMl;
 
-    public bool CanReserveVolume(int volumeMl) => CanReserveVolume(volumeMl, false);
+    public bool CanReserveVolume(decimal volumeMl) => CanReserveVolume(volumeMl, false);
 
     // Admin entry may bypass the minimum, but never capacity or list status.
-    public bool CanReserveVolume(int volumeMl, bool createdByAdmin) => Status == SalesListStatus.Open && volumeMl > 0 &&
+    public bool CanReserveVolume(decimal volumeMl, bool createdByAdmin) => Status == SalesListStatus.Open && volumeMl > 0 &&
         (createdByAdmin || volumeMl >= EffectiveMinimumRequestVolumeMl) && volumeMl <= RemainingVolume;
 
     // Persisted alert markers prevent repeated Telegram notifications when a

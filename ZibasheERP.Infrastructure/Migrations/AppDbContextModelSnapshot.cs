@@ -1183,8 +1183,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<int>("MinimumRequestVolumeMl")
-                        .HasColumnType("int");
+                    b.Property<decimal>("MinimumRequestVolumeMl")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(500)
@@ -1219,8 +1220,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<int>("ReleaseYear")
                         .HasColumnType("int");
 
-                    b.Property<int>("ReservedVolume")
-                        .HasColumnType("int");
+                    b.Property<decimal>("ReservedVolume")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -1259,8 +1261,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<int>("TotalVolume")
-                        .HasColumnType("int");
+                    b.Property<decimal>("TotalVolume")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1382,8 +1385,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("VolumeMl")
-                        .HasColumnType("int");
+                    b.Property<decimal>("VolumeMl")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.HasKey("Id");
 

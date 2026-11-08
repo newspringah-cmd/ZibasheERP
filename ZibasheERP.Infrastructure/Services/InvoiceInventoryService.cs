@@ -40,7 +40,7 @@ public sealed class InvoiceInventoryService : IInvoiceInventoryService
             await transaction.RollbackAsync(cancellationToken);
             return new InvoiceInventoryReleaseResult(
                 existingOffer.Id, existingOffer.PublicCode, existingOffer.EnglishName,
-                existingOffer.TotalVolume, existingOffer.FixedBottle?.Name ?? "بدون شیشه",
+                decimal.ToInt32(decimal.Truncate(existingOffer.TotalVolume)), existingOffer.FixedBottle?.Name ?? "بدون شیشه",
                 existingOffer.PricePerMl * existingOffer.TotalVolume + (existingOffer.FixedBottlePrice ?? 0),
                 existingOffer.TelegramPhotoFileId ?? string.Empty,
                 sourceItem.Order!.InvoiceIssuanceBatchId!.Value);
@@ -104,8 +104,8 @@ public sealed class InvoiceInventoryService : IInvoiceInventoryService
             BaseNotes = source.BaseNotes, Accords = source.Accords,
             PerfumeId = source.PerfumeId,
             PricePerMl = decimal.Round(perfumeAmount / item.RequestedVolumeMl, 2),
-            TotalVolume = checked((int)item.RequestedVolumeMl),
-            MinimumRequestVolumeMl = checked((int)item.RequestedVolumeMl),
+            TotalVolume = decimal.Truncate(item.RequestedVolumeMl),
+            MinimumRequestVolumeMl = decimal.Truncate(item.RequestedVolumeMl),
             ReservedVolume = 0, OpenDate = now, Status = SalesListStatus.Open,
             TelegramPhotoFileId = source.TelegramPhotoFileId,
             IsInventoryOffer = true, SourceOrderItemId = item.Id,
@@ -117,7 +117,7 @@ public sealed class InvoiceInventoryService : IInvoiceInventoryService
         await _db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new InvoiceInventoryReleaseResult(
-            offer.Id, offer.PublicCode, offer.EnglishName, offer.TotalVolume,
+            offer.Id, offer.PublicCode, offer.EnglishName, decimal.ToInt32(decimal.Truncate(offer.TotalVolume)),
             item.Bottle?.Name ?? "بدون شیشه", newTotalAmount,
             offer.TelegramPhotoFileId ?? string.Empty,
             order.InvoiceIssuanceBatchId!.Value);

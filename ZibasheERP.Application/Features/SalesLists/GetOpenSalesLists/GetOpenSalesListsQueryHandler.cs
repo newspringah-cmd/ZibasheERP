@@ -27,7 +27,7 @@ public sealed class GetOpenSalesListsQueryHandler
             salesList.Perfume.EnglishName,
             salesList.Perfume.Brand,
             salesList.PricePerMl,
-            salesList.RemainingVolume,
+            decimal.ToInt32(decimal.Truncate(salesList.RemainingVolume)),
             !salesList.HasBottleOwner,
             salesList.OpenDate))
             .ToArray();

@@ -34,7 +34,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 list.Requests.Count(request => !request.IsDeleted &&
                     request.Kind == SalesListRequestKind.CurrentBottle &&
                     request.Status == SalesListRequestStatus.Confirmed),
-                list.TotalVolume,
+                (int)list.TotalVolume,
                 list.TelegramPhotoFileId))
             .ToArrayAsync(cancellationToken);
 
@@ -52,7 +52,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 list.Requests.Count(request => !request.IsDeleted &&
                     request.Kind == SalesListRequestKind.CurrentBottle &&
                     request.Status == SalesListRequestStatus.Confirmed),
-                list.TotalVolume,
+                (int)list.TotalVolume,
                 list.TelegramPhotoFileId))
             .ToArrayAsync(cancellationToken);
 
@@ -247,7 +247,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                          .Where(request => !request.IsBottleOwner && !request.IsComplimentaryBottle &&
                              !request.BottleId.HasValue))
             {
-                if (!defaultNormalBottles.TryGetValue(request.VolumeMl, out var bottle))
+                if (request.VolumeMl % 1 != 0 ||
+                    !defaultNormalBottles.TryGetValue(decimal.ToInt32(request.VolumeMl), out var bottle))
                     continue;
                 request.BottleId = bottle.Id;
                 request.Bottle = bottle;
@@ -1127,7 +1128,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         foreach (var row in SalesListProductionGrouping.Build(list.Requests))
         {
             var request = row.Request;
-            var volume = row.VolumeMl;
+            var volume = decimal.ToInt32(decimal.Truncate(row.VolumeMl));
             var identity = !string.IsNullOrWhiteSpace(request.LabelIdentityText)
                 ? request.LabelIdentityText.Trim()
                 : request.IsGift

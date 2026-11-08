@@ -468,8 +468,8 @@ public sealed partial class TelegramWebhookController
             draft.BaseNotes = previousList.BaseNotes;
             draft.Accords = previousList.Accords;
             draft.PricePerMl = previousList.PricePerMl;
-            draft.TotalVolume = previousList.TotalVolume;
-            draft.MinimumRequestVolumeMl = previousList.MinimumRequestVolumeMl;
+            draft.TotalVolume = decimal.ToInt32(decimal.Truncate(previousList.TotalVolume));
+            draft.MinimumRequestVolumeMl = decimal.ToInt32(decimal.Truncate(previousList.MinimumRequestVolumeMl));
             draft.Notes = previousList.Notes;
             draft.IsReviewingExistingPerfume = true;
             draft.ReviewFieldIndex = 0;

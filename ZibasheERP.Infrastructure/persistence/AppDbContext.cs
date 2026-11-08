@@ -127,15 +127,15 @@ public class AppDbContext : DbContext
                 !entry.OriginalValues.GetValue<bool>(nameof(SalesListRequest.IsDeleted)) &&
                 Active(entry.OriginalValues.GetValue<SalesListRequestStatus>(nameof(SalesListRequest.Status)));
             var afterActive = entry.State != EntityState.Deleted && !request.IsDeleted && Active(request.Status);
-            var oldVolume = entry.State == EntityState.Added ? (int?)null : entry.OriginalValues.GetValue<int>(nameof(SalesListRequest.VolumeMl));
+            var oldVolume = entry.State == EntityState.Added ? (decimal?)null : entry.OriginalValues.GetValue<decimal>(nameof(SalesListRequest.VolumeMl));
             AdminItemAction? action = !beforeActive && afterActive ? AdminItemAction.Registered :
                 beforeActive && !afterActive ? AdminItemAction.Removed :
                 beforeActive && afterActive && oldVolume != request.VolumeMl ? AdminItemAction.VolumeChanged : null;
             if (!action.HasValue) continue;
             if (action == AdminItemAction.Registered && entry.State == EntityState.Added &&
                 request.ExternalReference.StartsWith("auto-next:", StringComparison.Ordinal)) continue;
-            int? previous = action == AdminItemAction.Registered ? null : oldVolume;
-            int? next = action == AdminItemAction.Removed ? null : request.VolumeMl;
+            decimal? previous = action == AdminItemAction.Registered ? null : oldVolume;
+            decimal? next = action == AdminItemAction.Removed ? null : request.VolumeMl;
             var identity = FormattableString.Invariant($"admin-item:{actor.UpdateId}:{actor.UserId}:{request.Id:N}:{(int)action.Value}:{previous}:{next}");
             var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(identity))[..16]);
             if (ChangeTracker.Entries<AdminItemActivity>().Any(existing => existing.Entity.Id == id)) continue;
@@ -145,7 +145,9 @@ public class AppDbContext : DbContext
                 ActorUsername = actor.Username?[..Math.Min(actor.Username.Length, 100)],
                 ActorDisplayName = actor.DisplayName[..Math.Min(actor.DisplayName.Length, 128)],
                 SourceUpdateId = actor.UpdateId, SalesListId = request.SalesListId,
-                SalesListRequestId = request.Id, Action = action.Value, PreviousVolumeMl = previous, NewVolumeMl = next
+                SalesListRequestId = request.Id, Action = action.Value,
+                PreviousVolumeMl = previous.HasValue ? decimal.ToInt32(decimal.Truncate(previous.Value)) : null,
+                NewVolumeMl = next.HasValue ? decimal.ToInt32(decimal.Truncate(next.Value)) : null
             });
         }
     }
@@ -334,6 +336,18 @@ public class AppDbContext : DbContext
             .HasPrecision(18, 2);
 
         modelBuilder.Entity<SalesList>()
+            .Property(x => x.TotalVolume)
+            .HasPrecision(18, 1);
+
+        modelBuilder.Entity<SalesList>()
+            .Property(x => x.ReservedVolume)
+            .HasPrecision(18, 1);
+
+        modelBuilder.Entity<SalesList>()
+            .Property(x => x.MinimumRequestVolumeMl)
+            .HasPrecision(18, 1);
+
+        modelBuilder.Entity<SalesList>()
             .Property(x => x.FixedBottlePrice)
             .HasPrecision(18, 2);
 
@@ -474,6 +488,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SalesListRequest>().Property(value => value.ExternalReference).HasMaxLength(100);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.PerfumePricePerMl).HasPrecision(18, 2);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.BottlePrice).HasPrecision(18, 2);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.VolumeMl).HasPrecision(18, 1);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.RowVersion).IsRowVersion();
         modelBuilder.Entity<SalesListRequest>()
             .HasIndex(value => value.ExternalReference)
