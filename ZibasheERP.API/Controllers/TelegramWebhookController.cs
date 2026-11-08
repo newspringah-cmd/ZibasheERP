@@ -947,6 +947,11 @@ public sealed partial class TelegramWebhookController : ControllerBase
         // assistant. Collection must never interrupt normal group processing.
         await CaptureAccountantLearningMessageAsync(message, cancellationToken);
 
+        // Shipping commands must be evaluated before any pending admin draft can consume
+        // the message. In group chats an old/stale draft must not make /ad appear broken.
+        if (await TryHandleShippingPreparationCommandAsync(message, cancellationToken))
+            return;
+
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;
 
