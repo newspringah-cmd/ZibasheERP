@@ -6,6 +6,48 @@ namespace ZibasheERP.Application.Tests.Notifications;
 public sealed class TelegramNotificationMessageFormatterTests
 {
     [Fact]
+    public void Format_GiftInvoiceIssued_PreservesDecimalSerializedVolumes()
+    {
+        foreach (var (encoded, displayed) in InvoiceVolumeCases())
+        {
+            var message = TelegramNotificationMessageFormatter.Format("GiftInvoiceIssued",
+                "{\"GiverUsername\":\"gift_giver\",\"RequestedVolumeMl\":" + encoded + ",\"TotalAmount\":0}");
+            Assert.Contains("مقدار: " + displayed + " میلی‌لیتر", message);
+            Assert.Contains("مبلغ قابل پرداخت: ۰ تومان", message);
+            Assert.False(message.Contains("شماره کارت", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Format_InvoiceIssued_PreservesDecimalSerializedItemVolumes()
+    {
+        foreach (var (encoded, displayed) in InvoiceVolumeCases())
+        foreach (var gift in new[] { false, true })
+        {
+            var giftFields = gift ? ",\"IsGift\":true,\"GiftRecipientUsername\":\"receiver\"" : "";
+            var message = TelegramNotificationMessageFormatter.Format("InvoiceIssued",
+                "{\"InvoiceNumber\":\"INV-TEST\",\"TotalAmount\":150000,\"Items\":[{\"PerfumeEnglishName\":\"Test\",\"RequestedVolumeMl\":" + encoded + ",\"LineTotal\":150000" + giftFields + "}]}");
+            Assert.Contains("مقدار: " + displayed + " میلی‌لیتر", message);
+            Assert.Contains("150,000", message);
+            Assert.False(message.Contains("مقدار: " + displayed + ".0", StringComparison.Ordinal));
+            if (gift) Assert.Contains("هدیه برای: @receiver", message);
+        }
+    }
+
+    private static IEnumerable<(string Encoded, string Displayed)> InvoiceVolumeCases()
+    {
+        foreach (var volume in Enumerable.Range(1, 100))
+        {
+            var text = volume.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            yield return (text, text);
+            yield return (text + ".0", text);
+            yield return (text + ".00", text);
+        }
+        yield return ("0.50", "0.5");
+        yield return ("1.50", "1.5");
+    }
+
+    [Fact]
     public void Format_CustomerGroupRequired_IncludesAccountantInstructions()
     {
         var result = TelegramNotificationMessageFormatter.Format(

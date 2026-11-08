@@ -1,0 +1,64 @@
+{
+  "version": 2,
+  "name": "پروموشن ساعتی",
+  "kind": "hourly-promotion",
+  "defaults": {
+    "durationMinutes": 120,
+    "discountPercent": 50,
+    "discountScope": "perfume-only",
+    "destinations": [
+      "group",
+      "channel"
+    ],
+    "countdownUpdateSeconds": 60,
+    "includeActualPerfumePhoto": true,
+    "includeSalesListLink": true,
+    "showDiscountedPricePerMl": true
+  },
+  "approval": {
+    "previewRequiredBeforePublication": true,
+    "startAfterApprovalOnly": true,
+    "doNotMentionBottleChargeInCaption": true
+  },
+  "eligibility": {
+    "event": "final-item-confirmation",
+    "includeAdminEnteredItems": true,
+    "startInclusive": true,
+    "endExclusive": true,
+    "preserveDiscountWhenInvoicedLater": true,
+    "discountExistingItemsRetroactively": false,
+    "discountOtherPerfumes": false,
+    "discountBottleCharge": false
+  },
+  "publication": {
+    "sameDeadlineForAllCopies": true,
+    "continueNextBottleCyclesUntilOriginalDeadline": true,
+    "editExistingCaptionInsteadOfReposting": true,
+    "resumeFromDurableSendReceipt": true,
+    "repeatCampaignAutomatically": false,
+    "keepOrdinaryAdvertisingSchedules": true,
+    "automaticThankYouInGroupAndChannel": true,
+    "earlyEndButton": true,
+    "preserveDiscountedItemsAfterEarlyEnd": true
+  },
+  "referenceExecution": {
+    "listCode": 4559,
+    "campaignId": "09e9f832-da6b-401d-8894-b30ee71bd386",
+    "groupUrl": "https://t.me/c/1283018740/1635281",
+    "channelUrl": "https://t.me/zibasheperfume/17613"
+  },
+  "manager": {
+    "configuredOwnerOnly": true,
+    "telegramUsername": "zahraa_frj",
+    "menu": "/admin → پروموشن ساعتی"
+  },
+  "inputs": {
+    "listCode": "required",
+    "durationHours": "required; 1 minute through 168 hours; whole minutes",
+    "discountMode": [
+      "percent",
+      "toman-per-ml"
+    ],
+    "discountValue": "required; resulting perfume price must be positive"
+  }
+}

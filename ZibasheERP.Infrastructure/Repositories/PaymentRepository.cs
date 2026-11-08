@@ -18,6 +18,19 @@ public sealed class PaymentRepository : IPaymentRepository
     {
         await _dbContext.Payments.AddAsync(payment, cancellationToken);
     }
+    public async Task AddForOrderVersionAsync(Payment payment,Guid customerId,byte[] orderVersion,CancellationToken cancellationToken=default)
+    {
+        await using var tx=await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var order=await _dbContext.Orders.FromSqlInterpolated($"SELECT * FROM Orders WITH(UPDLOCK,HOLDLOCK) WHERE Id={payment.OrderId}").AsNoTracking().SingleAsync(cancellationToken);
+        if(order.IsDeleted||order.CustomerId!=customerId||!order.RowVersion.SequenceEqual(orderVersion))
+            throw new InvalidOperationException("مالکیت یا وضعیت سفارش تغییر کرده است؛ فاکتور جدید را باز کنید و دوباره رسید بفرستید.");
+        var reserved=await _dbContext.Payments.Where(p=>p.OrderId==order.Id&&!p.IsDeleted&&
+            (p.Status==ZibasheERP.Domain.Enums.PaymentStatus.Pending||p.Status==ZibasheERP.Domain.Enums.PaymentStatus.Confirmed)).SumAsync(p=>p.Amount,cancellationToken);
+        if(order.Status is OrderStatus.Paid or OrderStatus.Cancelled||payment.Amount>order.FinalAmount-reserved)
+            throw new InvalidOperationException("مانده یا وضعیت سفارش تغییر کرده است؛ فاکتور را دوباره باز کنید.");
+        await _dbContext.Orders.Where(o=>o.Id==order.Id).ExecuteUpdateAsync(s=>s.SetProperty(o=>o.UpdatedAt,DateTime.UtcNow),cancellationToken);
+        await _dbContext.Payments.AddAsync(payment,cancellationToken);await _dbContext.SaveChangesAsync(cancellationToken);await tx.CommitAsync(cancellationToken);
+    }
 
     public async Task<Payment?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {

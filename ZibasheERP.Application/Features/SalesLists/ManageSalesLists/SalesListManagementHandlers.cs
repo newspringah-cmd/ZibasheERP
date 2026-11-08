@@ -50,7 +50,7 @@ public sealed class CreateSalesListCommandHandler
             PerfumeId = perfume.Id,
             Perfume = perfume,
             BatchId = null,
-            PricePerMl = request.PricePerMl,
+            PricePerMl = ZibasheERP.Application.Services.SalesListPrice.RoundUpPerMl(request.PricePerMl),
             TotalVolume = request.TotalVolume,
             MinimumRequestVolumeMl = request.MinimumRequestVolumeMl,
             ReservedVolume = 0,

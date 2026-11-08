@@ -35,7 +35,7 @@ public sealed class RecordOrderArtifactCommandHandler
         var sourceEvent = await _outboxRepository.GetByIdAsync(
             request.SourceEventId,
             cancellationToken);
-        if (sourceEvent is null ||
+        if (sourceEvent is null || sourceEvent.IsDeleted ||
             sourceEvent.Channel != "N8n" ||
             sourceEvent.OrderId != request.OrderId ||
             sourceEvent.EventType != ExpectedEventType(request.Type))
@@ -72,7 +72,7 @@ public sealed class RecordOrderArtifactCommandHandler
         if (request.Type == OrderArtifactType.InvoicePdf)
         {
             var invoice = await _invoiceRepository.GetForUpdateByOrderIdAsync(request.OrderId, cancellationToken);
-            if (invoice is not null)
+            if (invoice is not null && invoice.Status!=ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled)
             {
                 var deliveredToCustomer = N8nDeliveryTargetValidator.HasApprovedTelegramGroup(sourceEvent.Payload);
                 invoice.IsSentToCustomer = deliveredToCustomer;

@@ -57,11 +57,12 @@ public static class ProductionGiftGroupingTests
         check(SalesListProductionGrouping.Build(gifts.Append(differentRecipient)).Count == 2,
             "gifts to different recipients stay separate");
         var fancy = Gift("fancy-donor"); fancy.Bottle = new Bottle { Type = BottleType.Fancy, Name = "gold" };
-        check(SalesListProductionGrouping.Build(gifts.Append(fancy)).Count == 2,
-            "normal and fancy bottles are not merged");
+        var mixed=SalesListProductionGrouping.Build(gifts.Append(fancy));
+        check(mixed.Count==1&&mixed.Single().VolumeMl==4&&mixed.Single().PreparationNotes?.Contains("فانتزی gold")==true,
+            "one recipient has one total even with different bottles and packing instructions remain visible");
         var customLabel = Gift("custom-donor"); customLabel.LabelIdentityText = "Custom name";
-        check(SalesListProductionGrouping.Build(gifts.Append(customLabel)).Count == 2,
-            "different custom label instructions stay separate");
+        check(SalesListProductionGrouping.Build(gifts.Append(customLabel)) is [var custom]&&custom.VolumeMl==4&&custom.PreparationNotes?.Contains("Custom name")==true,
+            "different label instructions do not split the recipient total and remain visible for preparation");
         var anotherList = Gift("other-cycle"); anotherList.SalesListId = Guid.NewGuid();
         check(SalesListProductionGrouping.Build(gifts.Append(anotherList)).Count == 2,
             "different sales list cycles are never merged");
@@ -72,13 +73,48 @@ public static class ProductionGiftGroupingTests
         check(SalesListProductionGrouping.Build([gifts[0], byIdAndName, byIdOnly]).Single().VolumeMl == 3,
             "known Telegram ID links ID-only and username-only gift entries");
         var ownPurchase = new SalesListRequest { Id = Guid.NewGuid(), SalesListId = list.Id,
-            TelegramUsername = "recipient", VolumeMl = 5, Status = SalesListRequestStatus.Confirmed };
-        check(SalesListProductionGrouping.Build(gifts.Append(ownPurchase)).Count == 2,
-            "ordinary purchases remain separate from grouped gifts");
+            TelegramUsername = "recipient", VolumeMl = 5.0m, Status = SalesListRequestStatus.Confirmed };
+        var ownAndGifts=gifts.Append(ownPurchase).ToArray();
+        var unchanged=System.Text.Json.JsonSerializer.Serialize(ownAndGifts);
+        check(SalesListProductionGrouping.Build(ownAndGifts) is [var total]&&total.VolumeMl==8&&total.SourceCount==4&&total.Request==ownPurchase,
+            "the receiver's own purchase joins all gifts in one physical portion using their own bottle and label");
+        list.Requests=ownAndGifts;
+        decant=((string Main,string? Continuation))channelFormatter.Invoke(null,[list,ownAndGifts,true])!;
+        check((decant.Main+decant.Continuation).Contains("8 ml:")&&!(decant.Main+decant.Continuation).Contains("1 ml:")&&!(decant.Main+decant.Continuation).Contains("5 ml:"),
+            "live decant output shows only the sum of the receiver's own item and gifts");
+        check(Format("FormatOrderList").Contains("8 ml:")&&!Format("FormatOrderList").Contains("8.0 ml:")&&Format("FormatLabelList").Contains("8 ml:"),
+            "archived decant and label rosters share the same whole-ml recipient total");
+        pdfEntries=(IReadOnlyCollection<PerfumeLabelEntry>)typeof(TelegramWebhookController).GetMethod("BuildPerfumeLabelEntries",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[list])!;
+        check(pdfEntries.Count==1&&pdfEntries.Single().VolumeMl==8,"printed PDF data contains exactly one label with own-plus-gifts total");
+        channel=((string Main,string? Continuation))channelFormatter.Invoke(null,[list,ownAndGifts,false])!;
+        check((channel.Main+channel.Continuation).Contains("5 ml:")&&(channel.Main+channel.Continuation).Contains("1 ml:"),"customer sales posts retain separate purchased quantities and donor entries");
+        check(System.Text.Json.JsonSerializer.Serialize(ownAndGifts)==unchanged,"all production and print renderers leave source volumes, bottle choices, gift recipients and prices unchanged");
+        var imported=Gift("imported-donor");imported.GiftRecipientTelegramUserId="imported:recipient";
+        var adminAlias=Gift("admin-donor",null);adminAlias.GiftRecipientTelegramUserId="admin-username:recipient";
+        ownPurchase.TelegramUserId="123456";
+        check(SalesListProductionGrouping.Build([ownPurchase,imported,adminAlias,byIdOnly]).Single().VolumeMl==8,"imported, admin username, numeric-only and own identities resolve to one known recipient");
+        var renamed=Gift("renamed-donor","new_recipient");renamed.GiftRecipientTelegramUserId="123456";
+        check(SalesListProductionGrouping.Build([ownPurchase,renamed]).Single().VolumeMl==6,"a stable Telegram ID joins a renamed recipient to their own item");
+        var conflict=Gift("conflicting-donor","recipient");conflict.GiftRecipientTelegramUserId="999999";
+        var disputed=SalesListProductionGrouping.Build([ownPurchase,conflict]);
+        check(disputed.Count==2&&disputed.Sum(r=>r.VolumeMl)==6&&disputed.All(r=>r.PreparationNotes?.Contains("گیرنده نیازمند بررسی")==true),"conflicting numeric identities never merge merely because usernames match");
+        var unknownOne=Gift("unknown-id-one",null);unknownOne.GiftRecipientTelegramUserId="imported:";
+        var unknownTwo=Gift("unknown-id-two",null);unknownTwo.GiftRecipientTelegramUserId="imported:";
+        check(SalesListProductionGrouping.Build([unknownOne,unknownTwo]).Count==2,"empty imported placeholders do not combine unidentified recipients");
+        var secondOwn=new SalesListRequest{Id=Guid.NewGuid(),SalesListId=list.Id,TelegramUserId="123456",TelegramUsername="recipient",VolumeMl=2,Status=SalesListRequestStatus.Confirmed};
+        check(SalesListProductionGrouping.Build([ownPurchase,secondOwn]).Count==2,"ordinary multiple purchases without gifts keep their established production behavior");
+        check(SalesListProductionGrouping.Build([ownPurchase,secondOwn,imported]).Single().VolumeMl==8,"when gifts exist all of that receiver's own portions are included in the same total");
+        var noted=Gift("noted-donor");noted.AdminNotes="شیشه لویی یا دیپتیک";ownPurchase.AdminNotes="بنفش";
+        var notedRow=SalesListProductionGrouping.Build([ownPurchase,noted]).Single();
+        check(notedRow.VolumeMl==6&&notedRow.PreparationNotes?.Contains("بنفش")==true&&notedRow.PreparationNotes.Contains("لویی یا دیپتیک"),"merging recipient volume preserves all donor and receiver preparation comments for staff");
+        var otherCycle=Gift("cycle-donor");otherCycle.SalesListId=Guid.NewGuid();
+        check(SalesListProductionGrouping.Build([ownPurchase,imported,otherCycle]).Count==2,"the same recipient in a different list cycle gets a separate total");
         var cancelled = Gift("cancelled"); cancelled.Status = SalesListRequestStatus.Cancelled;
         var deleted = Gift("deleted"); deleted.IsDeleted = true;
         var nextBottle = Gift("next-bottle"); nextBottle.Kind = SalesListRequestKind.NextBottle;
         check(SalesListProductionGrouping.Build(gifts.Concat([cancelled, deleted, nextBottle])).Single().VolumeMl == 3,
             "cancelled, deleted and next-bottle requests do not inflate production volume");
+        foreach(var permutation in new[]{ownAndGifts,ownAndGifts.Reverse().ToArray()})
+            check(SalesListProductionGrouping.Build(permutation).Sum(r=>r.VolumeMl)==permutation.Sum(r=>r.VolumeMl),"recipient grouping conserves every milliliter independent of request order");
     }
 }

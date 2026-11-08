@@ -42,6 +42,8 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if(await TryHandleTrackingRecipientSelectionAsync(callback,ct))return true;
+
         switch (callback.Data)
         {
             case "trackingimport:noop":
@@ -87,6 +89,8 @@ public sealed partial class TelegramWebhookController
 
         if (TryParseTrackingDispatchCallback(callback.Data, "send", out var sendDispatchId))
         {
+            if(await _db.TrackingDispatches.AsNoTracking().AnyAsync(d=>d.Id==sendDispatchId&&!d.IsDeleted&&d.Status==TrackingDispatchStatus.NeedsReview,ct))
+                return await TryHandleTrackingRecipientSelectionAsync(callback with{Data="trackingimport:select-open:"+sendDispatchId.ToString("N")},ct);
             await _sender.AnswerCallbackAsync(callback.Id,
                 "ارسال این کد آغاز شد؛ ارسال تکراری انجام نمی‌شود.", ct);
             await ConfirmTrackingDispatchAsync(
@@ -104,6 +108,16 @@ public sealed partial class TelegramWebhookController
         {
             await DeleteTrackingDispatchAsync(
                 callback.Id, callback.Message.Chat.Id, callback.Message.MessageId, deleteDispatchId, ct);
+            return true;
+        }
+
+        if(callback.Data.StartsWith("trackingimport:rematch:",StringComparison.Ordinal) &&
+            Guid.TryParseExact(callback.Data["trackingimport:rematch:".Length..],"N",out var rematchBatchId))
+        {
+            await _sender.AnswerCallbackAsync(callback.Id,"در حال بازبینی گروهی موارد بررسی؛ هیچ کدی ارسال نمی‌شود.",ct);
+            var updated=await ReevaluateTrackingBatchMatchesAsync(rematchBatchId,ct);
+            await ReplyAsync(callback.Message.Chat.Id,$"🔎 بازبینی گروهی انجام شد؛ {updated} مورد جدید آمادهٔ تأیید است. موارد قبلاً ارسال‌شده تغییر نکردند و کدی ارسال نشد.",ct);
+            await SendTrackingBatchPreviewAsync(callback.Message.Chat.Id,rematchBatchId,false,ct);
             return true;
         }
 
@@ -238,6 +252,7 @@ public sealed partial class TelegramWebhookController
                 result = await _sender.SendInlineKeyboardAsync(chatId.ToString(), parts[index],
                     new IReadOnlyCollection<TelegramInlineButton>[]
                     {
+                        new[] { new TelegramInlineButton("🔎 بازبینی گروهی موارد بررسی", $"trackingimport:rematch:{batch.Id:N}") },
                         new[] { new TelegramInlineButton("🔄 بروزرسانی گزارش", "trackingimport:lastreport") },
                         new[] { new TelegramInlineButton("↩️ بازگشت", "trackingimport:menu") }
                     }, ct);
@@ -444,7 +459,7 @@ public sealed partial class TelegramWebhookController
                     duplicateCount++;
                     continue;
                 }
-                var match = await _trackingImportService.MatchAsync(item.RecipientName, item.Destination, ct);
+                var match = await _trackingImportService.MatchAsync(item.RecipientName, item.Destination, ct,batch.CreatedAt);
                 var status = item.IsSafeForAutomaticDelivery
                     ? match.Status
                     : TrackingDispatchStatus.NeedsReview;
@@ -600,6 +615,7 @@ public sealed partial class TelegramWebhookController
             .ToArrayAsync(ct);
         if (reviewItems.Length == 0) return;
 
+        var prepared=await TrackingPreparedAddresses.LoadAsync(_db,_options.ShippingChatId.Trim(),ct);
         var failedReports = 0;
         foreach (var dispatch in reviewItems)
         {
@@ -630,6 +646,7 @@ public sealed partial class TelegramWebhookController
                         : $"\nمقصد: {dispatch.Destination}") +
                     $"\nعلت: {reason}\n" +
                     $"شناسه داخلی: {dispatch.Id:N}";
+                caption=TrackingCaptionWithSuggestions(dispatch,caption,prepared);
                 TelegramSendResult report;
                 if (dispatch.CardImage is { Length: > 0 })
                 {
@@ -681,12 +698,14 @@ public sealed partial class TelegramWebhookController
             .OrderBy(value => value.RecipientName).ToArray();
         if (includeCards)
         {
+            var prepared=await TrackingPreparedAddresses.LoadAsync(_db,_options.ShippingChatId.Trim(),ct);
             foreach (var dispatch in dispatches)
             {
+                var caption=$"{(dispatch.Status == TrackingDispatchStatus.Ready ? "✅" : "⚠️")} {dispatch.RecipientName}\n" +
+                    $"کد: {dispatch.TrackingCode}\n{dispatch.MatchNotes}";
+                caption=TrackingCaptionWithSuggestions(dispatch,caption,prepared);
                 var preview = await _sender.SendPhotoBytesWithKeyboardAsync(chatId.ToString(), dispatch.CardImage!,
-                    $"tracking-{dispatch.TrackingCode}.png",
-                    $"{(dispatch.Status == TrackingDispatchStatus.Ready ? "✅" : "⚠️")} {dispatch.RecipientName}\n" +
-                    $"کد: {dispatch.TrackingCode}\n{dispatch.MatchNotes}",
+                    $"tracking-{dispatch.TrackingCode}.png",caption,
                     BuildTrackingDispatchButtons(dispatch), ct);
                 if (!preview.IsSuccessful)
                 {
@@ -712,9 +731,14 @@ public sealed partial class TelegramWebhookController
             buttons.Add(new[]
             {
                 new TelegramInlineButton(
-                    batch.ConfirmedAt is null ? $"✅ تأیید و ارسال {ready} مورد" : $"🔁 تلاش مجدد {safelyRetryable} مورد امن",
+                    batch.ConfirmedAt is null ? $"✅ تأیید و ارسال {ready} مورد" : ready > 0 ? $"✅ ارسال {ready} مورد جدید و {safelyRetryable} تلاش مجدد امن" : $"🔁 تلاش مجدد {safelyRetryable} مورد امن",
                     $"trackingimport:confirm:{batch.Id:N}")
             });
+        if(review>0)
+        {
+            buttons.Add(new[]{new TelegramInlineButton("🔎 بازبینی گروهی موارد بررسی",$"trackingimport:rematch:{batch.Id:N}")});
+            buttons.Add(new[]{new TelegramInlineButton("📍 انتخاب گیرندهٔ موارد بررسی",$"trackingimport:select-list:{batch.Id:N}:0")});
+        }
         if (batch.ConfirmedAt is null)
             buttons.Add(new[] { new TelegramInlineButton("❌ لغو این سری", $"trackingimport:cancel:{batch.Id:N}") });
         var summary = await _sender.SendInlineKeyboardAsync(chatId.ToString(),
@@ -731,34 +755,81 @@ public sealed partial class TelegramWebhookController
 
     private async Task<int> ReevaluateTrackingBatchMatchesAsync(Guid batchId, CancellationToken ct)
     {
+        var sourceAsOf=await _db.TrackingImportBatches.AsNoTracking().Where(b=>b.Id==batchId&&!b.IsDeleted).Select(b=>(DateTime?)b.CreatedAt).SingleOrDefaultAsync(ct);
+        if(sourceAsOf is null)return 0;
         var dispatches = await _db.TrackingDispatches
             .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
-                value.Status == TrackingDispatchStatus.NeedsReview && value.SentAt == null)
+                value.Status == TrackingDispatchStatus.NeedsReview && value.SentAt == null &&
+                !value.Deliveries.Any(d=>d.AttemptedAt!=null||d.SentAt!=null))
             .ToArrayAsync(ct);
+        var claimed=(await _db.TrackingDispatches.AsNoTracking().Where(v=>v.ShippingRequestId!=null &&
+                (v.Status==TrackingDispatchStatus.Ready||v.Status==TrackingDispatchStatus.Sending||v.Status==TrackingDispatchStatus.Sent||
+                 v.Deliveries.Any(d=>d.AttemptedAt!=null||d.SentAt!=null)))
+            .Select(v=>v.ShippingRequestId!.Value).Distinct().ToArrayAsync(ct)).ToHashSet();
         var updated = 0;
         foreach (var dispatch in dispatches)
         {
             // Low-confidence PDF rows stay blocked even if a customer name happens to match.
             if (dispatch.MatchNotes?.Contains("اطمینان خواندن ردیف پایین", StringComparison.Ordinal) == true ||
-                dispatch.MatchNotes?.Contains("استخراج متن پست ویژه نیازمند بررسی", StringComparison.Ordinal) == true)
+                dispatch.MatchNotes?.Contains("استخراج متن پست ویژه نیازمند بررسی", StringComparison.Ordinal) == true ||
+                dispatch.MatchNotes?.Contains("اطمینان خواندن نیازمند بررسی", StringComparison.Ordinal) == true ||
+                dispatch.RecipientName.Contains("نام گیرنده خوانده نشد", StringComparison.Ordinal))
                 continue;
             var match = await _trackingImportService.MatchAsync(
-                dispatch.RecipientName, dispatch.Destination, ct);
+                dispatch.RecipientName, dispatch.Destination, ct,sourceAsOf);
             if (match.Status != TrackingDispatchStatus.Ready || !match.CustomerId.HasValue)
                 continue;
-            dispatch.CustomerId = match.CustomerId;
-            dispatch.ShippingRequestId = match.ShippingRequestId;
-            dispatch.Status = TrackingDispatchStatus.Ready;
-            dispatch.MatchNotes = $"{match.Notes} — تطبیق مجدد";
-            dispatch.UpdatedAt = DateTime.UtcNow;
-            updated++;
+            if(match.ShippingRequestId is Guid packageId)
+            {
+                if(!claimed.Add(packageId))continue;
+            }
+            var note=$"{match.Notes} — تطبیق مجدد";
+            var changed=await _db.TrackingDispatches.Where(d=>d.Id==dispatch.Id&&!d.IsDeleted&&d.Status==TrackingDispatchStatus.NeedsReview&&
+                d.SentAt==null&&d.SendingStartedAt==null&&d.RecipientName==dispatch.RecipientName&&d.MatchNotes==dispatch.MatchNotes&&
+                !d.Deliveries.Any(p=>p.AttemptedAt!=null||p.SentAt!=null))
+                .ExecuteUpdateAsync(s=>s.SetProperty(d=>d.CustomerId,match.CustomerId).SetProperty(d=>d.ShippingRequestId,match.ShippingRequestId)
+                    .SetProperty(d=>d.Status,TrackingDispatchStatus.Ready).SetProperty(d=>d.MatchNotes,note).SetProperty(d=>d.UpdatedAt,DateTime.UtcNow),ct);
+            updated+=changed;
         }
-        if (updated > 0) await _db.SaveChangesAsync(ct);
         return updated;
     }
 
     private async Task ConfirmTrackingBatchAsync(
         long adminChatId, Guid batchId, CancellationToken ct, Guid? onlyDispatchId = null)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        var batch = await _db.TrackingImportBatches.FirstOrDefaultAsync(value => value.Id == batchId && !value.IsDeleted, ct);
+        if (batch is null) return;
+        var candidates = await _db.TrackingDispatches.AsNoTracking()
+            .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
+                (!onlyDispatchId.HasValue || value.Id == onlyDispatchId.Value) && value.CustomerId.HasValue &&
+                (value.Status == TrackingDispatchStatus.Ready || value.Status == TrackingDispatchStatus.Failed))
+            .Select(value => new { value.Id, value.CustomerId }).ToArrayAsync(ct);
+        foreach (var item in candidates)
+        {
+            var payload = System.Text.Json.JsonSerializer.Serialize(new TrackingDispatchJob(batchId, item.Id, adminChatId));
+            var now = DateTime.UtcNow;
+            // Dispatch ID is also the durable job ID, so repeated button presses cannot add another job.
+            await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO NotificationOutbox
+                    (Id, CustomerId, Channel, EventType, Recipient, Payload, Status, Attempts, CreatedAt, IsDeleted)
+                SELECT {item.Id}, {item.CustomerId!.Value}, N'TrackingDispatch', N'TrackingDispatch',
+                    {adminChatId.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {payload}, 1, 0, {now}, CAST(0 AS bit)
+                WHERE NOT EXISTS (SELECT 1 FROM NotificationOutbox WITH (UPDLOCK,HOLDLOCK) WHERE Id={item.Id});
+                UPDATE NotificationOutbox SET Status=1, NextAttemptAt=NULL, LockedUntil=NULL
+                WHERE Id={item.Id} AND Channel=N'TrackingDispatch' AND Status IN (2,3);
+                """, ct);
+        }
+        batch.ConfirmedAt ??= DateTime.UtcNow;
+        batch.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        await ReplyAsync(adminChatId,
+            $"✅ {candidates.Length} مورد در صف ارسال ثبت شد. ارسال در پس‌زمینه ادامه پیدا می‌کند و پس از وقفه، موارد امن خودکار دوباره بررسی می‌شوند. نتیجه در «گزارش ارسال سری آخر» قابل مشاهده است.", ct);
+    }
+
+    internal async Task ProcessTrackingBatchAsync(
+        long adminChatId, Guid batchId, CancellationToken ct, Guid? onlyDispatchId = null, bool background = false)
     {
         var batch = await _db.TrackingImportBatches.FirstOrDefaultAsync(value => value.Id == batchId && !value.IsDeleted, ct);
         if (batch is null)
@@ -774,7 +845,7 @@ public sealed partial class TelegramWebhookController
             .Where(value => value.ImportBatchId == batchId && !value.IsDeleted &&
                 (!onlyDispatchId.HasValue || value.Id == onlyDispatchId.Value) &&
                 (value.Status == TrackingDispatchStatus.Ready || value.Status == TrackingDispatchStatus.Failed))
-            .Select(value => new { value.Id, value.Status }).ToArrayAsync(ct);
+            .Select(value => new { value.Id, value.Status, value.RecipientName }).ToArrayAsync(ct);
         var sentCount = 0;
         var failedCount = 0;
         var failureDetails = new List<string>();
@@ -806,7 +877,16 @@ public sealed partial class TelegramWebhookController
                 continue;
             }
 
-            var chatIds = await ResolveTrackingDestinationChatIdsAsync(dispatch, ct);
+            string[] chatIds;
+            if (dispatch.ShippingRequestId is { } packageId)
+            {
+                await using var parcelGuard=await _db.Database.BeginTransactionAsync(ct);
+                await _db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r=sp_getapplock @Resource={"shared-shipping:"+packageId},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Shared parcel busy',1;",ct);
+                await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidateDispatchAsync(_db, packageId, dispatch.CustomerId, ct);
+                chatIds=await ResolveTrackingDestinationChatIdsAsync(dispatch,ct);
+                await parcelGuard.CommitAsync(ct);
+            }
+            else chatIds=await ResolveTrackingDestinationChatIdsAsync(dispatch,ct);
             if (chatIds.Length == 0)
             {
                 dispatch.Status = TrackingDispatchStatus.Failed;
@@ -863,9 +943,22 @@ public sealed partial class TelegramWebhookController
                 if (delivery.AttemptedAt is null || delivery.SentAt is not null) continue;
                 var result = await _sender.SendPhotoBytesWithKeyboardAsync(chatId, dispatch.CardImage,
                     $"tracking-{dispatch.TrackingCode}.png",
-                    $"📦 کد رهگیری مرسوله شما\n{dispatch.TrackingCode}" +
+                    dispatch.MatchNotes=="SharedManualTrackingPhoto"?"📦 تصویر کد رهگیری مرسولهٔ مشترک شما":$"📦 کد رهگیری مرسوله شما\n{dispatch.TrackingCode}" +
                     (string.IsNullOrWhiteSpace(dispatch.TrackingUrl) ? "" : $"\n{dispatch.TrackingUrl}"), [], ct);
                 var completedAt = DateTime.UtcNow;
+                if (result.IsRetryable)
+                {
+                    // Telegram explicitly rejected this request (429), so it is safe to clear the attempt.
+                    await _db.TrackingDispatchDeliveries.Where(value => value.Id == delivery.Id)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(value => value.AttemptedAt, (DateTime?)null)
+                            .SetProperty(value => value.LastError, result.Error)
+                            .SetProperty(value => value.UpdatedAt, completedAt), ct);
+                    dispatch.Status = TrackingDispatchStatus.Failed;
+                    dispatch.LastError = result.Error;
+                    await _db.SaveChangesAsync(ct);
+                    throw new TrackingDispatchRetryException(result.RetryAfterSeconds ?? 60);
+                }
                 await _db.TrackingDispatchDeliveries.Where(value => value.Id == delivery.Id)
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(value => value.SentAt,
@@ -904,6 +997,23 @@ public sealed partial class TelegramWebhookController
             }
             dispatch.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
+            }
+            catch (TrackingDispatchRetryException) { throw; }
+            catch (ZibasheERP.Infrastructure.Services.ShippingRecipientValidationException exception)
+            {
+                // A late validation failure can follow an accepted photo and a
+                // rolled-back completion. Do not let cached Sent state overwrite
+                // NeedsReview in a later SaveChanges call.
+                _db.ChangeTracker.Clear();
+                await _db.TrackingDispatches.Where(value => value.Id == id)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(value => value.Status, TrackingDispatchStatus.NeedsReview)
+                        .SetProperty(value => value.LastError, exception.Message)
+                        .SetProperty(value => value.UpdatedAt, DateTime.UtcNow), ct);
+                failedCount++;
+                failureDetails.Add($"{candidate.RecipientName}: بررسی گیرندهٔ بسته — {exception.Message}");
+                _logger.LogWarning("Shipping recipient validation blocked dispatch {DispatchId} request {RequestId}; invalid item count {Count}",
+                    id, exception.RequestId, exception.ItemIds.Count);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -951,7 +1061,7 @@ public sealed partial class TelegramWebhookController
                     "Reporting failed tracking dispatches failed for batch {BatchId}.", batchId);
             }
         }
-        await ReplyAsync(adminChatId,
+        if (!background) await ReplyAsync(adminChatId,
             $"{(onlyDispatchId.HasValue ? "نتیجه ارسال این کد رهگیری:" : "نتیجه ارسال کد رهگیری:")}\n✅ موفق: {sentCount}\n⚠️ ناموفق: {failedCount}\n" +
             "موارد مبهم و تکراری ارسال نشدند." +
             (failureDetails.Count == 0 ? "" : $"\n\nجزئیات خطا:\n{string.Join("\n", failureDetails.Take(15).Select(value => $"• {value}"))}"), ct);
@@ -1006,14 +1116,17 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
+        if(dispatch.MatchNotes?.StartsWith(ManualTrackingMatch,StringComparison.Ordinal)==true)
+        {await ReplyAsync(adminChatId,"گیرندهٔ این کد با تأیید دستی ثبت شده است؛ برای تغییر از «انتخاب از آدرس‌های آماده‌سازی» استفاده کنید.",ct);return;}
         var recheckedName = await _trackingImportService.RecheckRecipientNameAsync(
             dispatch.CardImage ?? [], ct);
         var nameWasCorrected = !string.IsNullOrWhiteSpace(recheckedName) &&
                                !string.Equals(dispatch.RecipientName, recheckedName, StringComparison.Ordinal);
         if (nameWasCorrected)
             dispatch.RecipientName = recheckedName!;
+        var sourceAsOf=await _db.TrackingImportBatches.AsNoTracking().Where(b=>b.Id==dispatch.ImportBatchId).Select(b=>b.CreatedAt).SingleAsync(ct);
         var match = await _trackingImportService.MatchAsync(
-            dispatch.RecipientName, dispatch.Destination, ct);
+            dispatch.RecipientName, dispatch.Destination, ct,sourceAsOf);
         var hasUncertainAttempt = dispatch.Deliveries.Any(value => value.AttemptedAt.HasValue && !value.SentAt.HasValue);
         dispatch.CustomerId = match.CustomerId;
         dispatch.ShippingRequestId = match.ShippingRequestId;
@@ -1034,6 +1147,8 @@ public sealed partial class TelegramWebhookController
 
         var caption = $"{(dispatch.Status == TrackingDispatchStatus.Ready ? "✅" : "⚠️")} {dispatch.RecipientName}\n" +
                       $"کد: {dispatch.TrackingCode}\n{dispatch.MatchNotes}";
+        if(dispatch.Status==TrackingDispatchStatus.NeedsReview)
+            caption=TrackingCaptionWithSuggestions(dispatch,caption,await TrackingPreparedAddresses.LoadAsync(_db,_options.ShippingChatId.Trim(),ct));
         var previewUpdate = await _sender.EditPhotoBytesWithKeyboardAsync(
             adminChatId.ToString(), previewMessageId, dispatch.CardImage!,
             $"tracking-{dispatch.TrackingCode}.png", caption,
@@ -1089,20 +1204,28 @@ public sealed partial class TelegramWebhookController
         if (dispatch.IsDeleted) return [];
         if (dispatch.Status == TrackingDispatchStatus.Sent)
             return [new[] { new TelegramInlineButton("☑️ ارسال شد", "trackingimport:noop") }];
-        return
-        [
-            new[]
-            {
-                new TelegramInlineButton("✅ تأیید و ارسال", $"trackingimport:send:{dispatch.Id:N}"),
-                new TelegramInlineButton("🔄 ساخت مجدد", $"trackingimport:rebuild:{dispatch.Id:N}"),
-                new TelegramInlineButton("🗑 حذف", $"trackingimport:delete:{dispatch.Id:N}")
-            }
-        ];
+        var choices=new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if(dispatch.Status is TrackingDispatchStatus.NeedsReview or TrackingDispatchStatus.Ready)
+            choices.Add([new("🔎 انتخاب از آدرس‌های آماده‌سازی",$"trackingimport:select-open:{dispatch.Id:N}")]);
+        var actions=new List<TelegramInlineButton>();
+        if(dispatch.Status!=TrackingDispatchStatus.NeedsReview)actions.Add(new("✅ تأیید و ارسال",$"trackingimport:send:{dispatch.Id:N}"));
+        actions.Add(new("🔄 ساخت مجدد",$"trackingimport:rebuild:{dispatch.Id:N}"));
+        actions.Add(new("🗑 حذف",$"trackingimport:delete:{dispatch.Id:N}"));
+        choices.Add(actions);
+        return choices;
     }
 
     private async Task<string[]> ResolveTrackingDestinationChatIdsAsync(
         TrackingDispatch dispatch, CancellationToken ct)
     {
+        var shared=await SharedTrackingDestinationsAsync(dispatch,ct);
+        if(shared!=null)return shared;
+        if(dispatch.CustomerId is Guid registrationCustomerId)
+        {
+            var registrationCustomer=await _db.Customers.AsNoTracking().SingleOrDefaultAsync(c=>c.Id==registrationCustomerId&&!c.IsDeleted,ct);
+            var manualDestination=registrationCustomer is null?null:ZibasheERP.Infrastructure.Services.ManualShippingRegistration.TrackingDestination(registrationCustomer,_options.OwnerUserId);
+            if(manualDestination is not null)return [manualDestination];
+        }
         if (dispatch.ShippingRequestId.HasValue)
         {
             var registrationChatId = await _db.OrderItems.AsNoTracking()
@@ -1161,30 +1284,12 @@ public sealed partial class TelegramWebhookController
 
     private async Task MarkShippingRequestSentAsync(TrackingDispatch dispatch, CancellationToken ct)
     {
+        try { await QueueTrackingAddressNoticeAsync(dispatch,ct); }
+        catch(Exception e)when(!ct.IsCancellationRequested)
+        { _logger.LogWarning("Could not queue tracking address notice for {DispatchId}: {ErrorType}",dispatch.Id,e.GetType().Name); }
         if (!dispatch.ShippingRequestId.HasValue) return;
-        var items = await _db.OrderItems.Include(value => value.Order).ThenInclude(value => value!.DeliveryAddress)
-            .Where(value => !value.IsDeleted && value.ShippingRequestId == dispatch.ShippingRequestId)
-            .ToArrayAsync(ct);
-        var now = DateTime.UtcNow;
-        foreach (var item in items)
-        {
-            item.FulfillmentStatus = OrderItemFulfillmentStatus.Shipped;
-            item.ShippedAt = now;
-            item.UpdatedAt = now;
-        }
-        foreach (var order in items.Select(value => value.Order).Where(value => value is not null).Distinct()!)
-        {
-            var hasUnshipped = await _db.OrderItems.AnyAsync(value => !value.IsDeleted && value.OrderId == order!.Id &&
-                value.ShippingRequestId != dispatch.ShippingRequestId &&
-                value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped, ct);
-            if (!hasUnshipped)
-            {
-                order!.Status = OrderStatus.Shipped;
-                order.ShippedAt = now;
-                order.UpdatedAt = now;
-            }
-        }
-        await _db.SaveChangesAsync(ct);
+        var items = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteAsync(
+            _db,dispatch.ShippingRequestId,dispatch.CustomerId,ct);
 
         var messageId = items.Select(value => value.ShippingTelegramMessageId).FirstOrDefault(value => value.HasValue);
         if (messageId.HasValue && !string.IsNullOrWhiteSpace(_options.ShippingChatId))
@@ -1198,7 +1303,7 @@ public sealed partial class TelegramWebhookController
                 }
             };
             var result = await _sender.EditReplyMarkupAsync(
-                _options.ShippingChatId.Trim(), messageId.Value, buttons, ct);
+                _options.ShippingChatId.Trim(), messageId.Value, buttons.Concat(await ExistingShippingReferenceButtonsAsync(_options.ShippingChatId.Trim(), messageId.Value, ct)).ToArray(), ct);
             if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
                 _logger.LogWarning("Tracking source message update failed: {Error}", result.Error);
         }

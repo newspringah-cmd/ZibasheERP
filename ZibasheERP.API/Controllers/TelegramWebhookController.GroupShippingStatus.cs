@@ -6,6 +6,8 @@ namespace ZibasheERP.API.Controllers;
 
 public sealed partial class TelegramWebhookController
 {
+    private sealed record CustomerShippingStatusRow(Guid Id, string CustomerName, string? Name, int? Code,
+        decimal RequestedVolumeMl, bool IsBottleOwner, DateTime? ShippedAt, DateTime ChangedAt);
     private async Task<bool> TryHandleGroupShippingStatusCommandAsync(TelegramMessage message, CancellationToken ct)
     {
         var command = message.Text?.Trim().Split((char[]?)null, 2,
@@ -46,23 +48,19 @@ public sealed partial class TelegramWebhookController
             return true;
         }
         var status = ready ? OrderItemFulfillmentStatus.DecantedReadyToShip : OrderItemFulfillmentStatus.Shipped;
-        var items = await _db.OrderItems.AsNoTracking()
-            .Where(item => !item.IsDeleted && item.Order != null && !item.Order.IsDeleted &&
-                item.Order.Status != OrderStatus.Cancelled && customerIds.Contains(item.Order.CustomerId) &&
-                item.FulfillmentStatus == status)
-            .OrderBy(item => item.Order!.Customer!.FullName)
-            .ThenByDescending(item => item.ShippedAt ?? item.UpdatedAt ?? item.CreatedAt)
-            .ThenBy(item => item.Id)
-            .Select(item => new
-            {
-                CustomerName = item.Order!.Customer!.FullName,
-                Name = item.SalesList != null ? item.SalesList.PersianName :
-                    item.Perfume != null ? item.Perfume.Name : item.ManualDescription,
-                Code = item.SalesList != null ? (int?)(item.SalesList.StablePublicCode ?? item.SalesList.PublicCode) : null,
-                item.RequestedVolumeMl,
-                item.IsBottleOwner,
-                item.ShippedAt
-            }).ToArrayAsync(ct);
+        var customers = await _db.Customers.AsNoTracking().Where(c => !c.IsDeleted && customerIds.Contains(c.Id)).ToArrayAsync(ct);
+        var rows = new List<CustomerShippingStatusRow>();
+        foreach (var customer in customers)
+        {
+            rows.AddRange(await CustomerShippingItems(customer).AsNoTracking().Where(item => item.FulfillmentStatus == status)
+                .Select(item => new CustomerShippingStatusRow(item.Id, customer.FullName,
+                    item.SalesList != null ? item.SalesList.PersianName : item.Perfume != null ? item.Perfume.Name : item.ManualDescription,
+                    item.SalesList != null ? (int?)(item.SalesList.StablePublicCode ?? item.SalesList.PublicCode) : null,
+                    item.RequestedVolumeMl, item.IsBottleOwner, item.ShippedAt,
+                    item.ShippedAt ?? item.UpdatedAt ?? item.CreatedAt)).ToArrayAsync(ct));
+        }
+        var items = rows.DistinctBy(item => item.Id).OrderBy(item => item.CustomerName)
+            .ThenByDescending(item => item.ChangedAt).ThenBy(item => item.Id).ToArray();
         var title = ready ? "📦 آیتم‌های دکانت‌شده و آماده ارسال" : "🚚 آیتم‌های ارسال‌شده قبلی";
         var lines = items.Select((item, index) =>
             $"{index + 1}. {item.Name ?? "آیتم سفارش"}{FormatListCode(item.Code)} — {item.RequestedVolumeMl} میل" +

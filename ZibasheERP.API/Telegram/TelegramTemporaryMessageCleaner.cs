@@ -6,6 +6,13 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
 {
     private readonly ITelegramMessageSender _sender;
     private readonly ILogger<TelegramTemporaryMessageCleaner> _logger;
+    private readonly TimeProvider _timeProvider;
+    private readonly SemaphoreSlim _promptSlots = new(8, 8);
+    private readonly SemaphoreSlim _maintenanceSlots = new(4, 4);
+    private readonly SemaphoreSlim _workAvailable = new(0, 1);
+    private const int MaxPromptAttempts = 3;
+    private static readonly TimeSpan SelectionTimeout = TimeSpan.FromSeconds(20);
+    private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
     private sealed record ScheduledRestore(
         DateTime ExpiresAt,
         string Caption,
@@ -15,8 +22,8 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), ScheduledRestore> _scheduled = new();
     private sealed record PendingPrompt(string Caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Rows,
-        string OriginalCaption, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> OriginalRows,
-        ScheduledRestore Owner);
+        ScheduledRestore Owner, DateTime NextAttemptAt, long? UserId, string? CallbackQueryId,
+        string? SuccessMessage, int Attempts = 0);
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), PendingPrompt> _pendingPrompts = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), SemaphoreSlim> _postGates = new();
     private readonly ConcurrentDictionary<(string ChatId, long MessageId), DateTime> _scheduledDeletes = new();
@@ -25,45 +32,156 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
 
     public TelegramTemporaryMessageCleaner(
         ITelegramMessageSender sender,
-        ILogger<TelegramTemporaryMessageCleaner> logger)
+        ILogger<TelegramTemporaryMessageCleaner> logger,
+        TimeProvider? timeProvider = null)
     {
         _sender = sender;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public bool IsScheduled(string chatId, long messageId) => _scheduled.ContainsKey((chatId, messageId));
 
     public void QueuePrompt(string chatId, long messageId, string caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
-        string originalCaption, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> originalRows)
+        string originalCaption, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> originalRows,
+        string? photoFileId = null, string? callbackQueryId = null, bool keyboardOnly = false,
+        string? successMessage = null)
     {
-        var owner = new ScheduledRestore(DateTime.UtcNow.AddSeconds(20), originalCaption, originalRows);
+        var now = UtcNow;
+        var owner = new ScheduledRestore(now.Add(SelectionTimeout), originalCaption, originalRows,
+            KeyboardOnly: keyboardOnly, PhotoFileId: keyboardOnly ? null : photoFileId);
+        _interactionLocks.TryGetValue((chatId, messageId), out var interaction);
         _scheduled[(chatId, messageId)] = owner;
-        _pendingPrompts[(chatId, messageId)] = new(caption, rows, originalCaption, originalRows, owner);
+        _pendingPrompts[(chatId, messageId)] = new(caption, rows, owner, now, interaction?.UserId, callbackQueryId, successMessage);
+        WakeWorker();
     }
 
-    internal async Task PublishPendingPromptsAsync(CancellationToken ct)
+    internal Task PublishPendingPromptsAsync(CancellationToken ct) =>
+        Task.WhenAll(StartPendingPrompts(ct));
+
+    private IEnumerable<Task> StartPendingPrompts(CancellationToken ct)
     {
         foreach (var item in _pendingPrompts.ToArray())
         {
+            if (item.Value.NextAttemptAt > UtcNow || !_promptSlots.Wait(0)) continue;
             var gate = _postGates.GetOrAdd(item.Key, _ => new SemaphoreSlim(1, 1));
-            if (!await gate.WaitAsync(0, ct)) continue;
-            try
+            if (!gate.Wait(0))
             {
-                if (!_pendingPrompts.TryRemove(item.Key, out var pending)) continue;
-                if (!_scheduled.TryGetValue(item.Key, out var owner) || !ReferenceEquals(owner, pending.Owner)) continue;
-                var result = await _sender.EditPhotoCaptionAsync(item.Key.ChatId, item.Key.MessageId,
-                    pending.Caption, pending.Rows, ct);
-                _logger.LogInformation("Deferred reservation prompt chat={ChatId} post={PostId} successful={Successful} error={Error}",
-                    item.Key.ChatId, item.Key.MessageId, result.IsSuccessful, result.Error);
-                // Start the visible-step timeout after Telegram has responded.
-                _scheduled.TryUpdate(item.Key, owner with { ExpiresAt = DateTime.UtcNow.AddSeconds(20) }, owner);
+                _promptSlots.Release();
+                continue;
             }
-            catch (Exception error) when (!ct.IsCancellationRequested)
-            { _logger.LogWarning(error, "Deferred reservation prompt failed"); }
-            finally { gate.Release(); }
+            yield return PublishPromptAsync(item.Key, item.Value, gate, ct);
         }
     }
+
+    private async Task PublishPromptAsync((string ChatId, long MessageId) key, PendingPrompt pending,
+        SemaphoreSlim gate, CancellationToken ct)
+    {
+        try
+        {
+            if (!_pendingPrompts.TryGetValue(key, out var current) || !ReferenceEquals(current, pending)) return;
+            if (!_scheduled.TryGetValue(key, out var owner) || !ReferenceEquals(owner, pending.Owner) || owner.ExpiresAt <= UtcNow)
+            {
+                RemovePending(key, pending);
+                return;
+            }
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var result = owner.KeyboardOnly
+                ? await _sender.EditReplyMarkupAsync(key.ChatId, key.MessageId, pending.Rows, ct)
+                : !string.IsNullOrWhiteSpace(owner.PhotoFileId)
+                ? await _sender.EditPhotoAsync(key.ChatId, key.MessageId, owner.PhotoFileId, pending.Caption, pending.Rows, ct)
+                : await _sender.EditPhotoCaptionAsync(key.ChatId, key.MessageId, pending.Caption, pending.Rows, ct);
+            _logger.LogInformation("Deferred reservation prompt chat={ChatId} post={PostId} successful={Successful} error={Error} attempt={Attempt} queuedMs={QueuedMs} editMs={EditMs}",
+                key.ChatId, key.MessageId, result.IsSuccessful, result.Error, pending.Attempts + 1,
+                (UtcNow - (owner.ExpiresAt - SelectionTimeout)).TotalMilliseconds,
+                System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            if (result.IsSuccessful || IsUnchanged(result))
+            {
+                RemovePending(key, pending);
+                // Start the visible-step timeout only after Telegram accepted this step.
+                var expiresAt = UtcNow.Add(SelectionTimeout);
+                var visibleStep = owner with { ExpiresAt = expiresAt };
+                var stillCurrent = _scheduled.TryUpdate(key, visibleStep, owner);
+                if (stillCurrent &&
+                    _interactionLocks.TryGetValue(key, out var interaction) && interaction.UserId == pending.UserId &&
+                    interaction.ExpiresAt < expiresAt)
+                    _interactionLocks.TryUpdate(key, interaction with { ExpiresAt = expiresAt }, interaction);
+                // Complete the client's click after Telegram accepted the new keyboard.
+                // A lost acknowledgement must never replay a delivered step or reservation.
+                await AcknowledgePromptAsync(key, pending, null, ct);
+            }
+            else
+            {
+                if (!RetryPrompt(key, pending))
+                    await AcknowledgePromptAsync(key, pending, PromptFailureMessage(key, pending), ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            _logger.LogWarning(error, "Deferred reservation prompt failed");
+            if (!RetryPrompt(key, pending))
+                await AcknowledgePromptAsync(key, pending, PromptFailureMessage(key, pending), ct);
+        }
+        finally
+        {
+            gate.Release();
+            _promptSlots.Release();
+            WakeWorker();
+        }
+    }
+
+    private bool RetryPrompt((string ChatId, long MessageId) key, PendingPrompt pending)
+    {
+        if (_scheduled.TryGetValue(key, out var owner) && ReferenceEquals(owner, pending.Owner) &&
+            owner.ExpiresAt > UtcNow && pending.Attempts + 1 < MaxPromptAttempts)
+        {
+            // Retry the same presentation, never replay the customer's reservation action.
+            return _pendingPrompts.TryUpdate(key, pending with
+            {
+                Attempts = pending.Attempts + 1,
+                NextAttemptAt = UtcNow.AddMilliseconds(250 * (pending.Attempts + 1))
+            }, pending);
+        }
+        else
+            RemovePending(key, pending);
+        return false;
+    }
+
+    private async Task AcknowledgePromptAsync((string ChatId, long MessageId) key,
+        PendingPrompt pending, string? errorMessage, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(pending.CallbackQueryId)) return;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(1));
+        try
+        {
+            // Acknowledgement confirms receipt, not that the client's channel view refreshed.
+            var result = await _sender.AnswerCallbackAsync(pending.CallbackQueryId,
+                errorMessage ?? pending.SuccessMessage ?? "انتخاب شما دریافت شد.", budget.Token, showAlert: errorMessage is not null);
+            _logger.LogInformation("Deferred reservation acknowledgement callback={CallbackId} chat={ChatId} post={PostId} successful={Successful} stepAccepted={StepAccepted} error={Error}",
+                pending.CallbackQueryId, key.ChatId, key.MessageId, result.IsSuccessful, errorMessage is null,
+                result.Error);
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            _logger.LogWarning("Reservation acknowledgement failed callback={CallbackId} type={ErrorType}",
+                pending.CallbackQueryId, error.GetType().Name);
+        }
+    }
+
+    private string? PromptFailureMessage((string ChatId, long MessageId) key, PendingPrompt pending) =>
+        _scheduled.TryGetValue(key, out var owner) && ReferenceEquals(owner, pending.Owner)
+            ? "نمایش مرحلهٔ بعد انجام نشد؛ لطفاً دوباره تلاش کنید."
+            : null;
+
+    private void RemovePending((string ChatId, long MessageId) key, PendingPrompt pending) =>
+        ((ICollection<KeyValuePair<(string, long), PendingPrompt>>)_pendingPrompts).Remove(new(key, pending));
+
+    private static bool IsUnchanged(TelegramSendResult result) =>
+        result.Error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task<TelegramSendResult> UpdatePromptAsync(string chatId, long messageId,
         string prompt, IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
@@ -108,34 +226,54 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         finally { gate.Release(); }
     }
 
-    internal async Task RestoreDueAsync(DateTime now, CancellationToken ct)
+    internal Task RestoreDueAsync(DateTime now, CancellationToken ct) =>
+        Task.WhenAll(StartDueRestores(now, ct));
+
+    private IEnumerable<Task> StartDueRestores(DateTime now, CancellationToken ct)
     {
         foreach (var item in _scheduled.Where(item => item.Value.ExpiresAt <= now).ToArray())
         {
+            if (!_maintenanceSlots.Wait(0)) continue;
             var gate = _postGates.GetOrAdd(item.Key, _ => new SemaphoreSlim(1, 1));
-            if (!await gate.WaitAsync(0, ct)) continue;
-            try
+            if (!gate.Wait(0))
             {
-                if (!_scheduled.TryGetValue(item.Key, out var current) || !ReferenceEquals(current, item.Value)) continue;
-                var result = !string.IsNullOrWhiteSpace(current.PhotoFileId)
-                    ? await _sender.EditPhotoAsync(item.Key.ChatId, item.Key.MessageId, current.PhotoFileId, current.Caption, current.Rows, ct)
-                    : current.KeyboardOnly
-                    ? await _sender.EditReplyMarkupAsync(item.Key.ChatId, item.Key.MessageId, current.Rows, ct)
-                    : await _sender.EditPhotoCaptionAsync(item.Key.ChatId, item.Key.MessageId, current.Caption, current.Rows, ct);
-                if (result.IsSuccessful || result.Error?.Contains("message is not modified", StringComparison.OrdinalIgnoreCase) == true)
-                    ((ICollection<KeyValuePair<(string, long), ScheduledRestore>>)_scheduled).Remove(new(item.Key, current));
-                else
-                {
-                    _logger.LogWarning("Telegram reservation prompt restore failed: {Error}", result.Error);
-                    _scheduled.TryUpdate(item.Key, current with { ExpiresAt = DateTime.UtcNow.AddSeconds(5) }, current);
-                }
+                _maintenanceSlots.Release();
+                continue;
             }
-            catch (Exception error) when (!ct.IsCancellationRequested)
+            yield return RestorePostAsync(item.Key, item.Value, gate, ct);
+        }
+    }
+
+    private async Task RestorePostAsync((string ChatId, long MessageId) key, ScheduledRestore expected,
+        SemaphoreSlim gate, CancellationToken ct)
+    {
+        try
+        {
+            if (!_scheduled.TryGetValue(key, out var current) || !ReferenceEquals(current, expected)) return;
+            var result = !string.IsNullOrWhiteSpace(current.PhotoFileId)
+                ? await _sender.EditPhotoAsync(key.ChatId, key.MessageId, current.PhotoFileId, current.Caption, current.Rows, ct)
+                : current.KeyboardOnly
+                ? await _sender.EditReplyMarkupAsync(key.ChatId, key.MessageId, current.Rows, ct)
+                : await _sender.EditPhotoCaptionAsync(key.ChatId, key.MessageId, current.Caption, current.Rows, ct);
+            if (result.IsSuccessful || IsUnchanged(result))
+                ((ICollection<KeyValuePair<(string, long), ScheduledRestore>>)_scheduled).Remove(new(key, current));
+            else
             {
-                _logger.LogWarning(error, "Telegram reservation prompt restore failed");
-                _scheduled.TryUpdate(item.Key, item.Value with { ExpiresAt = DateTime.UtcNow.AddSeconds(5) }, item.Value);
+                _logger.LogWarning("Telegram reservation prompt restore failed: {Error}", result.Error);
+                _scheduled.TryUpdate(key, current with { ExpiresAt = UtcNow.AddSeconds(5) }, current);
             }
-            finally { gate.Release(); }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            _logger.LogWarning(error, "Telegram reservation prompt restore failed");
+            _scheduled.TryUpdate(key, expected with { ExpiresAt = UtcNow.AddSeconds(5) }, expected);
+        }
+        finally
+        {
+            gate.Release();
+            _maintenanceSlots.Release();
+            WakeWorker();
         }
     }
 
@@ -145,7 +283,7 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
         var key = (chatId, messageId);
         while (true)
         {
-            var now = DateTime.UtcNow;
+            var now = UtcNow;
             if (!_interactionLocks.TryGetValue(key, out var current))
                 return _interactionLocks.TryAdd(key, new(userId, now.Add(timeout))) ||
                     TryAcquireInteraction(chatId, messageId, userId, timeout);
@@ -169,7 +307,7 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     public void ScheduleRestore(
         string chatId, long messageId, string caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, TimeSpan delay, bool keyboardOnly = false, string? photoFileId = null) =>
-        _scheduled[(chatId, messageId)] = new(DateTime.UtcNow.Add(delay), caption, rows, keyboardOnly, photoFileId);
+        _scheduled[(chatId, messageId)] = new(UtcNow.Add(delay), caption, rows, keyboardOnly, photoFileId);
 
     public void Cancel(string chatId, long messageId)
     {
@@ -178,26 +316,61 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     }
 
     public void ScheduleDelete(string chatId, long messageId, TimeSpan delay) =>
-        _scheduledDeletes[(chatId, messageId)] = DateTime.UtcNow.Add(delay);
+        _scheduledDeletes[(chatId, messageId)] = UtcNow.Add(delay);
+
+    private void WakeWorker()
+    {
+        // Coalesce wakeups; each post still has one serialized writer.
+        try { _workAvailable.Release(); }
+        catch (SemaphoreFullException) { }
+    }
+
+    private IEnumerable<Task> StartDueDeletes(DateTime now, CancellationToken ct)
+    {
+        foreach (var item in _scheduledDeletes.Where(item => item.Value <= now).ToArray())
+        {
+            if (!_maintenanceSlots.Wait(0)) continue;
+            if (!((ICollection<KeyValuePair<(string, long), DateTime>>)_scheduledDeletes).Remove(item))
+            {
+                _maintenanceSlots.Release();
+                continue;
+            }
+            yield return DeletePostAsync(item.Key, ct);
+        }
+    }
+
+    private async Task DeletePostAsync((string ChatId, long MessageId) key, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _sender.DeleteMessageAsync(key.ChatId, key.MessageId, ct);
+            if (!result.IsSuccessful)
+                _logger.LogWarning("Telegram temporary message delete failed: {Error}", result.Error);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error) { _logger.LogWarning(error, "Telegram temporary message delete failed"); }
+        finally { _maintenanceSlots.Release(); WakeWorker(); }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        var inFlight = new List<Task>();
+        try
         {
-            var now = DateTime.UtcNow;
-            foreach (var item in _interactionLocks.Where(item => item.Value.ExpiresAt <= now).ToArray())
-                ((ICollection<KeyValuePair<(string, long), InteractionLock>>)_interactionLocks).Remove(item);
-            await PublishPendingPromptsAsync(stoppingToken);
-            await RestoreDueAsync(now, stoppingToken);
-            foreach (var item in _scheduledDeletes.Where(item => item.Value <= now).ToArray())
+            while (!stoppingToken.IsCancellationRequested)
             {
-                if (!_scheduledDeletes.TryRemove(item.Key, out _)) continue;
-                var result = await _sender.DeleteMessageAsync(
-                    item.Key.ChatId, item.Key.MessageId, stoppingToken);
-                if (!result.IsSuccessful)
-                    _logger.LogWarning("Telegram temporary message delete failed: {Error}", result.Error);
+                inFlight.RemoveAll(task => task.IsCompleted);
+                var now = UtcNow;
+                foreach (var item in _interactionLocks.Where(item => item.Value.ExpiresAt <= now).ToArray())
+                    ((ICollection<KeyValuePair<(string, long), InteractionLock>>)_interactionLocks).Remove(item);
+                // Slow edits, restores and deletes must not stop new prompts on other posts.
+                inFlight.AddRange(StartPendingPrompts(stoppingToken));
+                inFlight.AddRange(StartDueRestores(now, stoppingToken));
+                inFlight.AddRange(StartDueDeletes(now, stoppingToken));
+                await _workAvailable.WaitAsync(TimeSpan.FromMilliseconds(250), stoppingToken);
             }
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        finally { await Task.WhenAll(inFlight); }
     }
 }

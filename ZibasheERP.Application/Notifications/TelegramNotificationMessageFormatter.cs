@@ -10,6 +10,19 @@ public static class TelegramNotificationMessageFormatter
     {
         using var document = JsonDocument.Parse(payload);
         var root = document.RootElement;
+        if(eventType=="InventoryPostCleanupNeedsManualAction")
+        {
+            var withdrawn=root.TryGetProperty("Withdrawn",out var state)&&state.ValueKind==JsonValueKind.True;
+            var invoice=ReadString(root,"InvoiceNumbers");
+            return "🧹 نیاز به حذف دستی پست موجودی\n"+
+                $"کد موجودی: {ReadDecimal(root,"InventoryCode"):0}\nعطر: {ReadString(root,"Name")}\n"+
+                (string.IsNullOrWhiteSpace(invoice)?"":$"شماره فاکتور: {invoice}\n")+
+                "این اعلان مربوط به پست کانال است؛ فاکتور را دوباره صادر نکنید.\n\n"+
+                (withdrawn?"تلگرام حذف پست را نپذیرفت. پست «فروخته شد» شده و دکمه‌های خرید برداشته شده‌اند.\n":
+                    ReadString(root,"Reason")=="restricted"?"تلگرام اجازهٔ حذف پست را نمی‌دهد؛ ویرایش وضعیت عمومی پست هنوز تأیید نشده است.\n":
+                    "پاک‌سازی پست پس از چند تلاش تکمیل نشد؛ سیستم تلاش مجدد را ادامه می‌دهد.\n")+
+                "ادمین کانال لطفاً اگر پست هنوز وجود دارد، همان پست را دستی حذف کند.\n"+ReadString(root,"PostUrl");
+        }
         if (eventType == "DebtReminder")
         {
             var message = ReadString(root, "Message") ?? "لطفاً برای تسویه اقدام کنید.";
@@ -95,6 +108,8 @@ public static class TelegramNotificationMessageFormatter
             : Array.Empty<JsonElement>();
         var hasGiftItems = invoiceItems.Any(item => ReadBoolean(item, "IsGift"));
         var builder = new StringBuilder();
+        if (ReadBoolean(root, "IsInventory"))
+            builder.AppendLine("🔴🔴موجودی🔴🔴").AppendLine();
         if (hasGiftItems)
         {
             AppendSpacedLine(builder, $"🧾 {title}");
@@ -187,7 +202,7 @@ public static class TelegramNotificationMessageFormatter
         {
             $"نام انگلیسی: {englishTitle}",
             $"نام فارسی: {persianName}",
-            $"مقدار: {ReadInt(item, "RequestedVolumeMl")} میلی‌لیتر",
+            $"مقدار: {ReadDecimal(item, "RequestedVolumeMl").ToString("0.#", CultureInfo.InvariantCulture)} میلی‌لیتر",
             $"مبلغ عطر و شیشه: {FormatAmount(ReadDecimal(item, "LineTotal"))} تومان"
         };
         foreach (var line in lines)
@@ -214,7 +229,7 @@ public static class TelegramNotificationMessageFormatter
             .AppendLine()
             .AppendLine($"نام انگلیسی: {ReadString(root, "PerfumeEnglishName") ?? "عطر"}")
             .AppendLine($"نام فارسی: {ReadString(root, "PerfumePersianName") ?? "عطر"}")
-            .AppendLine($"مقدار: {ReadInt(root, "RequestedVolumeMl")} میلی‌لیتر")
+            .AppendLine($"مقدار: {ReadDecimal(root, "RequestedVolumeMl").ToString("0.#", CultureInfo.InvariantCulture)} میلی‌لیتر")
             .AppendLine("مبلغ قابل پرداخت: ۰ تومان")
             .AppendLine()
             .Append("این عطر از طرف هدیه‌دهنده برای شما ثبت شده است 🌹")

@@ -467,9 +467,9 @@ public sealed partial class TelegramWebhookController
             draft.MiddleNotes = previousList.MiddleNotes;
             draft.BaseNotes = previousList.BaseNotes;
             draft.Accords = previousList.Accords;
-            draft.PricePerMl = previousList.PricePerMl;
-            draft.TotalVolume = previousList.TotalVolume;
-            draft.MinimumRequestVolumeMl = previousList.MinimumRequestVolumeMl;
+            draft.PricePerMl = ZibasheERP.Application.Services.SalesListPrice.RoundUpPerMl(previousList.PricePerMl);
+            draft.TotalVolume = checked((int)previousList.TotalVolume);
+            draft.MinimumRequestVolumeMl = checked((int)previousList.MinimumRequestVolumeMl);
             draft.Notes = previousList.Notes;
             draft.IsReviewingExistingPerfume = true;
             draft.ReviewFieldIndex = 0;
@@ -597,6 +597,7 @@ public sealed partial class TelegramWebhookController
             error = "حداقل حجم نمی‌تواند از حجم کل بیشتر باشد.";
             return false;
         }
+        pricePerMl = ZibasheERP.Application.Services.SalesListPrice.RoundUpPerMl(pricePerMl);
         error = string.Empty;
         return true;
     }

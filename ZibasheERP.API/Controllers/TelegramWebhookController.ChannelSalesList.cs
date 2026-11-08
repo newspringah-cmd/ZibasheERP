@@ -13,7 +13,7 @@ namespace ZibasheERP.API.Controllers;
 
 public sealed partial class TelegramWebhookController
 {
-    private static readonly int[] ChannelVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
+    private static readonly decimal[] ChannelVolumes = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 50];
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> SalesListRefreshLocks = new();
     private static readonly ConcurrentDictionary<Guid, long> SalesListRefreshVersions = new();
     // Bounded striped locks avoid retaining one lock per customer forever.
@@ -30,7 +30,7 @@ public sealed partial class TelegramWebhookController
         {
             var parts = data.Split(':');
             if (parts[0] == "slv" && parts.Length == 3 &&
-                TryDecodeCompactGuid(parts[1], out var listId) && int.TryParse(parts[2], out var volume))
+                TryDecodeCompactGuid(parts[1], out var listId) && decimal.TryParse(parts[2], System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var volume))
             {
                 var gate = ReservationStartLocks[(int)((uint)HashCode.Combine(listId, callback.From.Id) % (uint)ReservationStartLocks.Length)];
                 await gate.WaitAsync(cancellationToken);
@@ -42,6 +42,11 @@ public sealed partial class TelegramWebhookController
                 TryDecodeCompactGuid(parts[1], out var requestId) && TryDecodeCompactGuid(parts[2], out var bottleId))
             {
                 await SelectChannelBottleAsync(callback, requestId, bottleId, cancellationToken);
+                return true;
+            }
+            if (parts[0] == "sli" && parts.Length == 2 && TryDecodeCompactGuid(parts[1], out requestId))
+            {
+                await ShowChannelReservationDetailsAsync(callback, requestId, cancellationToken);
                 return true;
             }
             if (parts[0] == "slp" && parts.Length == 3 &&
@@ -109,7 +114,7 @@ public sealed partial class TelegramWebhookController
     }
 
     private async Task StartChannelReservationAsync(
-        TelegramCallbackQuery callback, Guid salesListId, int volume, CancellationToken cancellationToken)
+        TelegramCallbackQuery callback, Guid salesListId, decimal volume, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(callback.From.Username))
         {
@@ -125,6 +130,9 @@ public sealed partial class TelegramWebhookController
 
         var initialList = await _salesListRepository.GetByIdAsync(salesListId, cancellationToken)
             ?? throw new InvalidOperationException("لیست فروش پیدا نشد.");
+        if (initialList.RemainingVolume > 0 && initialList.RemainingVolume < initialList.MinimumRequestVolumeMl &&
+            !initialList.CanReserveVolume(volume))
+            throw new InvalidOperationException($"فقط کل باقی‌ماندهٔ این لیست، یعنی {initialList.RemainingVolume:0.#} میل، قابل انتخاب است.");
         var adminRegistration = false;
         if (volume > 0 && volume < initialList.EffectiveMinimumRequestVolumeMl)
             adminRegistration = await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, cancellationToken);
@@ -139,7 +147,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("برای ثبت درخواست باید عضو کانال فروش باشید.");
         var salesList = initialList;
         if (!salesList.CanReserveVolume(volume, adminRegistration))
-            throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {salesList.RemainingVolume} میل است.");
+            throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ باقی‌مانده {salesList.RemainingVolume:0.#} میل است.");
         if (!salesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(salesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
         if (!_temporaryMessageCleaner.TryAcquireInteraction(
@@ -158,6 +166,11 @@ public sealed partial class TelegramWebhookController
         {
             var pending = await _salesListRequestRepository.GetAsync(pendingId.Value, cancellationToken)
                 ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+            var pendingQuote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(
+                _db, salesList, DateTime.UtcNow, cancellationToken);
+            pending.PerfumePricePerMl = pendingQuote.PricePerMl;
+            pending.FlashSalePromotionId = pendingQuote.PromotionId;
+            await _salesListRequestRepository.SaveChangesAsync(cancellationToken);
             if (pending.BottleId.HasValue)
                 await ShowChannelConfirmationAsync(callback, pending,
                     $"{BottleLabel(pending.Bottle!.Type.ToString())} — {pending.BottlePrice:N0} تومان", cancellationToken);
@@ -165,6 +178,8 @@ public sealed partial class TelegramWebhookController
                 await ShowChannelBottleSelectionAsync(callback, pending.Id, cancellationToken);
             return;
         }
+        var quote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(
+            _db, salesList, DateTime.UtcNow, cancellationToken);
         var request = new SalesListRequest
         {
             Id = Guid.NewGuid(),
@@ -173,7 +188,8 @@ public sealed partial class TelegramWebhookController
             TelegramUserId = callback.From.Id.ToString(),
             TelegramUsername = NormalizeUsername(callback.From.Username),
             VolumeMl = volume,
-            PerfumePricePerMl = salesList.PricePerMl,
+            PerfumePricePerMl = quote.PricePerMl,
+            FlashSalePromotionId = quote.PromotionId,
             Kind = SalesListRequestKind.CurrentBottle,
             Status = SalesListRequestStatus.PendingConfirmation,
             ExpiresAt = DateTime.UtcNow.AddMinutes(10),
@@ -224,15 +240,15 @@ public sealed partial class TelegramWebhookController
             (IReadOnlyCollection<TelegramInlineButton>)new[]
             {
                 new TelegramInlineButton(
-                    $"{request.VolumeMl} میل {BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان",
+                    $"{request.VolumeMl:0.#} میل {BottleLabel(bottle.Type)} — {bottle.Price:N0} تومان",
                     $"slb:{EncodeCompactGuid(request.Id)}:{EncodeCompactGuid(bottle.Id)}")
             }).ToList();
         rows.Add(new[] { new TelegramInlineButton("❌ انصراف", $"sln:{EncodeCompactGuid(request.Id)}") });
         if (rows.Count == 1)
             throw new InvalidOperationException("برای این حجم شیشه فعالی تعریف نشده است.");
-        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
-        await EditRequestPromptAsync(request,
-            $"کاربر {DisplayTelegramUser(callback.From)}\nنوع شیشه را انتخاب کنید:", rows, cancellationToken);
+        rows.Insert(0, new[] { ChannelReservationInfoButton(request,
+            $"👤 @{request.TelegramUsername} · انتخاب شیشه برای {request.VolumeMl:0.#} میل") });
+        await EditRequestPromptAsync(request, rows, callback.Id, ChannelVolumeSelectionReceipt(callback));
     }
 
     private async Task ConfirmBottleOwnerGiftAsync(
@@ -273,7 +289,7 @@ public sealed partial class TelegramWebhookController
             $"هدیه‌گیرنده: {identity}\n" +
             $"کد لیست: {request.SalesList.DisplayCode}\n" +
             $"عطر: {request.SalesList.EnglishName}\n" +
-            $"مقدار: {request.VolumeMl} میل\nشیشه: رایگان\n" +
+            $"مقدار: {request.VolumeMl:0.#} میل\nشیشه: رایگان\n" +
             SalesListAuditPostLine(request.SalesList), cancellationToken);
         await _sender.AnswerCallbackAsync(
             callback.Id, $"هدیه برای {identity} ثبت شد ✅", cancellationToken, showAlert: true);
@@ -303,45 +319,72 @@ public sealed partial class TelegramWebhookController
         if (CustomerListReservationPolicy.RequiresSingleItem(request) && await _salesListRequestRepository.HasCustomerItemAsync(
                 request.SalesListId, request.TelegramUserId, request.TelegramUsername, request.Id, cancellationToken))
             throw new InvalidOperationException(CustomerListReservationPolicy.DuplicateMessage);
-        var total = request.PerfumePricePerMl * request.VolumeMl + request.BottlePrice;
-        var rows = new IReadOnlyCollection<TelegramInlineButton>[]
-        {
-            new[]
-            {
-                new TelegramInlineButton("✅ بله، ثبت شود", $"sly:{EncodeCompactGuid(request.Id)}"),
-                new TelegramInlineButton("❌ خیر", $"sln:{EncodeCompactGuid(request.Id)}")
-            }
-        };
-        var confirmation =
-            $"کاربر {DisplayTelegramUser(callback.From)}، آیا از ثبت این درخواست مطمئن هستید؟\n\n" +
-            (request.IsGift ? $"🎁 هدیه برای: {GiftRecipientLabel(request)}\n" : string.Empty) +
-            $"عطر: {request.VolumeMl} میل × {request.PerfumePricePerMl:N0} = {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
-            $"شیشه: {bottleDescription}\n" +
-            $"مبلغ کل: {total:N0} تومان";
-        await EditRequestPromptAsync(request, confirmation, rows, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(callback.Id))
-            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: cancellationToken);
+        var rows = BuildChannelConfirmationButtons(request, bottleDescription);
+        await EditRequestPromptAsync(request, rows, callback.Id, ChannelVolumeSelectionReceipt(callback));
     }
 
-    private async Task EditRequestPromptAsync(
-        SalesListRequest request, string prompt,
-        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
-        CancellationToken cancellationToken)
+    private static string? ChannelVolumeSelectionReceipt(TelegramCallbackQuery callback) =>
+        callback.Data?.StartsWith("slv:", StringComparison.Ordinal) == true
+            ? "انتخاب شما دریافت شد؛ اگر مرحلهٔ بعد باز نشد، دوباره روی همین مقدار کلیک کنید."
+            : null;
+
+    private Task EditRequestPromptAsync(SalesListRequest request,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, string? callbackQueryId = null,
+        string? successMessage = null)
     {
         if (!request.SalesList.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))
             throw new InvalidOperationException("پست کانال این لیست پیدا نشد.");
-        var original = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
         var chatId = request.SalesList.TelegramChannelId;
         var postId = request.SalesList.TelegramMessageId.Value;
-        var originalCaption = FormatChannelSalesList(request.SalesList, original);
         var originalRows = BuildChannelVolumeButtons(request.SalesList);
         var cleaner = _temporaryMessageCleaner;
         // Do not retain the request scope or its database entities after the response.
         Response.OnCompleted(() =>
         {
-            cleaner.QueuePrompt(chatId, postId, prompt, rows, originalCaption, originalRows);
+            // Keep the searchable perfume caption and original photo intact through every step.
+            cleaner.QueuePrompt(chatId, postId, string.Empty, rows, string.Empty, originalRows,
+                callbackQueryId: callbackQueryId, keyboardOnly: true, successMessage: successMessage);
             return Task.CompletedTask;
         });
+        return Task.CompletedTask;
+    }
+
+    private static TelegramInlineButton ChannelReservationInfoButton(SalesListRequest request, string text) =>
+        new(text, $"sli:{EncodeCompactGuid(request.Id)}");
+
+    private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelConfirmationButtons(
+        SalesListRequest request, string bottleDescription)
+    {
+        var total = request.PerfumePricePerMl * request.VolumeMl + request.BottlePrice;
+        var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
+        {
+            new[] { ChannelReservationInfoButton(request, $"👤 @{request.TelegramUsername} · تأیید {request.VolumeMl:0.#} میل") },
+            new[] { ChannelReservationInfoButton(request, $"🧴 {bottleDescription}") },
+            new[] { ChannelReservationInfoButton(request, $"مبلغ کل: {total:N0} تومان") }
+        };
+        if (request.IsGift)
+            rows.Add(new[] { ChannelReservationInfoButton(request, $"🎁 هدیه برای: {GiftRecipientLabel(request)}") });
+        rows.Add(new[]
+        {
+            new TelegramInlineButton("✅ بله، ثبت شود", $"sly:{EncodeCompactGuid(request.Id)}", Style: "success"),
+            new TelegramInlineButton("❌ خیر", $"sln:{EncodeCompactGuid(request.Id)}", Style: "danger")
+        });
+        return rows;
+    }
+
+    private async Task ShowChannelReservationDetailsAsync(TelegramCallbackQuery callback, Guid requestId, CancellationToken ct)
+    {
+        var request = await _salesListRequestRepository.GetAsync(requestId, ct)
+            ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if (request.TelegramUserId != callback.From.Id.ToString())
+            throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
+        if (request.Status != SalesListRequestStatus.PendingConfirmation || request.ExpiresAt <= DateTime.UtcNow)
+            throw new InvalidOperationException("زمان این انتخاب تمام شده؛ حجم موردنظر را دوباره انتخاب کنید.");
+        var total = request.PerfumePricePerMl * request.VolumeMl + request.BottlePrice;
+        var details = $"لیست {request.SalesList.DisplayCode} · {request.VolumeMl:0.#} میل\n" +
+            $"عطر: {request.VolumeMl * request.PerfumePricePerMl:N0} تومان\n" +
+            (request.BottleId.HasValue ? $"شیشه: {request.BottlePrice:N0} تومان\nمبلغ کل: {total:N0} تومان" : "نوع شیشه را از دکمه‌ها انتخاب کنید.");
+        await _sender.AnswerCallbackAsync(callback.Id, details, ct, showAlert: true);
     }
 
     private static string GiftRecipientLabel(SalesListRequest request) =>
@@ -400,7 +443,7 @@ public sealed partial class TelegramWebhookController
             $"Telegram ID: {confirmed.TelegramUserId}\n" +
             $"کد لیست: {confirmed.SalesList.DisplayCode}\n" +
             $"عطر: {confirmed.SalesList.EnglishName}\n" +
-            $"مقدار: {confirmed.VolumeMl} میل\n" +
+            $"مقدار: {confirmed.VolumeMl:0.#} میل\n" +
             $"شیشه: {bottleText}\n" +
             $"مبلغ کل: {total:N0} تومان\n" +
             SalesListAuditPostLine(confirmed.SalesList), cancellationToken);
@@ -449,6 +492,16 @@ public sealed partial class TelegramWebhookController
                     await _salesListRepository.SaveChangesAsync(cancellationToken);
                     await RefreshChannelSalesListAsync(newerOwner.Value, cancellationToken);
                     return;
+                }
+                if(salesList.InventoryCode.HasValue)
+                {
+                    if(salesList.Status==SalesListStatus.Invoiced)
+                    {
+                        await RemoveInvoicedReadyInventoryPostAsync(salesList,cancellationToken);
+                        return;
+                    }
+                    await RefreshMainChannelPostAsync(salesList, ReadyInventoryCaption(salesList), cancellationToken);
+                    return; // Ready packages never roll into another bottle or emit production alerts.
                 }
                 var requests = includeCompletedRequests
                     ? await _salesListRequestRepository.GetForLabelAdministrationAsync(salesListId, cancellationToken)
@@ -511,21 +564,31 @@ public sealed partial class TelegramWebhookController
         if (!list.TelegramMessageId.HasValue || string.IsNullOrWhiteSpace(list.TelegramChannelId))
             return;
 
+        var lowStockDue = list.RemainingVolume < 25 && list.LowStockAlertSentAt is null &&
+            !string.IsNullOrWhiteSpace(_options.LowStockAlertChatId);
+        var promotionDue = list.RemainingVolume < 11 && list.PromotionAlertSentAt is null &&
+            !string.IsNullOrWhiteSpace(_options.PromotionAlertChatId);
+        if (!lowStockDue && !promotionDue) return;
+        var photo = await SalesListPhotoResolver.ResolveAsync(_db, list, cancellationToken);
+        if (string.IsNullOrWhiteSpace(photo))
+        {
+            _logger.LogWarning("Sales list alerts deferred for {SalesListId}: no matching perfume photo", list.Id);
+            return; // Keep delivery markers unset so a later refresh can retry after the photo is supplied.
+        }
+
         var changed = false;
         var postUrl = BuildTelegramDiscussionMessageUrl(
             list.TelegramChannelId, list.TelegramMessageId.Value);
 
-        if (list.RemainingVolume < 25 &&
-            list.LowStockAlertSentAt is null &&
-            !string.IsNullOrWhiteSpace(_options.LowStockAlertChatId))
+        if (lowStockDue)
         {
-            var result = await _sender.SendHtmlAsync(
-                _options.LowStockAlertChatId,
+            var result = await _sender.SendPhotoWithKeyboardAsync(
+                _options.LowStockAlertChatId, photo,
                 "⚠️ <b>هشدار کاهش موجودی لیست فروش</b>\n\n" +
                 $"عطر: {Html(list.EnglishName)}\n" +
-                $"باقی‌مانده: <b>{list.RemainingVolume} میل</b>\n\n" +
+                $"باقی‌مانده: <b>{list.RemainingVolume:0.#} میل</b>\n\n" +
                 $"<a href=\"{Html(postUrl)}\">مشاهده پست در کانال</a>",
-                cancellationToken);
+                [], cancellationToken);
             if (result.IsSuccessful)
             {
                 list.LowStockAlertSentAt = DateTime.UtcNow;
@@ -533,17 +596,15 @@ public sealed partial class TelegramWebhookController
             }
         }
 
-        if (list.RemainingVolume < 11 &&
-            list.PromotionAlertSentAt is null &&
-            !string.IsNullOrWhiteSpace(_options.PromotionAlertChatId))
+        if (promotionDue)
         {
-            var result = await _sender.SendHtmlAsync(
-                _options.PromotionAlertChatId,
+            var result = await _sender.SendPhotoWithKeyboardAsync(
+                _options.PromotionAlertChatId, photo,
                 "📣 <b>این لیست نیاز به تبلیغات دارد</b>\n\n" +
                 $"عطر: {Html(list.EnglishName)}\n" +
-                $"فقط <b>{list.RemainingVolume} میل</b> باقی مانده است.\n\n" +
+                $"فقط <b>{list.RemainingVolume:0.#} میل</b> باقی مانده است.\n\n" +
                 $"<a href=\"{Html(postUrl)}\">مشاهده پست و شروع تبلیغات</a>",
-                cancellationToken);
+                [], cancellationToken);
             if (result.IsSuccessful)
             {
                 list.PromotionAlertSentAt = DateTime.UtcNow;
@@ -657,7 +718,7 @@ public sealed partial class TelegramWebhookController
             PersianName = completed.PersianName, TopNotes = completed.TopNotes, MiddleNotes = completed.MiddleNotes,
             BaseNotes = completed.BaseNotes, Accords = completed.Accords,
             PerfumeId = completed.PerfumeId, BatchId = null,
-            PricePerMl = completed.PricePerMl, TotalVolume = completed.TotalVolume,
+            PricePerMl = ZibasheERP.Application.Services.SalesListPrice.RoundUpPerMl(completed.PricePerMl), TotalVolume = completed.TotalVolume,
             MinimumRequestVolumeMl = completed.MinimumRequestVolumeMl,
             ReservedVolume = nextOwner is null ? 0 : Math.Min(nextOwner.VolumeMl, completed.TotalVolume),
             HasBottleOwner = nextOwner is not null,
@@ -669,6 +730,8 @@ public sealed partial class TelegramWebhookController
             TelegramPhotoFileId = completed.TelegramPhotoFileId, Notes = completed.Notes
         };
         await _salesListRepository.AddAsync(nextList, ct);
+        var rolloverQuote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(
+            _db, nextList, now, ct);
         foreach (var (old, index) in queue.Select((value, index) => (value, index)))
         {
             await _salesListRequestRepository.AddAsync(new SalesListRequest
@@ -680,7 +743,8 @@ public sealed partial class TelegramWebhookController
                 GiftRecipientTelegramUsername = old.GiftRecipientTelegramUsername,
                 AdminNotes = old.AdminNotes,
                 IsBottleOwner = index == 0,
-                VolumeMl = old.VolumeMl, PerfumePricePerMl = nextList.PricePerMl,
+                VolumeMl = old.VolumeMl, PerfumePricePerMl = index == 0 ? rolloverQuote.PricePerMl : nextList.PricePerMl,
+                FlashSalePromotionId = index == 0 ? rolloverQuote.PromotionId : null,
                 Kind = index == 0 ? SalesListRequestKind.CurrentBottle : SalesListRequestKind.NextBottle,
                 Status = SalesListRequestStatus.Confirmed, CreatedByAdmin = old.CreatedByAdmin,
                 ExpiresAt = DateTime.MaxValue, ConfirmedAt = now.AddTicks(index),
@@ -733,19 +797,25 @@ public sealed partial class TelegramWebhookController
         await ReplyAsync(long.Parse(_options.AdminChatId),
             $"پست عطر برای دورهٔ جدید بازنشانی شد ✅\nکد ثابت لیست: {nextList.DisplayCode}" +
             (nextOwner is null ? "\nصاحب باتل: هنوز ثبت نشده است."
-                : $"\nصاحب باتل: {DisplayUser(nextOwner)} — {nextOwner.VolumeMl} میل"), ct);
+                : $"\nصاحب باتل: {DisplayUser(nextOwner)} — {nextOwner.VolumeMl:0.#} میل"), ct);
     }
 
     internal static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildChannelVolumeButtons(
         SalesList list, long? continuationMessageId = null)
     {
+        if(list.InventoryCode.HasValue)
+            return list.CanReserveVolume(list.TotalVolume)
+                ? new IReadOnlyCollection<TelegramInlineButton>[] {new[]{new TelegramInlineButton($"🛍 درخواست خرید {list.TotalVolume:0.#} میل",$"slv:{EncodeCompactGuid(list.Id)}:{list.TotalVolume.ToString("0.#",System.Globalization.CultureInfo.InvariantCulture)}")}}
+                : Array.Empty<IReadOnlyCollection<TelegramInlineButton>>();
         continuationMessageId ??= list.TelegramContinuationMessageId;
-        var values = ChannelVolumes
+        var available = list.RemainingVolume > 0 && list.RemainingVolume < list.MinimumRequestVolumeMl
+            ? new[] { list.RemainingVolume } : ChannelVolumes;
+        var values = available
             .Where(list.CanReserveVolume)
             .ToArray();
         var rows = values.Chunk(3)
             .Select(valuesRow => (IReadOnlyCollection<TelegramInlineButton>)valuesRow.Select(value =>
-                new TelegramInlineButton($"{value} ml", $"slv:{EncodeCompactGuid(list.Id)}:{value}")).ToArray())
+                new TelegramInlineButton($"{value:0.#} ml", $"slv:{EncodeCompactGuid(list.Id)}:{value:0.#}")).ToArray())
             .ToList();
         rows.Add(new[] { new TelegramInlineButton("🔄 رفرش (ادمین)", $"slr:{EncodeCompactGuid(list.Id)}") });
         if (continuationMessageId.HasValue && !string.IsNullOrWhiteSpace(list.TelegramChannelId))
@@ -780,11 +850,12 @@ public sealed partial class TelegramWebhookController
             .GroupBy(value => value.VolumeMl)
             .OrderByDescending(value => value.Key)
             .Select(value => (Volume: value.Key,
-                Users: value.Select(item => Html(item.Request.IsGift && item.SourceCount > 1
+                Users: value.Select(item => Html((item.Request.IsGift && item.SourceCount > 1
                     ? GiftRecipientLabel(item.Request) + " 🎁" + FancyBottleMarker(item.Request.Bottle) +
                       (item.Request.OmitIdentityOnLabel ? " B Id" :
                           !string.IsNullOrWhiteSpace(item.Request.LabelIdentityText) ? $" {item.Request.LabelIdentityText}=L" : "")
-                    : DisplayUser(item.Request))).ToArray()))
+                    : DisplayUser(item.Request))+
+                    (string.IsNullOrWhiteSpace(item.PreparationNotes)?"":" | "+item.PreparationNotes))).ToArray()))
             .ToArray();
         var next = requests.Where(value => value.Kind == SalesListRequestKind.NextBottle)
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
@@ -805,13 +876,13 @@ public sealed partial class TelegramWebhookController
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
             notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
-            $"حجم کل: {list.TotalVolume}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
-            $"حداقل درخواست: {list.EffectiveMinimumRequestVolumeMl} میل\n\n" +
-            $"باقی‌مانده: {list.RemainingVolume} میل";
+            $"حجم کل: {list.TotalVolume:0.#}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
+            $"حداقل درخواست: {list.EffectiveMinimumRequestVolumeMl:0.#} میل\n\n" +
+            $"باقی‌مانده: {list.RemainingVolume:0.#} میل";
         var nextUsers = next.Select(item =>
             item.VolumeMl == 30
                 ? Html(DisplayUser(item))
-                : $"{Html(DisplayUser(item))} — {item.VolumeMl} ml").ToArray();
+                : $"{Html(DisplayUser(item))} — {item.VolumeMl:0.#} ml").ToArray();
         var nextSection = nextUsers.Length == 0
             ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
             : BuildStackedUserLines("Next Bottle", nextUsers);
@@ -820,12 +891,12 @@ public sealed partial class TelegramWebhookController
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
                 FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
                 $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
-                $"حجم: {list.TotalVolume}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
-                $"حداقل: {list.EffectiveMinimumRequestVolumeMl} میل\n\n" +
-                $"باقی‌مانده: {list.RemainingVolume} میل";
+                $"حجم: {list.TotalVolume:0.#}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
+                $"حداقل: {list.EffectiveMinimumRequestVolumeMl:0.#} میل\n\n" +
+                $"باقی‌مانده: {list.RemainingVolume:0.#} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);
         var rosterLines = rosterGroups.SelectMany(group =>
-            new[] { $"{group.Volume} ml:" }.Concat(group.Users)).ToArray();
+            new[] { $"{group.Volume:0.#} ml:" }.Concat(group.Users)).ToArray();
         var mainLines = new List<string>();
         var continuationLines = new List<string>();
         string? currentVolumeHeading = null;

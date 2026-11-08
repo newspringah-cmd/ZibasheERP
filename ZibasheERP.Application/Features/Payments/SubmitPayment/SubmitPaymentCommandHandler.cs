@@ -58,8 +58,7 @@ public sealed class SubmitPaymentCommandHandler
             IsSuccessful = false,
             Notes = NormalizeOptional(request.Notes)
         };
-
-        await _paymentRepository.AddAsync(payment, cancellationToken);
+        await _paymentRepository.AddForOrderVersionAsync(payment,order.CustomerId,order.RowVersion,cancellationToken);
         await _paymentRepository.SaveChangesAsync(cancellationToken);
 
         return new SubmitPaymentResponse(

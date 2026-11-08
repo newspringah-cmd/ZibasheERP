@@ -198,7 +198,7 @@ public sealed class TelegramAdminRequestDraft
     public string EditField { get; set; } = string.Empty;
     public string EditValue { get; set; } = string.Empty;
     public Guid SelectedRequestId { get; set; }
-    public int OriginalVolumeMl { get; set; }
+    public decimal OriginalVolumeMl { get; set; }
     public string OriginalIdentity { get; set; } = string.Empty;
     public HashSet<Guid> AvailableRequestIds { get; } = [];
     public HashSet<Guid> SelectedRequestIds { get; } = [];

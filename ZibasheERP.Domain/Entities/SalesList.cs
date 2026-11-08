@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace ZibasheERP.Domain.Entities;
 
@@ -31,7 +31,18 @@ public class SalesList : BaseEntity
     public int? StablePublicCode { get; set; }
 
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
-    public int DisplayCode => StablePublicCode ?? PublicCode;
+    public int DisplayCode => InventoryCode ?? StablePublicCode ?? PublicCode;
+
+    // Independent code and physical position for a single ready-to-ship package.
+    public int? InventoryCode { get; set; }
+    public Guid? InventoryReferenceListId { get; set; }
+    public decimal? InventoryReferencePricePerMl { get; set; }
+    [MaxLength(150)]
+    public string? StoragePosition { get; set; }
+    public long? InventoryCreatedByUserId { get; set; }
+
+    [MaxLength(400)]
+    public string? InventoryPublicDescription { get; set; }
 
     [MaxLength(200)]
     public string EnglishName { get; set; } = string.Empty;
@@ -74,26 +85,28 @@ public class SalesList : BaseEntity
     public decimal PricePerMl { get; set; }
 
     // حجم کل شیشه اصلی
-    public int TotalVolume { get; set; } = 100;
+    public decimal TotalVolume { get; set; } = 100;
 
     // Smallest volume shown to customers on the channel post.
-    public int MinimumRequestVolumeMl { get; set; } = 1;
+    public decimal MinimumRequestVolumeMl { get; set; } = 1;
 
     // حجم رزرو شده
-    public int ReservedVolume { get; set; }
+    public decimal ReservedVolume { get; set; }
 
     // حجم باقی مانده
-    public int RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
+    public decimal RemainingVolume => Math.Max(0, TotalVolume - ReservedVolume);
 
-    // Let customers finish the last small remainder without lowering the list's
-    // configured minimum for ordinary reservations or subsequent bottle cycles.
-    public int EffectiveMinimumRequestVolumeMl => RemainingVolume > 0 && RemainingVolume < MinimumRequestVolumeMl
-        ? 1 : MinimumRequestVolumeMl;
+    // The final remainder below the configured minimum must be taken in full.
+    // Keep the configured minimum unchanged for restocking and later cycles.
+    public decimal EffectiveMinimumRequestVolumeMl => RemainingVolume > 0 && RemainingVolume < MinimumRequestVolumeMl
+        ? RemainingVolume : MinimumRequestVolumeMl;
 
-    public bool CanReserveVolume(int volumeMl) => CanReserveVolume(volumeMl, false);
+    public bool CanReserveVolume(decimal volumeMl) => CanReserveVolume(volumeMl, false);
 
     // Admin entry may bypass the minimum, but never capacity or list status.
-    public bool CanReserveVolume(int volumeMl, bool createdByAdmin) => Status == SalesListStatus.Open && volumeMl > 0 &&
+    public bool CanReserveVolume(decimal volumeMl, bool createdByAdmin) => Status == SalesListStatus.Open && volumeMl > 0 &&
+        (IsInventoryOffer ? volumeMl * 2 == decimal.Truncate(volumeMl * 2) : volumeMl == decimal.Truncate(volumeMl)) &&
+        (!IsInventoryOffer || volumeMl == TotalVolume) &&
         (createdByAdmin || volumeMl >= EffectiveMinimumRequestVolumeMl) && volumeMl <= RemainingVolume;
 
     // Persisted alert markers prevent repeated Telegram notifications when a

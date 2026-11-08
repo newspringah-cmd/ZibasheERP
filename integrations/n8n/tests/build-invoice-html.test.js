@@ -153,3 +153,49 @@ if (pageCount !== 2 || finalTotalCount !== 1 ||
 }
 
 console.log('Invoice renderer test: PASS');
+
+const halfEvent = structuredClone(event);
+halfEvent.data.IsInventory = true;
+halfEvent.data.Items[0].RequestedVolumeMl = 1.5;
+halfEvent.data.Items[0].PerfumePricePerMl = 100000;
+halfEvent.data.Items[0].LineTotal = 150000;
+halfEvent.data.TotalAmount = 150000;
+const [halfResult] = run({ first: () => ({ json: halfEvent }) });
+if (!halfResult.json.telegramCaption.includes('۱٫۵ میل') || !halfResult.json.invoiceHtml.includes('۱٫۵')) {
+  throw new Error('Half ml volume was rounded in the invoice caption or PDF.');
+}
+
+const transferredPaid = structuredClone(event);
+transferredPaid.data.IsTransferredInvoice = true;
+transferredPaid.data.IsPaid = true;
+transferredPaid.data.PaidAmount = 1200;
+transferredPaid.data.OutstandingAmount = 0;
+transferredPaid.data.PaymentDeadlineHours = 0;
+transferredPaid.data.Customer.Username = 'new_invoice_owner';
+const [paidTransferResult] = run({ first: () => ({ json: transferredPaid }) });
+if (!paidTransferResult.json.telegramCaption.includes('@new_invoice_owner') ||
+    !paidTransferResult.json.telegramCaption.includes('پرداخت مجدد لازم نیست') ||
+    !paidTransferResult.json.telegramCaption.includes('مبلغ کل فاکتور:') ||
+    paidTransferResult.json.telegramCaption.includes('شماره کارت جهت واریز') ||
+    paidTransferResult.json.telegramCaption.includes('این فاکتور هدیه است') ||
+    !paidTransferResult.json.invoiceHtml.includes('— ✅ پرداخت‌شده') ||
+    !paidTransferResult.json.invoiceHtml.includes('class="total final">۰ تومان')) {
+  throw new Error('Paid transfer did not preserve paid status and zero outstanding without asking the recipient to pay again.');
+}
+const transferredPartial = structuredClone(transferredPaid);
+transferredPartial.data.IsPaid = false;
+transferredPartial.data.PaidAmount = 500;
+transferredPartial.data.OutstandingAmount = 700;
+transferredPartial.data.PaymentDeadlineHours = 24;
+const [partialTransferResult] = run({ first: () => ({ json: transferredPartial }) });
+if (!partialTransferResult.json.telegramCaption.includes('مانده قابل پرداخت: ۷۰۰ تومان') ||
+    !partialTransferResult.json.telegramCaption.includes('پرداخت‌شده: ۵۰۰ تومان') ||
+    !partialTransferResult.json.invoiceHtml.includes('class="total final">۷۰۰ تومان') ||
+    !partialTransferResult.json.telegramCaption.includes('شماره کارت جهت واریز')) {
+  throw new Error('Partial transfer did not preserve the full invoice amount while requesting only the unpaid remainder.');
+}
+transferredPartial.data.OutstandingAmount = 800;
+let rejectedTransferAmounts = false;
+try { run({ first: () => ({ json: transferredPartial }) }); } catch { rejectedTransferAmounts = true; }
+if (!rejectedTransferAmounts) throw new Error('Transferred invoice accepted inconsistent payment amounts.');
+console.log('Invoice transfer renderer tests: PASS');

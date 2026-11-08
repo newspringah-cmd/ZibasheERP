@@ -72,6 +72,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
                 continue;
 
             TelegramSendResult result;
+            string? deliveredRecipient=null;
             try
             {
                 var recipient = notification.EventType is "TelegramCustomerGroupRequired" or
@@ -104,6 +105,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
                             await Task.Delay(delayMilliseconds, cancellationToken);
                     }
                     previousRecipient = recipient;
+                    deliveredRecipient=recipient;
                     hasAttemptedDelivery = true;
                     result = await SendNotificationAsync(
                         notification,
@@ -123,12 +125,21 @@ public sealed class TelegramOutboxWorker : BackgroundService
             notification.LockedUntil = null;
             notification.NextAttemptAt = null;
             var permanentGroupFailure = !result.IsSuccessful &&
-                notification.EventType != "TelegramGroupDeliveryFailed" &&
+                notification.EventType != "TelegramGroupDeliveryFailed" && notification.EventType != "InventoryPostCleanupNeedsManualAction" &&
                 TelegramDeliveryFailurePolicy.IsPermanentGroupAccessFailure(
                     notification.Recipient,
                     result.Error);
             if (result.IsSuccessful)
             {
+                if(notification.OrderId is Guid orderId && result.MessageId is >0 &&
+                    notification.EventType is "InvoiceGreeting" or "InvoicePerfumePhoto" or "InvoiceIssued" or "GiftInvoiceIssued" or "InvoiceManualReviewGreeting" or "InvoiceManualReviewPerfumePhoto")
+                    await ZibasheERP.Infrastructure.Services.InvoiceMessageLifecycle.RecordAsync(db,orderId,notification.Id,deliveredRecipient??notification.Recipient,result.MessageId.Value,notification.EventType,cancellationToken);
+                if(notification.EventType=="InventoryPostCleanupNeedsManualAction"&&result.MessageId is >0)
+                {
+                    var receipt=System.Text.Json.Nodes.JsonNode.Parse(notification.Payload)!.AsObject();
+                    receipt["AlertMessageId"]=result.MessageId.Value;receipt["AlertChatId"]=deliveredRecipient??notification.Recipient;
+                    notification.Payload=receipt.ToJsonString();
+                }
                 notification.Status = NotificationOutboxStatus.Processed;
                 notification.ProcessedAt = now;
                 notification.LastError = null;
@@ -137,7 +148,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
                     var invoice = await db.Invoices.FirstOrDefaultAsync(
                         value => value.OrderId == notification.OrderId.Value && !value.IsDeleted,
                         cancellationToken);
-                    if (invoice is not null)
+                    if (invoice is not null && invoice.Status!=ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled)
                     {
                         invoice.DeliveryStatus = InvoiceDeliveryStatus.Delivered;
                         invoice.DeliveryStatusChangedAt = now;
@@ -251,7 +262,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
             return await _sender.SendPhotoAsync(
                 recipient,
                 fileId,
-                string.Empty,
+                DecantPhotoCaption.CustomerMessage,
                 cancellationToken);
         }
 
@@ -301,6 +312,9 @@ public sealed class TelegramOutboxWorker : BackgroundService
     {
         using var document = JsonDocument.Parse(payload);
         var rows = new List<IReadOnlyCollection<TelegramInlineButton>>();
+        if (document.RootElement.TryGetProperty("TotalAmount", out var totalValue) &&
+            totalValue.TryGetDecimal(out var payable) && InvoicePaymentCopyPresentation.Button(payable) is { } amountButton)
+            rows.Add(new[] { amountButton });
         if (document.RootElement.TryGetProperty("PaymentAccounts", out var accounts) &&
             accounts.ValueKind == JsonValueKind.Array)
         {
@@ -330,6 +344,12 @@ public sealed class TelegramOutboxWorker : BackgroundService
     private static IReadOnlyCollection<TelegramInlineButton>[] BuildNotificationButtons(
         string eventType, string payload)
     {
+        if(eventType=="InventoryPostCleanupNeedsManualAction")
+        {
+            using var alertDocument=JsonDocument.Parse(payload);
+            var url=alertDocument.RootElement.GetProperty("PostUrl").GetString();
+            return string.IsNullOrWhiteSpace(url)?[]:[[new TelegramInlineButton("🔗 نمایش پست برای حذف دستی",Url:url)]];
+        }
         if (eventType == "InvoiceIssued")
             return BuildCardCopyButtons(payload);
         if (eventType == "InvoiceGiftDeliveryRequiresManualAction")

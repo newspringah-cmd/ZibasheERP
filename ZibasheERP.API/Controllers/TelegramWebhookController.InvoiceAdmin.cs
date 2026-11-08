@@ -1,4 +1,5 @@
 using ZibasheERP.API.Telegram;
+using ZibasheERP.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
@@ -313,6 +314,25 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
+        if (callback.Data.StartsWith("invoiceadmin:marketing:", StringComparison.Ordinal))
+        {
+            await HandleMarketingCallbackAsync(callback, ct);
+            return true;
+        }
+        if(callback.Data.StartsWith(InvoiceCancelPrefix,StringComparison.Ordinal)||callback.Data.StartsWith(InvoiceCancelStatusPrefix,StringComparison.Ordinal))
+        {await HandleInvoiceCancellationCallbackAsync(callback,ct);return true;}
+        if(callback.Data.StartsWith(InvoiceTransferPrefix,StringComparison.Ordinal))
+        {await HandleInvoiceTransferCallbackAsync(callback,ct);return true;}
+        if(callback.Data.StartsWith(BottleUpgradePrefix,StringComparison.Ordinal))
+        {await HandleBottleUpgradeCallbackAsync(callback,ct);return true;}
+        if(callback.Data.StartsWith("invoiceadmin:ready:",StringComparison.Ordinal))
+        {await HandleReadyInventoryCallbackAsync(callback,ct);return true;}
+        if (callback.Data.StartsWith("invoiceadmin:flash:", StringComparison.Ordinal))
+        {
+            await HandleFlashCallbackAsync(callback, ct);
+            return true;
+        }
+
         if (callback.Data.StartsWith("invoiceadmin:invoiced-lists", StringComparison.Ordinal))
         {
             await HandleInvoicedListReportCallbackAsync(callback, ct);
@@ -375,8 +395,11 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             var section = callback.Data["invoiceadmin:menu:".Length..];
             if (section == "main")
+            {
+                MarketingDrafts.TryRemove((callback.Message.Chat.Id, callback.From.Id), out _);
                 await SendInvoiceAdminMenuAsync(
                     callback.Message.Chat.Id, null, ct, callback.From.Username);
+            }
             else
                 await SendInvoiceAdminSectionAsync(
                     callback.Message.Chat.Id, section, callback.From.Id, ct, callback.From.Username);
@@ -1302,7 +1325,7 @@ public sealed partial class TelegramWebhookController
                     if (fancy is null)
                         throw new InvalidOperationException(
                             $"شیشه فانتزی{(string.IsNullOrWhiteSpace(request.FancyBottleVariant) ? "" : $" {request.FancyBottleVariant}")} " +
-                            $"برای حجم {request.VolumeMl} میل پیدا نشد.");
+                            $"برای حجم {request.VolumeMl:0.#} میل پیدا نشد.");
                     bottle = await _bottleRepository.GetByIdAsync(fancy.Id, ct);
                 }
                 _db.SalesListRequests.Add(new SalesListRequest
@@ -1562,7 +1585,7 @@ public sealed partial class TelegramWebhookController
                 }
                 var caption =
                     $"🌸 <b>{System.Net.WebUtility.HtmlEncode(result.PerfumeName)}</b>\n" +
-                    $"📦 موجودی آماده: {result.VolumeMl} میل\n" +
+                    $"📦 موجودی آماده: {result.VolumeMl:0.#} میل\n" +
                     $"🧴 شیشه: {System.Net.WebUtility.HtmlEncode(result.BottleName)}\n" +
                     $"💰 مبلغ عطر و شیشه: {result.TotalAmount:N0} تومان\n" +
                     $"🔖 کد: {result.PublicCode}";
@@ -1571,8 +1594,8 @@ public sealed partial class TelegramWebhookController
                     new IReadOnlyCollection<TelegramInlineButton>[]
                     {
                         new[] { new TelegramInlineButton(
-                            $"انتخاب {result.VolumeMl} میل — {result.TotalAmount:N0} تومان",
-                            $"slv:{EncodeCompactGuid(result.SalesListId)}:{result.VolumeMl}") }
+                            $"انتخاب {result.VolumeMl:0.#} میل — {result.TotalAmount:N0} تومان",
+                            $"slv:{EncodeCompactGuid(result.SalesListId)}:{result.VolumeMl:0.#}") }
                     }, ct);
                 if (!sent.IsSuccessful || !sent.MessageId.HasValue)
                     throw new InvalidOperationException($"آیتم مالی اصلاح شد اما انتشار موجودی ناموفق بود: {sent.Error}");
@@ -1585,7 +1608,7 @@ public sealed partial class TelegramWebhookController
                 _invoiceInventoryDrafts.Remove(callback.Message.Chat.Id, callback.From.Id);
                 await _sender.AnswerCallbackAsync(callback.Id, "آیتم به موجودی منتقل شد ✅", ct, showAlert: true);
                 await ReplyAsync(callback.Message.Chat.Id,
-                    $"✅ {result.PerfumeName}، {result.VolumeMl} میل با مبلغ {result.TotalAmount:N0} تومان به گروه موجودی ارسال شد.", ct);
+                    $"✅ {result.PerfumeName}، {result.VolumeMl:0.#} میل با مبلغ {result.TotalAmount:N0} تومان به گروه موجودی ارسال شد.", ct);
                 await RefreshPaymentTrackingReportAsync(result.InvoiceIssuanceBatchId, callback.Message.Chat.Id, ct);
             }
             catch (InvalidOperationException exception)
@@ -1614,7 +1637,7 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await ReplyAsync(callback.Message.Chat.Id,
                 $"📤 انتقال به موجودی\nمشتری قبلی: {preview.CustomerIdentity}\n" +
-                $"عطر: {preview.PerfumeName}\nحجم: {preview.VolumeMl} میل\n" +
+                $"عطر: {preview.PerfumeName}\nحجم: {preview.VolumeMl:0.#} میل\n" +
                 $"شیشه: {preview.BottleName} ({preview.BottlePrice:N0} تومان)\n" +
                 $"مبلغ فعلی: {preview.CurrentAmount:N0} تومان\n\n" +
                 "مبلغ نهایی جدید عطر و شیشه را وارد کنید:", ct);
@@ -1654,7 +1677,7 @@ public sealed partial class TelegramWebhookController
         draft.ExpiresAt = DateTime.UtcNow.AddMinutes(10);
         _invoiceInventoryDrafts.Set(draft);
         await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
-            $"آیا انتقال قطعی انجام شود؟\n{preview.PerfumeName} — {preview.VolumeMl} میل\n" +
+            $"آیا انتقال قطعی انجام شود؟\n{preview.PerfumeName} — {preview.VolumeMl:0.#} میل\n" +
             $"همان شیشه: {preview.BottleName}\nمبلغ جدید: {amount:N0} تومان\n\n" +
             "پس از تأیید، آیتم از فاکتور قبلی و بدهی مشتری حذف می‌شود.",
             new IReadOnlyCollection<TelegramInlineButton>[]
@@ -1712,16 +1735,25 @@ public sealed partial class TelegramWebhookController
             },
             new[]
             {
+                new TelegramInlineButton("📦 پست مشترک", "shipping:shared:start"),
                 new TelegramInlineButton("📍 ثبت دستی آدرس", "shipping:manualaddress"),
                 new TelegramInlineButton("📬 ورود کد رهگیری", "trackingimport:menu")
             },
             new[]
             {
+                new TelegramInlineButton("📣 تبلیغات", "invoiceadmin:marketing:menu"),
                 new TelegramInlineButton("🔎 گزارش وضعیت عطر مشتری", "invoiceadmin:customer-perfume-status")
             }
         };
+        buttons.Add(new[]{new TelegramInlineButton("💬 پاسخگویی گروه چت","groupchatreply:start")});
+        buttons.Add(new[]{new TelegramInlineButton("🛍 ثبت خرید موجودی",InvAction("buy")),
+            new TelegramInlineButton("📦 موجودی آماده",InvAction("menu"))});
         if (IsPrimaryOwner(chatId))
         {
+            buttons.Add(new[] { new TelegramInlineButton("🧴 ثبت قیمت خرید درهمی", PurchaseCostPrefix+"price"),new TelegramInlineButton("💱 ثبت نرخ روزانه درهم",PurchaseCostPrefix+"rate") });
+            buttons.Add(new[] { new TelegramInlineButton("💰 گزارش مالی موجودی", InvAction("finance")), new TelegramInlineButton("🧴 گزارش جهت خرید عطر", PurchaseReportPrefix+"menu") });
+            buttons.Add(new[] { new TelegramInlineButton("✉️ ارسال پیام به گروه", "invoiceadmin:marketing:group-message"),
+                new TelegramInlineButton("⏳ پروموشن ساعتی", "invoiceadmin:flash:menu") });
             buttons.Add(new[] { new TelegramInlineButton("📊 عملکرد ادمین‌ها", "invoiceadmin:admin-activity") });
             buttons.Add(new[] { new TelegramInlineButton("🧴 تعداد عطرهای فاکتورشده", "invoiceadmin:invoiced-lists") });
         }
@@ -1746,6 +1778,10 @@ public sealed partial class TelegramWebhookController
         {
             case "invoices":
                 message = "🧾 مدیریت فاکتورها";
+                buttons.Add(new[]{new TelegramInlineButton("📦 موجودی‌های درخواست‌شده",InvAction("requests"))});
+                buttons.Add(new[]{new TelegramInlineButton("🗑 حذف فاکتور",InvoiceCancelPrefix+"start")});
+                buttons.Add(new[]{new TelegramInlineButton("🔁 انتقال فاکتور",InvoiceTransferPrefix+"start")});
+                buttons.Add(new[]{new TelegramInlineButton("📦 حذف فاکتور و ارسال به موجودی",InvoiceCancelPrefix+"return-start")});
                 if (IsPrimaryOwner(userId))
                 {
                     buttons.Add(new[]
@@ -1825,6 +1861,7 @@ public sealed partial class TelegramWebhookController
                     new TelegramInlineButton("👑 صاحب و صف باتل", "adminrequest:start:queue")
                 });
                 buttons.Add(new[] { new TelegramInlineButton("↕️ تغییر میل آیتم", "adminrequest:start:changevolume") });
+                buttons.Add(new[] { new TelegramInlineButton("🧴 تغییر نوع شیشه", BottleUpgradePrefix+"start") });
                 buttons.Add(new[]
                 {
                     new TelegramInlineButton("🗑 حذف یک آیتم", "adminrequest:start:removeitem"),
@@ -2316,7 +2353,7 @@ public sealed partial class TelegramWebhookController
             {
                 var bottle = value.IsBottleOwner ? "صاحب باتل" :
                     value.IsComplimentaryBottle ? "شیشه رایگان" : value.Bottle?.Name ?? "شیشه نامشخص";
-                return $"{QueueOrderIdentity(value)} | {value.VolumeMl} میل | {bottle}";
+                return $"{QueueOrderIdentity(value)} | {value.VolumeMl:0.#} میل | {bottle}";
             });
             var editable = string.Join("\n", lines);
             foreach (var part in SplitTelegramMessage(
@@ -2357,7 +2394,7 @@ public sealed partial class TelegramWebhookController
         if (parsed.Sum(value => value.Volume) != listForEdit.TotalVolume)
         {
             await ReplyAsync(message.Chat.Id,
-                $"مجموع خطوط باید دقیقاً {listForEdit.TotalVolume} میل باشد؛ مجموع فعلی {parsed.Sum(value => value.Volume)} میل است.", ct);
+                $"مجموع خطوط باید دقیقاً {listForEdit.TotalVolume:0.#} میل باشد؛ مجموع فعلی {parsed.Sum(value => value.Volume)} میل است.", ct);
             return true;
         }
         if (parsed.Count(value => value.Bottle.Contains("صاحب باتل", StringComparison.OrdinalIgnoreCase)) > 1)
@@ -2449,8 +2486,11 @@ public sealed partial class TelegramWebhookController
             request.BottleId = bottle?.Id;
             request.Bottle = bottle;
             request.BottlePrice = owner || free ? 0 : bottle!.SalePrice;
-            request.PerfumePricePerMl = listForEdit.PricePerMl;
-            request.ConfirmedAt = now.AddTicks(index);
+            if (!request.FlashSalePromotionId.HasValue)
+            {
+                request.PerfumePricePerMl = listForEdit.PricePerMl;
+                request.ConfirmedAt = now.AddTicks(index);
+            }
             request.UpdatedAt = now;
             ordered.Add(request);
         }
@@ -2612,6 +2652,17 @@ public sealed partial class TelegramWebhookController
             return false;
         }
 
+        payload["IsInventory"] = await _db.Orders.AsNoTracking()
+            .Where(value => value.Id == invoice.OrderId)
+            .Select(value => value.IsInventory).SingleAsync(ct);
+        if(payload["IsTransferredInvoice"]?.GetValue<bool>()==true)
+        {
+            var paid=invoice.Status==ZibasheERP.Domain.Enums.InvoiceStatus.Paid?invoice.TotalAmount:
+                await _db.Payments.Where(p=>p.OrderId==invoice.OrderId&&!p.IsDeleted&&p.Status==ZibasheERP.Domain.Enums.PaymentStatus.Confirmed).SumAsync(p=>p.Amount,ct);
+            var outstanding=Math.Max(0,invoice.TotalAmount-paid);
+            payload["IsPaid"]=invoice.Status==ZibasheERP.Domain.Enums.InvoiceStatus.Paid;payload["PaidAmount"]=paid;
+            payload["OutstandingAmount"]=outstanding;payload["PaymentDeadlineHours"]=outstanding>0?24:0;
+        }
         payload["Delivery"] = JsonSerializer.SerializeToNode(new
         {
             Channel = "TelegramGroup",
@@ -3054,7 +3105,7 @@ public sealed partial class TelegramWebhookController
 
         var sent = await _sender.SendInlineKeyboardAsync(
             _options.NewPaymentsChatId.Trim(),
-            FormatManualPaymentTrackingMessage(invoice),
+            FormatManualPaymentTrackingMessage(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id)),
             BuildManualPaymentTrackingButtons(invoice),
             ct);
         if (!sent.IsSuccessful || !sent.MessageId.HasValue)
@@ -3120,7 +3171,7 @@ public sealed partial class TelegramWebhookController
         var refreshed = await _sender.EditTextWithKeyboardAsync(
             invoice.TelegramPaymentTrackingChatId,
             invoice.TelegramPaymentTrackingMessageId.Value,
-            FormatManualPaymentTrackingMessage(invoice),
+            FormatManualPaymentTrackingMessage(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id)),
             BuildManualPaymentTrackingButtons(invoice),
             ct);
         if (!refreshed.IsSuccessful && !IsTelegramMessageUnchanged(refreshed.Error))
@@ -3151,25 +3202,26 @@ public sealed partial class TelegramWebhookController
         .FirstOrDefaultAsync(value => value.Id == invoiceId && !value.IsDeleted &&
             value.Order != null && value.Order.Source == OrderSource.ManualInvoice, ct);
 
-    private static string FormatManualPaymentTrackingMessage(Invoice invoice)
+    private static string FormatManualPaymentTrackingMessage(Invoice invoice,bool restocked=false)
     {
         var order = invoice.Order!;
         var customer = order.Customer;
         var identity = !string.IsNullOrWhiteSpace(customer?.Username)
             ? $"@{customer.Username.TrimStart('@')}"
             : customer?.TelegramId ?? customer?.FullName ?? "مشتری نامشخص";
-        var status = invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
+        var status = restocked?"🔵 "+InvoiceRestockTracking.Caption:invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
                      order.Status == OrderStatus.Paid
             ? "✅ پرداخت‌شده"
             : "🔴 در انتظار پرداخت";
-        var items = order.Items.Where(item => !item.IsDeleted)
+        var items = order.Items.Where(item => !item.IsDeleted||restocked)
             .OrderByDescending(item => item.IsBottleOwner)
             .ThenByDescending(item => item.RequestedVolumeMl)
             .ThenBy(item => item.RowNumber).ThenBy(item => item.Id)
-            .Select(item => $"• {item.ManualDescription ?? "آیتم دستی"} — {item.RequestedVolumeMl} میل")
+            .Select(item => $"• {item.ManualDescription ?? "آیتم دستی"} — {item.RequestedVolumeMl:0.#} میل")
             .ToArray();
         return $"💳 واریز جدید — فاکتور دستی\n" +
-               $"مشتری: {identity}\n" +
+               $"مشتری: {(restocked?"🔵 ":"")}{identity}\n" +
+               (restocked?InvoiceRestockTracking.Caption+"\n":"")+
                $"فاکتور: {invoice.InvoiceNumber}\n" +
                $"مبلغ: {invoice.TotalAmount:N0} تومان\n" +
                $"وضعیت: {status}\n\n" +
@@ -3178,7 +3230,9 @@ public sealed partial class TelegramWebhookController
     }
 
     private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildManualPaymentTrackingButtons(
-        Invoice invoice) => invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
+        Invoice invoice) => invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled
+        ? Array.Empty<IReadOnlyCollection<TelegramInlineButton>>()
+        : invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
                             invoice.Order?.Status == OrderStatus.Paid
         ? new IReadOnlyCollection<TelegramInlineButton>[]
         {
@@ -4052,7 +4106,7 @@ public sealed partial class TelegramWebhookController
             _adminRequestDrafts.Set(changeDraft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await ReplyAsync(chatId,
-                $"مقدار جدید برای {DisplayUser(request)} را به میل وارد کنید. مقدار فعلی: {request.VolumeMl} میل", ct);
+                $"مقدار جدید برای {DisplayUser(request)} را به میل وارد کنید. مقدار فعلی: {request.VolumeMl:0.#} میل", ct);
             return;
         }
 
@@ -4118,7 +4172,7 @@ public sealed partial class TelegramWebhookController
                 await _sender.SendAsync(auditChatId,
                     $"🗑 حذف یک آیتم\nثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"لیست: {removalDraft.PublicCode} — {removalDraft.SalesListName}\n" +
-                    $"مشتری: {DisplayUser(removable)}\nمقدار: {removable.VolumeMl} میل\n" +
+                    $"مشتری: {DisplayUser(removable)}\nمقدار: {removable.VolumeMl:0.#} میل\n" +
                     $"درخواست: {removableRequestId:N}\n" +
                     SalesListAuditPostLine(removable.SalesList), ct);
                 _adminRequestDrafts.Remove(chatId, userId);
@@ -4218,7 +4272,7 @@ public sealed partial class TelegramWebhookController
                 await _sender.SendAsync(auditChatId,
                     $"🏷 حذف آیدی از لیبل آیتم\nثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
                     $"لیست: {labelDraft.PublicCode} — {labelDraft.SalesListName}\n" +
-                    $"مشتری: {DisplayUser(changed)}\nمقدار: {changed.VolumeMl} میل\n" +
+                    $"مشتری: {DisplayUser(changed)}\nمقدار: {changed.VolumeMl:0.#} میل\n" +
                     $"درخواست: {labelRequestId:N}\n" +
                     SalesListAuditPostLine(changed.SalesList), ct);
                 _adminRequestDrafts.Remove(chatId, userId);
@@ -4414,6 +4468,15 @@ public sealed partial class TelegramWebhookController
 
     private void ClearAdminWorkflowDrafts(long chatId, long userId)
     {
+        PurchaseCostDrafts.TryRemove((chatId,userId),out _);
+        InvoicedListReportDrafts.TryRemove((chatId,userId),out _);
+        InvoiceCancelDrafts.TryRemove((chatId,userId),out _);
+        InvoiceTransferDrafts.TryRemove((chatId,userId),out _);
+        SharedShippingDrafts.TryRemove((chatId,userId),out _);
+        GroupChatReplyDrafts.TryRemove((chatId,userId),out _);
+        BottleUpgradeDrafts.TryRemove((chatId,userId),out _);
+        FlashDrafts.TryRemove((chatId, userId), out _);
+        InventoryDrafts.TryRemove((chatId,userId),out _);
         _adminSalesListDrafts.Remove(chatId, userId);
         _ownerPricingDrafts.Remove(chatId, userId);
         _adminRequestDrafts.Remove(chatId, userId);
@@ -4424,6 +4487,7 @@ public sealed partial class TelegramWebhookController
         _invoiceStickerDrafts.Remove(chatId, userId);
         _invoiceInventoryDrafts.Remove(chatId, userId);
         _decantPhotoDrafts.Remove(chatId, userId);
+        MarketingDrafts.TryRemove((chatId, userId), out _);
         PaymentReminderDrafts.TryRemove((chatId, userId), out _);
         BlockedUsernameDrafts.TryRemove((chatId, userId), out _);
         PerfumeLogoDrafts.TryRemove((chatId, userId), out _);
@@ -4937,8 +5001,11 @@ public sealed partial class TelegramWebhookController
                 for (var index = 0; index < ordered.Count; index++)
                 {
                     var request = ordered[index];
-                    request.PerfumePricePerMl = list.PricePerMl;
-                    request.ConfirmedAt = now.AddTicks(index);
+                    if (!request.FlashSalePromotionId.HasValue)
+                    {
+                        request.PerfumePricePerMl = list.PricePerMl;
+                        request.ConfirmedAt = now.AddTicks(index);
+                    }
                     request.UpdatedAt = now;
                     if (_db.Entry(request).State == EntityState.Detached)
                         await _db.SalesListRequests.AddAsync(request, ct);
@@ -5059,7 +5126,7 @@ public sealed partial class TelegramWebhookController
                     {
                         new TelegramInlineButton(
                             $"{(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "🗑" : draft.Kind == TelegramAdminRequestKind.ChangeRequestVolume ? "↕️" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "🏷" : "✏️")} " +
-                            $"{DisplayUser(request)}{(request.IsGift ? $" برای @{request.GiftRecipientTelegramUsername ?? request.GiftRecipientTelegramUserId}" : string.Empty)} — {request.VolumeMl} میل",
+                            $"{DisplayUser(request)}{(request.IsGift ? $" برای @{request.GiftRecipientTelegramUsername ?? request.GiftRecipientTelegramUserId}" : string.Empty)} — {request.VolumeMl:0.#} میل",
                             $"adminrequest:{(draft.Kind == TelegramAdminRequestKind.RemoveSingleRequest ? "removeitem" : draft.Kind == TelegramAdminRequestKind.ChangeRequestVolume ? "changeitem" : draft.Kind == TelegramAdminRequestKind.OmitRequestIdentityOnLabel ? "labelnoid" : "labeltext")}:{request.Id:N}")
                     }).Append((IReadOnlyCollection<TelegramInlineButton>)new[]
                     {
@@ -5242,7 +5309,7 @@ public sealed partial class TelegramWebhookController
             : $"\nتوضیحات: {draft.RequestNotes}";
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
             $"پیش‌نمایش ثبت {kind}:\n\nلیست: {draft.PublicCode} — {draft.SalesListName}\n" +
-            $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\nمقدار: {draft.VolumeMl} میل{bottle}{notes}",
+            $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\nمقدار: {draft.VolumeMl:0.#} میل{bottle}{notes}",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[]
@@ -5262,7 +5329,7 @@ public sealed partial class TelegramWebhookController
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
             $"پیش‌نمایش تغییر میل آیتم:\n\nلیست: {draft.PublicCode} — {draft.SalesListName}\n" +
             $"مشتری: {draft.Identity}\nمقدار قبلی: {draft.OriginalVolumeMl} میل\n" +
-            $"مقدار جدید: {draft.VolumeMl} میل\nنوع شیشه: {bottle}",
+            $"مقدار جدید: {draft.VolumeMl:0.#} میل\nنوع شیشه: {bottle}",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[]
@@ -5297,13 +5364,13 @@ public sealed partial class TelegramWebhookController
             {
                 new TelegramInlineButton("🆔 ویرایش شناسه", $"adminrequest:queue:identity:{request.Id:N}"),
                 new TelegramInlineButton("✏️ ویرایش مقدار", $"adminrequest:queue:edit:{request.Id:N}"),
-                new TelegramInlineButton($"🗑 حذف صاحب: {DisplayUser(request)} — {request.VolumeMl} میل",
+                new TelegramInlineButton($"🗑 حذف صاحب: {DisplayUser(request)} — {request.VolumeMl:0.#} میل",
                     $"adminrequest:queue:remove:{request.Id:N}")
             });
         foreach (var request in requests.Where(value => value.Kind == SalesListRequestKind.NextBottle))
             rows.Add(new[]
             {
-                new TelegramInlineButton($"👑 ارتقا: {DisplayUser(request)} — {request.VolumeMl} میل",
+                new TelegramInlineButton($"👑 ارتقا: {DisplayUser(request)} — {request.VolumeMl:0.#} میل",
                     $"adminrequest:queue:promote:{request.Id:N}"),
                 new TelegramInlineButton("✏️", $"adminrequest:queue:edit:{request.Id:N}"),
                 new TelegramInlineButton("حذف", $"adminrequest:queue:remove:{request.Id:N}")
@@ -5408,7 +5475,7 @@ public sealed partial class TelegramWebhookController
     {
         var detailLines = requests.Select(request =>
             $"• {request.SalesList.DisplayCode} — {HtmlClipped(request.SalesList.EnglishName, 50)} — " +
-            $"{DisplayUser(request)} — {request.VolumeMl} میل").ToArray();
+            $"{DisplayUser(request)} — {request.VolumeMl:0.#} میل").ToArray();
         var chunk = new System.Text.StringBuilder("آیتم‌های فعال این مشتری:\n\n");
         foreach (var line in detailLines)
         {
@@ -5495,7 +5562,7 @@ public sealed partial class TelegramWebhookController
             {
                 new TelegramInlineButton(
                     $"{(draft.SelectedRequestIds.Contains(request.Id) ? "☑️" : "⬜")} " +
-                    $"{request.SalesList.PersianName} — {request.VolumeMl} میل",
+                    $"{request.SalesList.PersianName} — {request.VolumeMl:0.#} میل",
                     $"adminrequest:multirem:{request.Id:N}")
             }).ToList();
         if (pageCount > 1)
@@ -5769,7 +5836,7 @@ public sealed partial class TelegramWebhookController
                 $"مشتری: {draft.Identity}{(draft.IsGift ? $" for {draft.GiftRecipientIdentity}" : string.Empty)}\n" +
                 $"کد لیست: {list.DisplayCode}\n" +
                 $"عطر: {list.EnglishName}\n" +
-                $"مقدار: {draft.VolumeMl} میل\n" +
+                $"مقدار: {draft.VolumeMl:0.#} میل\n" +
                 $"شیشه: {bottleLabel}\n" +
                 (string.IsNullOrWhiteSpace(draft.RequestNotes) ? string.Empty : $"توضیحات: {draft.RequestNotes}\n") +
                 $"مبلغ کل: {total:N0} تومان\n" +
@@ -5784,7 +5851,7 @@ public sealed partial class TelegramWebhookController
                 $"مشتری: {draft.Identity}\n" +
                 $"کد لیست: {list.DisplayCode}\n" +
                 $"عطر: {list.EnglishName}\n" +
-                $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl} میل\n" +
+                $"مقدار درخواستی از باتل اصلی: {draft.VolumeMl:0.#} میل\n" +
                 (string.IsNullOrWhiteSpace(draft.RequestNotes) ? string.Empty : $"توضیحات: {draft.RequestNotes}\n") +
                 SalesListAuditPostLine(list), ct);
         }
@@ -5839,7 +5906,7 @@ public sealed partial class TelegramWebhookController
         var details = lists
             .OrderBy(value => value.PublicCode)
             .Select(value =>
-                $"• {value.DisplayCode} — {value.PersianName} — باقی‌مانده: {value.RemainingVolume} از {value.TotalVolume} میل");
+                $"• {value.DisplayCode} — {value.PersianName} — باقی‌مانده: {value.RemainingVolume:0.#} از {value.TotalVolume:0.#} میل");
         return "⚠️ این لیست زیر محدوده مجاز حذف است. آیا از حذف مطمئن هستید؟\n\n" +
                string.Join("\n", details);
     }
@@ -5909,7 +5976,7 @@ public sealed partial class TelegramWebhookController
             $"ثبت‌کننده: {DisplayTelegramUser(callback.From)}\n" +
             $"لیست: {draft.PublicCode} — {draft.SalesListName}\n" +
             $"مشتری: {DisplayUser(request)}\n" +
-            $"مقدار: {draft.OriginalVolumeMl} ← {draft.VolumeMl} میل\n" +
+            $"مقدار: {draft.OriginalVolumeMl} ← {draft.VolumeMl:0.#} میل\n" +
             $"شیشه: {bottleLabel}\n" +
             $"درخواست: {request.Id:N}\n" +
             SalesListAuditPostLine(request.SalesList), ct);
@@ -6099,5 +6166,5 @@ public sealed partial class TelegramWebhookController
     }
 
     private static decimal AdjustedPrice(decimal price, decimal percent) =>
-        Math.Round(price * (1 + percent / 100m), 0, MidpointRounding.AwayFromZero);
+        ZibasheERP.Application.Services.SalesListPrice.RoundUpPerMl(price * (1 + percent / 100m));
 }

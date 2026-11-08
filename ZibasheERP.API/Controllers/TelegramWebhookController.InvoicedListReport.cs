@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Services;
+using ZibasheERP.Infrastructure.Services;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -88,14 +89,24 @@ public sealed partial class TelegramWebhookController
             return true;
         }
         var (since, until) = InvoicedSalesListReport.UtcRange(draft.Start.Value, date);
-        var count = await InvoicedSalesListReport.ListIds(_db.OrderItems.AsNoTracking(), _db.Orders.AsNoTracking(), since, until).CountAsync(ct);
+        var listIds = await InvoicedSalesListReport.ListIds(_db.OrderItems.AsNoTracking(), _db.Orders.AsNoTracking(), since, until).ToArrayAsync(ct);
+        var count=listIds.Length;
+        var costLists=await _db.SalesLists.AsNoTracking().Where(l=>!l.IsDeleted&&listIds.Contains(l.Id)).ToArrayAsync(ct);
+        var costs=await new PerfumePurchaseCostService(_db).CostsAsync(costLists,ct);
+        var covered=costs.Where(c=>c.CostToman.HasValue).ToArray();
+        var missingCosts=count-covered.Length;
+        var purchaseSummary=$"\n💱 هزینه خرید لیست‌های دارای قیمت و نرخ: {covered.Sum(c=>c.CostToman!.Value):N0} تومان\nپوشش اطلاعات خرید: {covered.Length} از {count} لیست\n"+
+            (missingCosts>0?$"⚠️ {missingCosts} لیست به علت نداشتن قیمت خرید، نرخ تاریخی یا زمان تکمیل در جمع هزینه لحاظ نشده‌اند.\n":"")+
+            "مبنای هزینه: قیمت خرید یک باتل × نرخ معتبر هنگام تکمیل همان لیست؛ نه نرخ روز صدور فاکتور یا گزارش. موجودی در این جمع نیست.\n";
+        var inventoryCount = await InvoicedSalesListReport.InventoryIds(_db.OrderItems.AsNoTracking(), _db.Orders.AsNoTracking(), since, until).CountAsync(ct);
         InvoicedListReportDrafts.TryRemove(key, out _);
         await ReplyAsync(message.Chat.Id, "📊 گزارش تعداد لیست‌های عطر فاکتورشده\n" +
             $"از: {FormatShippingPersianDate(since)} ({draft.Start.Value:yyyy/MM/dd} میلادی)\n" +
             $"تا: {FormatShippingPersianDate(until.AddTicks(-1))} ({date:yyyy/MM/dd} میلادی)\n" +
-            $"تعداد لیست: {count}\n\n" +
+            $"\n🧴 لیست‌های تکمیل‌شده\nتعداد لیست فاکتورشده: {count}\n\n" +
+            $"📦 موجودی\nتعداد بستهٔ موجودی فاکتورشده: {inventoryCount}\n\n" + purchaseSummary+"\n"+
             "مبنا: تاریخ صدور فاکتور، به وقت ایران؛ روز پایان کامل محاسبه شده است.\n" +
-            "هر لیست فقط یک‌بار شمرده می‌شود. فاکتورهای حذف‌شده، لغوشده و پیش‌نویس محاسبه نمی‌شوند.", ct);
+            "هر لیست تکمیلی و هر بستهٔ موجودی در بخش خودش فقط یک‌بار شمرده می‌شود؛ آمار دو بخش با هم ادغام نمی‌شود. فاکتورهای حذف‌شده، لغوشده و پیش‌نویس محاسبه نمی‌شوند.", ct);
         await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(), "گزارش لیست‌های فاکتورشده",
             new IReadOnlyCollection<TelegramInlineButton>[] {
                 new[] { new TelegramInlineButton("📅 بازه جدید", "invoiceadmin:invoiced-lists") },

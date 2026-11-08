@@ -69,6 +69,19 @@ public sealed class RecordOrderArtifactCommandHandlerTests
                 "image/jpeg"),
             CancellationToken.None));
     }
+    [Fact]
+    public async Task Handle_LateArtifact_DoesNotReactivateCancelledInvoice()
+    {
+        var orderId=Guid.NewGuid();var source=new NotificationOutbox{Id=Guid.NewGuid(),OrderId=orderId,Channel="N8n",EventType="InvoiceIssued",Payload="{\"Delivery\":{\"ChatId\":\"-1001234567890\"}}"};
+        var invoice=new Invoice{Id=Guid.NewGuid(),OrderId=orderId,Status=ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled,DeliveryStatus=InvoiceDeliveryStatus.Cancelled};
+        var artifacts=new ArtifactRepositoryStub();
+        var handler=new RecordOrderArtifactCommandHandler(artifacts,new OutboxRepositoryStub(source),new InvoiceRepositoryStub(invoice));
+        await handler.Handle(new(source.Id,orderId,OrderArtifactType.InvoicePdf,"https://files.example.test/invoice.pdf",null,"application/pdf"),CancellationToken.None);
+        Assert.Equal(1,artifacts.AddCount);
+        Assert.Equal(InvoiceDeliveryStatus.Cancelled,invoice.DeliveryStatus);
+        Assert.Equal(ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled,invoice.Status);
+        Assert.False(invoice.IsSentToCustomer);
+    }
 
     private sealed class ArtifactRepositoryStub : IOrderArtifactRepository
     {
@@ -103,11 +116,11 @@ public sealed class RecordOrderArtifactCommandHandlerTests
         public Task SaveChangesAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
-    private sealed class InvoiceRepositoryStub : IInvoiceRepository
+    private sealed class InvoiceRepositoryStub(Invoice? invoice=null) : IInvoiceRepository
     {
         public Task<Invoice?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(null);
         public Task<Invoice?> GetByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(null);
-        public Task<Invoice?> GetForUpdateByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(null);
+        public Task<Invoice?> GetForUpdateByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Invoice?>(invoice);
         public Task<Order?> GetOrderForInvoiceAsync(Guid orderId, CancellationToken cancellationToken = default) => Task.FromResult<Order?>(null);
         public Task<bool> InvoiceNumberExistsAsync(string invoiceNumber, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task AddAsync(Invoice invoice, CancellationToken cancellationToken = default) => Task.CompletedTask;

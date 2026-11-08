@@ -14,6 +14,9 @@ public sealed partial class TelegramWebhookController
         if (callback.Message is null || callback.Data is null ||
             !callback.Data.StartsWith("shipping:", StringComparison.Ordinal))
             return false;
+        if (await TryHandleSharedShippingCallbackAsync(callback, ct)) return true;
+        if (await TryHandleShippingReferenceCallbackAsync(callback, ct)) return true;
+        await UpgradeShippingAddressReferencesAsync(callback, ct);
 
         if (callback.Data == "shipping:request")
         {
@@ -71,7 +74,7 @@ public sealed partial class TelegramWebhookController
                 AllowUnlinkedChat = true
             });
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-            await SendShippingInputPromptAsync(callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct);
+            await SendShippingInputPromptAsync(callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct,callback.From.Id);
             return true;
         }
 
@@ -180,7 +183,7 @@ public sealed partial class TelegramWebhookController
             _orderFlowDrafts.SetShippingPreparation(draft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
             await SendShippingInputPromptAsync(
-                callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct);
+                callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct,callback.From.Id);
             return true;
         }
 
@@ -230,7 +233,7 @@ public sealed partial class TelegramWebhookController
         if (callback.Data.StartsWith("shipping:idreport:", StringComparison.Ordinal) &&
             Guid.TryParseExact(callback.Data["shipping:idreport:".Length..], "N", out var reportRequestId))
         {
-            await SendSingleCustomerShippingReportAsync(callback, reportRequestId, ct);
+            await _sender.AnswerCallbackAsync(callback.Id,"این دکمه حذف شده است؛ از گزینه‌های عکس دکانت و لیست تکمیل‌شده استفاده کنید.",ct,true);
             return true;
         }
 
@@ -256,6 +259,7 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "اطلاعات مشتری پیدا نشد.", ct, true);
                 return true;
             }
+            await CancelPendingShippingPackDraftsAsync(callback.Message.Chat.Id,callback.From.Id,ct);
             _orderFlowDrafts.SetShippingTrackingPhoto(new TelegramShippingTrackingPhotoDraft
             {
                 ChatId = callback.Message.Chat.Id,
@@ -266,7 +270,7 @@ public sealed partial class TelegramWebhookController
                 HasBatchControls = false
             });
             await _sender.AnswerCallbackAsync(callback.Id, "عکس کد رهگیری را ارسال کنید.", ct, true);
-            await ReplyAsync(callback.Message.Chat.Id,
+            await _sender.SendKeyboardDismissAsync(callback.Message.Chat.Id.ToString(),
                 "📸 عکس کد رهگیری همین مشتری را ارسال کنید. برای لغو، پیام /cancel را بفرستید.", ct);
             return true;
         }
@@ -290,17 +294,20 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "اطلاعات مشتری این درخواست پیدا نشد.", ct, true);
                 return true;
             }
+            var trackingCustomer = await ResolveShippingReportCustomerAsync(callback, trackingRequestId, ct);
+            if (trackingCustomer is null) return true;
+            await CancelPendingShippingPackDraftsAsync(callback.Message.Chat.Id,callback.From.Id,ct);
             _orderFlowDrafts.SetShippingTrackingPhoto(new TelegramShippingTrackingPhotoDraft
             {
                 ChatId = callback.Message.Chat.Id,
                 UserId = callback.From.Id,
-                CustomerId = trackingItem.Order.CustomerId,
+                CustomerId = trackingCustomer.Id,
                 ShippingRequestId = trackingRequestId,
                 SourceMessageId = callback.Message.MessageId,
                 HasBatchControls = isBatchTracking
             });
             await _sender.AnswerCallbackAsync(callback.Id, "عکس کد رهگیری را ارسال کنید.", ct, true);
-            await ReplyAsync(callback.Message.Chat.Id,
+            await _sender.SendKeyboardDismissAsync(callback.Message.Chat.Id.ToString(),
                 "📸 عکس کد رهگیری همین مشتری را ارسال کنید. برای لغو، پیام /cancel را بفرستید.", ct);
             return true;
         }
@@ -334,25 +341,12 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "وضعیت بعضی اقلام تغییر کرده؛ عملیات متوقف شد.", ct, true);
             return true;
         }
-        var now = DateTime.UtcNow;
-        foreach (var item in items)
+        try { items = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteAsync(_db,requestId,null,ct); }
+        catch (ZibasheERP.Infrastructure.Services.ShippingRecipientValidationException exception)
         {
-            item.FulfillmentStatus = OrderItemFulfillmentStatus.Shipped;
-            item.ShippedAt = now;
-            item.UpdatedAt = now;
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            return true;
         }
-        foreach (var order in items.Select(value => value.Order).Where(value => value is not null).Distinct()!)
-        {
-            var hasUnshipped = await _db.OrderItems.AnyAsync(value => !value.IsDeleted && value.OrderId == order!.Id &&
-                value.ShippingRequestId != requestId && value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped, ct);
-            if (!hasUnshipped)
-            {
-                order!.Status = OrderStatus.Shipped;
-                order.ShippedAt = now;
-                order.UpdatedAt = now;
-            }
-        }
-        await _db.SaveChangesAsync(ct);
         await _sender.AnswerCallbackAsync(callback.Id, $"{items.Length} آیتم ارسال‌شده ثبت شد ✅", ct, true);
         await ReplyAsync(callback.Message.Chat.Id, $"✅ درخواست ارسال با {items.Length} آیتم تکمیل شد.", ct);
         return true;
@@ -373,8 +367,8 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "گروه مسئول ارسال هنوز تنظیم نشده است.", ct, true);
             return;
         }
-        var existing = await _db.OrderItems.AsNoTracking().FirstOrDefaultAsync(value => !value.IsDeleted &&
-            value.Order != null && value.Order.CustomerId == customer.Id &&
+        await ZibasheERP.Infrastructure.Services.GiftShippingMembershipService.RepairCustomerAsync(_db, customer.Id, ct);
+        var existing = await CustomerShippingItems(customer).AsNoTracking().FirstOrDefaultAsync(value =>
             value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
             value.ShippingRequestId != null, ct);
         if (existing is not null)
@@ -382,13 +376,8 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "درخواست ارسال این اقلام قبلاً ثبت شده و در انتظار مسئول ارسال است.", ct, true);
             return;
         }
-        var items = await _db.OrderItems
-            .Include(value => value.Order).ThenInclude(value => value!.Customer)
-            .Include(value => value.SalesList)
-            .Include(value => value.Perfume)
-            .Include(value => value.Bottle)
-            .Include(value => value.SourceSalesListRequest)
-            .Where(value => !value.IsDeleted && value.Order != null && value.Order.CustomerId == customer.Id &&
+        var items = await CustomerShippingItems(customer)
+            .Where(value =>
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
                 value.ShippingRequestId == null).OrderBy(value => value.CreatedAt).ToArrayAsync(ct);
         if (items.Length == 0)
@@ -423,9 +412,8 @@ public sealed partial class TelegramWebhookController
                 {
                     new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
                     new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:tracking:{requestId:N}")
-                },
-                new[] { new TelegramInlineButton("📋 گزارش این آیدی", $"shipping:idreport:{requestId:N}") }
-            }, ct);
+                }
+            }, ct, requestId, address.Id);
         if (!sent.IsSuccessful)
         {
             foreach (var item in items)
@@ -482,10 +470,13 @@ public sealed partial class TelegramWebhookController
         if (!string.IsNullOrWhiteSpace(command) && command.StartsWith('/'))
             return false;
 
-        // Group input prompts use ForceReply. Only consume a textual response when it
+        // Group input prompts require an explicit reply. Only consume a textual response when it
         // is actually replying to the prompt, otherwise normal customer questions in
         // the same group would be mistaken for an address or username.
-        if (IsGroup(message.Chat.Type) && message.ReplyToMessage is null)
+        if(IsCustomerStatusQuestion(input)||IsPerfumeGuidanceQuestion(input))return false;
+        if (IsGroup(message.Chat.Type) &&
+            (draft.InputPromptMessageId is not >0||message.ReplyToMessage is not {From.IsBot:true}||
+             message.ReplyToMessage.MessageId!=draft.InputPromptMessageId))
             return false;
 
         if (draft.Stage == TelegramShippingPreparationStage.AwaitingIdentity)
@@ -509,7 +500,7 @@ public sealed partial class TelegramWebhookController
                 : TelegramShippingPreparationStage.AwaitingAddressChoice;
             _orderFlowDrafts.SetShippingPreparation(draft);
             if (draft.RegistrationOnly)
-                await SendShippingInputPromptAsync(message.Chat.Id, "آدرس کامل را وارد کنید", ct);
+                await SendShippingInputPromptAsync(message.Chat.Id, "آدرس کامل را وارد کنید", ct,draft.UserId);
             else
                 await SendShippingAddressChoicesAsync(draft, ct);
             return true;
@@ -552,7 +543,7 @@ public sealed partial class TelegramWebhookController
                 draft.Stage = TelegramShippingPreparationStage.AwaitingDescription;
                 _orderFlowDrafts.SetShippingPreparation(draft);
                 await SendShippingInputPromptAsync(message.Chat.Id,
-                    "توضیحات ارسال را وارد کنید؛ اگر توضیحی ندارید، علامت - را بفرستید.", ct);
+                    "توضیحات ارسال را وارد کنید؛ اگر توضیحی ندارید، علامت - را بفرستید.", ct,draft.UserId);
                 return true;
             }
             draft.AddressId = address.Id;
@@ -637,7 +628,7 @@ public sealed partial class TelegramWebhookController
             }
         };
         var sent = await SendAddressWithReadyItemsAsync(
-            _options.ShippingChatId.Trim(), shippingMessage, customer, buttons, ct);
+            _options.ShippingChatId.Trim(), shippingMessage, customer, buttons, ct, null, address.Id);
         if (!sent.IsSuccessful)
         {
             await ReplyAsync(draft.ChatId,
@@ -673,19 +664,27 @@ public sealed partial class TelegramWebhookController
                 LinkGroupOnIdentity = true
             });
             await SendShippingInputPromptAsync(message.Chat.Id,
-                "یوزرنیم مشتری را به‌صورت @username وارد کنید. پس از ثبت، این گروه به‌صورت دائمی به مشتری متصل می‌شود.", ct);
+                "یوزرنیم مشتری را به‌صورت @username وارد کنید. پس از ثبت، این گروه به‌صورت دائمی به مشتری متصل می‌شود.", ct,message.From.Id);
             return true;
         }
         await StartShippingPreparationAsync(message.Chat.Id, message.From.Id, ct);
         return true;
     }
 
-    private async Task SendShippingInputPromptAsync(long chatId, string text, CancellationToken ct)
+    private async Task SendShippingInputPromptAsync(long chatId, string text, CancellationToken ct,long userId)
     {
         var prompt = chatId < 0
             ? text + "\n\nلطفاً روی همین پیام Reply بزنید و متن را پیست و ارسال کنید. برای لغو /cancel را بفرستید."
             : text;
-        await _sender.SendForceReplyAsync(chatId.ToString(), prompt, ct);
+        // Group prompts retain exact reply binding without persisting ForceReply
+        // in every member's Telegram client after the form has completed.
+        var result=chatId<0?await _sender.SendKeyboardDismissAsync(chatId.ToString(),prompt,ct)
+            :await _sender.SendForceReplyAsync(chatId.ToString(),prompt,ct);
+        if(_orderFlowDrafts.TryGetShippingPreparation(chatId,userId,out var draft))
+        {
+            draft.InputPromptMessageId=result.IsSuccessful?result.MessageId:null;
+            _orderFlowDrafts.SetShippingPreparation(draft);
+        }
     }
 
     private async Task<bool> EnsureActiveCustomerGroupLinkAsync(TelegramChat chat, CancellationToken ct)
@@ -1045,7 +1044,8 @@ public sealed partial class TelegramWebhookController
         }
         var customer = await _db.Customers.AsNoTracking().FirstAsync(value => value.Id == draft.CustomerId, ct);
         var address = await _db.Addresses.AsNoTracking().FirstAsync(value => value.Id == draft.AddressId, ct);
-        var items = await ReadyShippingItems(draft.CustomerId).ToArrayAsync(ct);
+        await ZibasheERP.Infrastructure.Services.GiftShippingMembershipService.RepairCustomerAsync(_db, customer.Id, ct);
+        var items = await ReadyShippingItems(customer).ToArrayAsync(ct);
         var requestId = Guid.NewGuid();
         var now = DateTime.UtcNow;
         foreach (var item in items)
@@ -1069,10 +1069,6 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("✅ ارسال شد", $"shipping:sent:{requestId:N}"),
                 new TelegramInlineButton("📸 ارسال کد رهگیری", $"shipping:trackingbatch:{requestId:N}")
             });
-            shippingButtons.Add(new[]
-            {
-                new TelegramInlineButton("📋 گزارش این آیدی", $"shipping:idreport:{requestId:N}")
-            });
         }
         else
         {
@@ -1085,7 +1081,7 @@ public sealed partial class TelegramWebhookController
             });
         }
         var sent = await SendAddressWithReadyItemsAsync(
-            _options.ShippingChatId.Trim(), shippingMessage, customer, shippingButtons, ct);
+            _options.ShippingChatId.Trim(), shippingMessage, customer, shippingButtons, ct, items.Length > 0 ? requestId : null, address.Id);
         if (!sent.IsSuccessful)
         {
             foreach (var item in items) { item.ShippingRequestId = null; item.ShippingRequestedAt = null; }
@@ -1118,7 +1114,9 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        var items = await _db.OrderItems.AsNoTracking()
+        var customer = await ResolveShippingReportCustomerAsync(callback, requestId, ct);
+        if (customer is null) return;
+        var items = await ZibasheERP.Infrastructure.Services.SharedShippingService.Items(_db,requestId).AsNoTracking()
             .Include(value => value.Order).ThenInclude(value => value!.Customer)
             .Include(value => value.SalesList)
             .Include(value => value.Perfume)
@@ -1133,7 +1131,6 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
-        var customer = items[0].Order!.Customer;
         var lines = items.Select((item, index) => FormatShippingItemLine(item, index));
         await _sender.AnswerCallbackAsync(callback.Id, "گزارش آماده شد ✅", ct);
         await ReplyAsync(message.Chat.Id,
@@ -1153,13 +1150,27 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "ابتدا چند درخواست را انتخاب کنید.", ct, true);
             return;
         }
-        var items = await _db.OrderItems.AsNoTracking().Include(value => value.Order).ThenInclude(value => value!.Customer)
-            .Include(value => value.SalesList).Include(value => value.Perfume)
-            .Include(value => value.Bottle)
-            .Include(value => value.SourceSalesListRequest)
-            .Where(value => !value.IsDeleted && value.ShippingRequestId.HasValue &&
-                selected.Contains(value.ShippingRequestId.Value) &&
-                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip).ToArrayAsync(ct);
+        var recipients = new Dictionary<Guid, Customer>();
+        Customer? reportAnchor = null;
+        var selectedItems = new List<OrderItem>();
+        foreach (var request in selected)
+        {
+            var recipient = await ResolveShippingReportCustomerAsync(callback, request, ct);
+            if (recipient is null) return;
+            reportAnchor ??= recipient;
+            var rows = await ZibasheERP.Infrastructure.Services.SharedShippingService.Items(_db,request).AsNoTracking().Where(i =>
+                i.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip).ToArrayAsync(ct);
+            var shared=await ZibasheERP.Infrastructure.Services.SharedShippingService.ReadAsync(_db,request,ct);
+            if(shared is null)foreach(var item in rows)recipients[item.Id]=recipient;
+            else foreach(var ownerId in shared.CustomerIds)
+            {
+                var owner=await _db.Customers.AsNoTracking().SingleAsync(c=>c.Id==ownerId&&!c.IsDeleted,ct);
+                var owned=await CustomerShippingItems(owner).AsNoTracking().Where(i=>i.ShippingRequestId==request).Select(i=>i.Id).ToArrayAsync(ct);
+                foreach(var id in owned)recipients[id]=owner;
+            }
+            selectedItems.AddRange(rows);
+        }
+        var items = selectedItems.ToArray();
         var groups = items.GroupBy(ShippingItemName).OrderBy(value => value.Key).Select(group =>
         {
             var bottleSummary = group
@@ -1173,27 +1184,34 @@ public sealed partial class TelegramWebhookController
                 .Select(value =>
                     $"  • {value.Count()} عدد {value.Key.RequestedVolumeMl} میل {value.Key.Description}")
                 .ToArray();
-            var customers = group.GroupBy(value => value.Order!.CustomerId).Select(customerGroup =>
+            var customers = group.GroupBy(value => recipients[value.Id].Id).Select(customerGroup =>
             {
                 var specifications = customerGroup
                     .Select(item => $"{item.RequestedVolumeMl} میل: {FormatShippingBottleAndLabel(item)}")
                     .Distinct()
                     .ToArray();
-                return $"  • {OrderCustomerLabel(customerGroup.First().Order!.Customer)} — " +
+                return $"  • {OrderCustomerLabel(recipients[customerGroup.First().Id])} — " +
                        $"{customerGroup.Sum(value => value.RequestedVolumeMl)} میل\n" +
                        $"    {string.Join(" | ", specifications)}";
             });
             return $"🧴 {group.Key}\n" +
-                   $"تعداد دکانت: {group.Count()} | تعداد نفر: {group.Select(value => value.Order!.CustomerId).Distinct().Count()} | مجموع: {group.Sum(value => value.RequestedVolumeMl)} میل\n" +
+                   $"تعداد دکانت: {group.Count()} | تعداد نفر: {group.Select(value => recipients[value.Id].Id).Distinct().Count()} | مجموع: {group.Sum(value => value.RequestedVolumeMl)} میل\n" +
                    $"تفکیک شیشه‌ها:\n{string.Join("\n", bottleSummary)}\n" +
                    "مشتری‌ها:\n" +
                    string.Join("\n", customers);
         });
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
-        await ReplyAsync(callback.Message.Chat.Id,
-            $"📊 گزارش کلی ارسال\nدرخواست انتخاب‌شده: {selected.Count}\nتعداد کل دکانت: {items.Length}\nمجموع میل: {items.Sum(value => value.RequestedVolumeMl)}", ct);
-        await SendShippingTextChunksAsync(callback.Message.Chat.Id, "تفکیک عطرها:", groups, ct);
-        _orderFlowDrafts.ClearShippingSelection(callback.Message.Chat.Id, callback.From.Id, selected);
+        _shippingReferenceViewId=await OpenShippingReferenceViewAsync(new(reportAnchor!.Id,null,items.Select(i=>i.Id).ToArray(),callback.Message.Chat.Id.ToString()),ct);
+        try
+        {
+            await ShippingReferenceTextAsync(callback.Message.Chat.Id,
+                $"📊 گزارش کلی ارسال\nدرخواست انتخاب‌شده: {selected.Count}\nتعداد کل دکانت: {items.Length}\nمجموع میل: {items.Sum(value => value.RequestedVolumeMl)}", ct);
+            foreach(var part in SplitTelegramMessage("تفکیک عطرها:\n\n"+string.Join("\n\n",groups)))
+                await ShippingReferenceTextAsync(callback.Message.Chat.Id,part,ct);
+            await FinishShippingReferenceViewAsync(callback.Message.Chat.Id,ct);
+            _orderFlowDrafts.ClearShippingSelection(callback.Message.Chat.Id, callback.From.Id, selected);
+        }
+        finally{_shippingReferenceViewId=null;}
     }
 
     private async Task<bool> TryHandleShippingTrackingPhotoMessageAsync(
@@ -1219,10 +1237,22 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id, "لطفاً کد رهگیری را به‌صورت عکس ارسال کنید یا /cancel را بفرستید.", ct);
             return true;
         }
+        if(draft.ShippingRequestId!=Guid.Empty&&await ZibasheERP.Infrastructure.Services.SharedShippingService.ReadAsync(_db,draft.ShippingRequestId,ct)!=null)
+        {
+            try{await QueueSharedTrackingPhotoAsync(message,draft,photo.FileId,ct);}
+            catch(InvalidOperationException e){await ReplyAsync(message.Chat.Id,"⚠️ "+e.Message,ct);}
+            return true;
+        }
         var customer = await _db.Customers.AsNoTracking().FirstOrDefaultAsync(value =>
             value.Id == draft.CustomerId && !value.IsDeleted, ct);
         string[] recipients;
-        if (draft.ShippingRequestId == Guid.Empty)
+        string? manualDestination;
+        try { manualDestination=customer is null?null:ZibasheERP.Infrastructure.Services.ManualShippingRegistration.TrackingDestination(customer,_options.OwnerUserId); }
+        catch(InvalidOperationException e)
+        { _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id,message.From.Id);await ReplyAsync(message.Chat.Id,"⚠️ "+e.Message,ct);return true; }
+        if (manualDestination is not null)
+            recipients = [manualDestination];
+        else if (draft.ShippingRequestId == Guid.Empty)
         {
             var registrarChatId = await _db.Addresses.AsNoTracking()
                 .Where(value => !value.IsDeleted && value.CustomerId == draft.CustomerId &&
@@ -1245,6 +1275,16 @@ public sealed partial class TelegramWebhookController
                 $"⚠️ مقصد ارسال کد رهگیری برای {(customer is null ? draft.CustomerId.ToString("N") : OrderCustomerLabel(customer))} پیدا نشد.", ct);
             return true;
         }
+        if (draft.ShippingRequestId != Guid.Empty)
+        {
+            try { await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidateDispatchAsync(_db, draft.ShippingRequestId, draft.CustomerId, ct); }
+            catch (ZibasheERP.Infrastructure.Services.ShippingRecipientValidationException exception)
+            {
+                _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
+                await ReplyAsync(message.Chat.Id, "⚠️ " + exception.Message + "\nکد رهگیری ارسال نشد.", ct);
+                return true;
+            }
+        }
         var failures = new List<string>();
         foreach (var recipient in recipients)
         {
@@ -1260,38 +1300,17 @@ public sealed partial class TelegramWebhookController
             return true;
         }
 
-        var shippedItemsQuery = _db.OrderItems.Include(value => value.Order)
-            .Where(value => !value.IsDeleted && value.Order != null);
-        shippedItemsQuery = draft.ShippingRequestId == Guid.Empty
-            ? shippedItemsQuery.Where(value => value.Order!.CustomerId == draft.CustomerId &&
-                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
-                value.ShippingRequestId == null)
-            : shippedItemsQuery.Where(value => value.ShippingRequestId == draft.ShippingRequestId);
-        var shippedItems = await shippedItemsQuery.ToArrayAsync(ct);
-        var shippedAt = DateTime.UtcNow;
-        foreach (var item in shippedItems.Where(value =>
-                     value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped))
+        try
         {
-            item.FulfillmentStatus = OrderItemFulfillmentStatus.Shipped;
-            item.ShippedAt = shippedAt;
-            item.UpdatedAt = shippedAt;
+            await ShippingTrackingNotices.QueueAsync(_db,_options,new(customer.Id,message.Chat.Id.ToString(),draft.SourceMessageId,
+                draft.ShippingRequestId==Guid.Empty?null:draft.ShippingRequestId),ct);
         }
-        var shippedItemIds = shippedItems.Select(value => value.Id).ToArray();
-        foreach (var order in shippedItems.Select(value => value.Order)
-                     .Where(value => value is not null).Distinct()!)
-        {
-            var hasUnshipped = await _db.OrderItems.AnyAsync(value =>
-                !value.IsDeleted && value.OrderId == order!.Id &&
-                !shippedItemIds.Contains(value.Id) &&
-                value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped, ct);
-            if (!hasUnshipped)
-            {
-                order!.Status = OrderStatus.Shipped;
-                order.ShippedAt = shippedAt;
-                order.UpdatedAt = shippedAt;
-            }
-        }
-        await _db.SaveChangesAsync(ct);
+        catch(Exception e)when(!ct.IsCancellationRequested)
+        { _logger.LogWarning("Could not queue tracking address notice: {ErrorType}",e.GetType().Name); }
+        var shippedItems = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteAsync(
+            _db,draft.ShippingRequestId==Guid.Empty?null:draft.ShippingRequestId,draft.CustomerId,ct);
+        if(shippedItems.Length==0)
+            await ReplyAsync(message.Chat.Id,"⚠️ کد رهگیری ارسال شد؛ بستهٔ یکتای مشخصی برای تغییر وضعیت عطرها پیدا نشد. اقلام آماده به‌صورت کلی ارسال‌شده ثبت نشدند.",ct);
 
         var updatedButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
         if (draft.HasBatchControls)
@@ -1310,6 +1329,7 @@ public sealed partial class TelegramWebhookController
             new TelegramInlineButton("✅ ارسال شد", "shipping:trackingdone"),
             new TelegramInlineButton("✅ کد ارسال شد", "shipping:trackingdone")
         });
+        updatedButtons.AddRange(await ExistingShippingReferenceButtonsAsync(message.Chat.Id.ToString(), draft.SourceMessageId, ct));
         var markupResult = await _sender.EditReplyMarkupAsync(
             message.Chat.Id.ToString(), draft.SourceMessageId, updatedButtons, ct);
         if (!markupResult.IsSuccessful)
@@ -1320,12 +1340,30 @@ public sealed partial class TelegramWebhookController
         return true;
     }
 
-    private IQueryable<OrderItem> ReadyShippingItems(Guid customerId) =>
-        _db.OrderItems.Include(value => value.Order).ThenInclude(value => value!.Customer)
-            .Include(value => value.SalesList).Include(value => value.Perfume)
-            .Include(value => value.Bottle)
-            .Include(value => value.SourceSalesListRequest)
-            .Where(value => !value.IsDeleted && value.Order != null && value.Order.CustomerId == customerId &&
+    private async Task<Customer?> ResolveShippingReportCustomerAsync(TelegramCallbackQuery callback, Guid requestId, CancellationToken ct)
+    {
+        try
+        {
+            await ZibasheERP.Infrastructure.Services.GiftShippingMembershipService.RepairAsync(_db, requestId, ct);
+            return await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidatePackageAsync(_db, requestId, null, ct);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true);
+            if (exception is ZibasheERP.Infrastructure.Services.ShippingRecipientValidationException validation && validation.ItemIds.Count > 0)
+            {
+                var details = await _db.OrderItems.AsNoTracking().Where(i => validation.ItemIds.Contains(i.Id))
+                    .Select(i => new { Name = i.SalesList != null ? i.SalesList.PersianName : i.Perfume != null ? i.Perfume.Name : i.ManualDescription, i.RequestedVolumeMl }).ToArrayAsync(ct);
+                await SendShippingTextChunksAsync(callback.Message!.Chat.Id, "⚠️ گزارش قطعی بسته متوقف شد؛ گیرندهٔ این موارد نیازمند بررسی است:",
+                    details.Select(i => $"• {i.Name ?? "آیتم سفارش"} — {i.RequestedVolumeMl:0.##} میل"), ct);
+            }
+            return null;
+        }
+    }
+
+    private IQueryable<OrderItem> ReadyShippingItems(Customer customer) =>
+        CustomerShippingItems(customer)
+            .Where(value =>
                 value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && value.ShippingRequestId == null)
             .OrderBy(value => value.CreatedAt);
 
@@ -1355,7 +1393,10 @@ public sealed partial class TelegramWebhookController
         var fancyComment = item.Bottle?.Type == BottleType.Fancy &&
             !string.IsNullOrWhiteSpace(item.SourceSalesListRequest?.AdminNotes)
             ? $"، توضیحات شیشه: {item.SourceSalesListRequest.AdminNotes.Trim()}" : string.Empty;
-        return $"شیشه: {bottle}{fancyComment}{labelText}{FormatShippingInventoryMarker(item)}";
+        var position = item.SalesList?.IsInventoryOffer == true
+            ? $" | کد موجودی: {item.SalesList.DisplayCode} | جایگاه نگهداری: {item.SalesList.StoragePosition ?? "جایگاه ثبت نشده"}"
+            : !string.IsNullOrWhiteSpace(item.SalesList?.StoragePosition)?$" | کد لیست: {item.SalesList.DisplayCode} | جایگاه نگهداری: {item.SalesList.StoragePosition}":string.Empty;
+        return $"شیشه: {bottle}{fancyComment}{labelText}{FormatShippingInventoryMarker(item)}{position}";
     }
 
     private static string FormatShippingBottleCategory(OrderItem item)

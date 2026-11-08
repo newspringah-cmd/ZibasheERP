@@ -23,7 +23,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     public async Task<IReadOnlyCollection<CompletedSalesListForInvoice>> GetCompletedListsAsync(
         int limit, CancellationToken cancellationToken = default) =>
         await _db.SalesLists.AsNoTracking()
-            .Where(list => !list.IsDeleted &&
+            .Where(list => !list.IsDeleted && list.InventoryCode == null &&
                 (list.Status == SalesListStatus.Closed || list.Status == SalesListStatus.Full) &&
                 !_db.InvoiceIssuanceBatchSalesLists.Any(link => link.SalesListId == list.Id))
             .OrderBy(list => list.ClosedDate ?? list.OpenDate)
@@ -60,7 +60,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         CancellationToken cancellationToken = default)
     {
         var itemRows = await _db.OrderItems.AsNoTracking()
-            .Where(item => !item.IsDeleted && item.SalesListId.HasValue &&
+            .Where(item => !item.IsDeleted && item.SalesListId.HasValue && item.SalesList != null && !item.SalesList.IsInventoryOffer &&
                 item.Order != null && !item.Order.IsDeleted &&
                 item.Order.Source == OrderSource.SalesListInvoice &&
                 item.Order.Invoices.Any(invoice => !invoice.IsDeleted &&
@@ -116,7 +116,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 request.Status == SalesListRequestStatus.Invoiced))
                 .ThenInclude(request => request.Bottle)
             .Include(list => list.Perfume)
-            .Where(list => !list.IsDeleted && salesListIds.Contains(list.Id))
+            .Where(list => !list.IsDeleted && !list.IsInventoryOffer && salesListIds.Contains(list.Id))
             .ToArrayAsync(cancellationToken);
         var listsById = lists.ToDictionary(list => list.Id);
         var copies = rows
@@ -144,7 +144,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 request.Status == SalesListRequestStatus.Invoiced))
                 .ThenInclude(request => request.Bottle)
             .Include(list => list.Perfume)
-            .Where(list => !list.IsDeleted && salesListIds.Contains(list.Id))
+            .Where(list => !list.IsDeleted && !list.IsInventoryOffer && salesListIds.Contains(list.Id))
             .OrderBy(list => list.PublicCode)
             .ToArrayAsync(cancellationToken);
         return lists.Select(CreateProductionCopy).ToArray();
@@ -186,13 +186,31 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     public async Task<InvoiceIssuanceResult> IssueCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,
         string issuedByTelegramUserId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<Guid>? expectedInventoryRequestIds = null)
     {
         var ids = salesListIds.Where(id => id != Guid.Empty).Distinct().ToArray();
         if (ids.Length == 0)
             throw new InvalidOperationException("حداقل یک لیست تکمیل‌شده را انتخاب کنید.");
 
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        // Serialize billing with reservations, rejections and expiry. Retried inventory
+        // approvals return the existing batch without creating another invoice.
+        foreach (var id in ids.Order())
+            await _db.SalesLists.FromSqlInterpolated($"SELECT * FROM SalesLists WITH(UPDLOCK,HOLDLOCK) WHERE Id={id}")
+                .AsNoTracking().SingleAsync(cancellationToken);
+        if (await _db.SalesLists.CountAsync(v=>ids.Contains(v.Id)&&v.IsInventoryOffer&&v.InventoryCode!=null,cancellationToken)==ids.Length)
+        {
+            var links=await _db.InvoiceIssuanceBatchSalesLists.AsNoTracking().Where(v=>ids.Contains(v.SalesListId)).ToArrayAsync(cancellationToken);
+            if(links.Length==ids.Length&&links.Select(v=>v.InvoiceIssuanceBatchId).Distinct().Count()==1)
+            {
+                var batchId=links[0].InvoiceIssuanceBatchId;
+                var numbers=await _db.Invoices.AsNoTracking().Where(v=>v.Order!=null&&v.Order.InvoiceIssuanceBatchId==batchId&&!v.IsDeleted)
+                    .Select(v=>v.InvoiceNumber).ToArrayAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return new InvoiceIssuanceResult(batchId,numbers.Length,numbers,[]);
+            }
+        }
         var lists = await _db.SalesLists
             .Include(list => list.Requests.Where(request => !request.IsDeleted &&
                 request.Kind == SalesListRequestKind.CurrentBottle &&
@@ -211,6 +229,10 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var requests = lists.SelectMany(list => list.Requests.Select(request => (List: list, Request: request))).ToArray();
         if (requests.Length == 0)
             throw new InvalidOperationException("برای لیست‌های انتخاب‌شده درخواست تأییدشده‌ای وجود ندارد.");
+        if(expectedInventoryRequestIds is not null &&
+            (lists.Any(v=>!v.IsInventoryOffer||v.InventoryCode==null)||
+             !requests.Select(v=>v.Request.Id).ToHashSet().SetEquals(expectedInventoryRequestIds)))
+            throw new InvalidOperationException("درخواست‌های خرید پس از پیش‌نمایش تغییر کرده‌اند؛ فاکتور را دوباره بررسی کنید.");
 
         // درخواست‌های قدیمیِ واردشده پیش از ثبت نوع شیشه ممکن است BottleId نداشته باشند.
         // تنها fallback امن، شیشهٔ نرمالِ پیش‌فرض یا نرمالِ یکتای همان حجم است؛
@@ -239,7 +261,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 .Where(group => group.Defaults.Length == 1 ||
                     (group.Defaults.Length == 0 && group.Bottles.Length == 1))
                 .ToDictionary(
-                    group => group.VolumeMl,
+                    group => (decimal)group.VolumeMl,
                     group => group.Defaults.Length == 1
                         ? group.Defaults[0]
                         : group.Bottles[0]);
@@ -257,7 +279,12 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         }
 
         var now = DateTime.UtcNow;
-        var productionCopies = lists.Select(CreateProductionCopy).ToArray();
+        foreach(var ready in lists.Where(v=>v.InventoryCode!=null))
+            if(ready.Requests.Count!=1)
+                throw new InvalidOperationException("این موجودی باید دقیقاً یک درخواست خرید فعال داشته باشد.");
+        if(lists.Any(v=>v.InventoryCode!=null)&&lists.Any(v=>!v.IsInventoryOffer))
+            throw new InvalidOperationException("فاکتور موجودی باید جدا از لیست‌های عادی صادر شود.");
+        var productionCopies = lists.Where(v=>!v.IsInventoryOffer).Select(CreateProductionCopy).ToArray();
         var batch = new InvoiceIssuanceBatch
         {
             Id = Guid.NewGuid(), CreatedAt = now,
@@ -276,14 +303,16 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         await _db.InvoiceIssuanceBatches.AddAsync(batch, cancellationToken);
 
         var orders = new List<Order>();
-        foreach (var customerRequests in requests.GroupBy(value => CustomerKey(value.Request)))
+        foreach (var customerRequests in requests.GroupBy(value => value.List.InventoryCode.HasValue
+            ? "inventory-telegram:"+value.Request.TelegramUserId.Trim() : CustomerKey(value.Request)))
         {
             var customer = await ResolveCustomerAsync(customerRequests.First().Request, cancellationToken);
             var order = new Order
             {
                 Id = Guid.NewGuid(), CreatedAt = now, CustomerId = customer.Id,
                 OrderNumber = await GenerateOrderNumberAsync(now, cancellationToken),
-                Status = OrderStatus.ListCompleted, RegisteredAt = now,
+                Status = customerRequests.All(value=>value.List.IsInventoryOffer) ? OrderStatus.ReadyToShip : OrderStatus.ListCompleted,
+                IsInventory = customerRequests.All(value=>value.List.IsInventoryOffer), RegisteredAt = now,
                 Source = OrderSource.SalesListInvoice, InvoiceIssuanceBatchId = batch.Id,
                 Notes = $"فاکتور تجمیعی لیست‌ها: {string.Join("، ", customerRequests.Select(value => value.List.DisplayCode).Distinct().Order())}"
             };
@@ -295,9 +324,9 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     throw new InvalidOperationException(
                         $"قیمت نهایی هر میل برای لیست {list.DisplayCode} معتبر نیست.");
 
-                // The list price is the authoritative final price. Requests can have been registered
-                // before an admin price update and therefore carry an outdated price snapshot.
-                var finalPricePerMl = list.PricePerMl;
+                // Ordinary requests follow admin price updates. Confirmed timed offers keep
+                // the perfume-only price accepted during their promotion window.
+                var finalPricePerMl = FlashSalePricing.InvoicePrice(request, list.PricePerMl);
                 request.PerfumePricePerMl = finalPricePerMl;
                 request.UpdatedAt = now;
                 var perfumeAmount = finalPricePerMl * request.VolumeMl;
@@ -313,7 +342,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     PerfumeAmount = perfumeAmount, IsBottleOwner = request.IsBottleOwner,
                     BottleId = request.BottleId, BottlePrice = bottleAmount,
                     LineTotal = perfumeAmount + bottleAmount, RowNumber = row,
-                    FulfillmentStatus = OrderItemFulfillmentStatus.WaitingForArrivalInIran,
+                    FulfillmentStatus = list.IsInventoryOffer ? OrderItemFulfillmentStatus.DecantedReadyToShip : OrderItemFulfillmentStatus.WaitingForArrivalInIran,
+                    DecantedAt = list.IsInventoryOffer ? now : null,
                     Notes = $"کد لیست {list.DisplayCode}"
                 });
                 request.Status = SalesListRequestStatus.Invoiced;
@@ -353,15 +383,29 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
         foreach (var order in orders)
         {
-            var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id), cancellationToken);
+            var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id, IsInventory: order.IsInventory), cancellationToken);
             invoiceNumbers.Add(invoice.InvoiceNumber);
             await QueueGiftRecipientNotificationsAsync(
                 order, invoice.InvoiceNumber, queuedRecipientListPhotos, cancellationToken);
         }
+        foreach(var customerId in orders.Where(o=>o.IsInventory).Select(o=>o.CustomerId).Distinct())
+            await ShippingPackageService.AttachInventoryAsync(_db,customerId,cancellationToken);
         foreach (var list in lists)
         {
+            if(list.InventoryCode.HasValue)
+                foreach(var promotion in await _db.FlashSalePromotions.Where(v=>v.SalesListId==list.Id&&!v.IsDeleted&&v.EndsAtUtc>DateTime.UtcNow).ToArrayAsync(cancellationToken))
+                {promotion.EndsAtUtc=DateTime.UtcNow;promotion.UpdatedAt=DateTime.UtcNow;}
             list.Status = SalesListStatus.Invoiced;
             list.UpdatedAt = DateTime.UtcNow;
+        }
+        foreach(var ready in lists.Where(v=>v.InventoryCode.HasValue))
+        {
+            _db.NotificationOutbox.Add(ReadyInventoryRemoval.Job(ready.Id));
+            var jobId=new Guid(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"inventory-report:{batch.Id}:{ready.Id}"))[..16]);
+            if(!long.TryParse(issuedByTelegramUserId,out var actor)||actor<=0)
+                throw new InvalidOperationException("شناسهٔ ادمین برای فاکتور موجودی معتبر نیست.");
+            _db.NotificationOutbox.Add(new(){Id=jobId,CustomerId=Guid.Empty,Channel="MarketingPromotion",EventType="ReadyInventoryInvoiceReport",Recipient=actor.ToString(),CreatedAt=DateTime.UtcNow,
+                Payload=System.Text.Json.JsonSerializer.Serialize(new{SalesListId=ready.Id,Code=ready.DisplayCode,Destination="inventory-report",AdminChatId=actor,AdminUserId=actor,HoldHours=24,InvoiceBatchId=batch.Id})});
         }
         batch.Status = InvoiceIssuanceBatchStatus.Issued;
         batch.IssuedAt = DateTime.UtcNow;
@@ -392,9 +436,10 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 request.GiftRecipientTelegramUsername,
                 request.GiftRecipientTelegramUserId,
                 request.VolumeMl,
-                PerfumePricePerMl = request.SalesList!.PricePerMl,
+                PerfumePricePerMl = (request.FlashSalePromotionId != null || request.SalesList!.IsInventoryOffer)
+                    ? request.PerfumePricePerMl : request.SalesList!.PricePerMl,
                 request.BottlePrice,
-                ListCode = request.SalesList!.StablePublicCode ?? request.SalesList.PublicCode,
+                ListCode = request.SalesList!.InventoryCode ?? request.SalesList.StablePublicCode ?? request.SalesList.PublicCode,
                 PerfumeName = request.SalesList.PersianName != ""
                     ? request.SalesList.PersianName
                     : request.SalesList.EnglishName
@@ -431,7 +476,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     ? $" | مقصد گیرنده: {recipientGroup.Title ?? recipient}"
                     : " | مقصد گیرنده: بررسی دستی";
             }
-            lines.Add($"{index + 1}. {identity} | {row.PerfumeName} | {row.VolumeMl} میل | لیست {row.ListCode}{destination}");
+            lines.Add($"{index + 1}. {identity} | {row.PerfumeName} | {row.VolumeMl:0.#} میل | لیست {row.ListCode}{destination}");
         }
         var invoiceCount = rows.Select(row =>
                 !string.IsNullOrWhiteSpace(row.TelegramUsername)
@@ -452,12 +497,12 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         ? $"@{giverUsername}"
                         : row.TelegramUserId;
                     if (!row.IsGift)
-                        return $"{index + 1}. {giver} — {row.VolumeMl} میل";
+                        return $"{index + 1}. {giver} — {row.VolumeMl:0.#} میل";
                     var recipientUsername = NormalizeCustomerUsername(row.GiftRecipientTelegramUsername);
                     var recipient = !string.IsNullOrWhiteSpace(recipientUsername)
                         ? $"@{recipientUsername}"
                         : row.GiftRecipientTelegramUserId ?? "گیرنده نامشخص";
-                    return $"{index + 1}. {giver} برای {recipient} — {row.VolumeMl} میل 🎁";
+                    return $"{index + 1}. {giver} برای {recipient} — {row.VolumeMl:0.#} میل 🎁";
                 });
                 return $"📋 لیست تکمیل‌شده {group.Key.ListCode}\n" +
                        $"عطر: {group.Key.PerfumeName}\n\n" + string.Join("\n", listRows);
@@ -470,6 +515,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     {
         if (request.IsBottleOwner || request.IsComplimentaryBottle)
             return 0m;
+        if (request.SalesList?.IsInventoryOffer == true &&
+            request.SalesList.FixedBottleId == ReadyInventoryService.OriginalBottleId &&
+            request.BottleId == ReadyInventoryService.OriginalBottleId && request.SalesList.FixedBottlePrice == 0)
+        {
+            request.BottlePrice = 0;
+            return 0m;
+        }
 
         if (request.Bottle?.SalePrice is > 0)
         {
@@ -735,6 +787,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             cancellationToken);
         if (giftRecipient is not null)
             await QueueManualGiftRecipientNotificationsAsync(order, invoice, giftRecipient, validPhotoFileIds, cancellationToken);
+        if (order.IsInventory) await ShippingPackageService.AttachInventoryAsync(_db,giftRecipient?.Id ?? order.CustomerId,cancellationToken);
         return new InvoiceIssuanceResult(Guid.Empty, 1, new[] { invoice.InvoiceNumber }, Array.Empty<SalesListProductionCopy>());
     }
 
@@ -851,7 +904,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
         var orders = await _db.Orders.AsNoTracking()
             .Include(value => value.Customer)
-            .Include(value => value.Items.Where(item => !item.IsDeleted))
+            .Include(value => value.Items)
                 .ThenInclude(item => item.SalesList)
             .Where(value => value.InvoiceIssuanceBatchId == batchId && !value.IsDeleted)
             .OrderBy(value => value.CreatedAt)
@@ -860,6 +913,12 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var invoices = await _db.Invoices.AsNoTracking()
             .Where(value => orderIds.Contains(value.OrderId) && !value.IsDeleted)
             .ToDictionaryAsync(value => value.OrderId, cancellationToken);
+        var restocked=await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,orderIds,cancellationToken);
+        foreach(var order in orders)
+        {
+            var returned=invoices.TryGetValue(order.Id,out var document)&&restocked.Contains(document.Id);
+            order.Items=order.Items.Where(item=>!item.IsDeleted||returned).ToList();
+        }
         return batch.SalesLists
             .OrderBy(link => link.SalesList.StablePublicCode ?? link.SalesList.PublicCode)
             .Select(link =>
@@ -881,6 +940,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         ? $"@{order.Customer.Username.TrimStart('@')}"
                         : order.Customer?.TelegramId ?? order.Customer?.FullName ?? "مشتری نامشخص";
                     var paid = invoice?.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid;
+                    var returned=invoice is not null&&restocked.Contains(invoice.Id);
                     var listAmount = order.Items
                         .Where(item => item.SalesListId == link.SalesListId)
                         .Sum(item => item.LineTotal);
@@ -888,24 +948,27 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         .Sum(item => item.RequestedVolumeMl);
                     var owner = order.Items.Any(item => item.SalesListId == link.SalesListId && item.IsBottleOwner)
                         ? " 👑" : "";
-                    return $"{(paid ? "✅" : "🔴")} {index + 1}. {identity}{owner} — {volume} میل — " +
-                           $"{invoice?.InvoiceNumber ?? "بدون فاکتور"} — {listAmount:N0} تومان";
+                    return $"{(returned?"🔵":paid ? "✅" : "🔴")} {index + 1}. {identity}{owner} — {volume:0.#} میل — " +
+                           $"{invoice?.InvoiceNumber ?? "بدون فاکتور"} — {listAmount:N0} تومان"+
+                           (returned?"\n   "+InvoiceRestockTracking.Caption:"");
                 });
                 var message = $"💳 واریز جدید\n" +
                               $"عطر: {(string.IsNullOrWhiteSpace(link.SalesList.PersianName) ? link.SalesList.EnglishName : link.SalesList.PersianName)}\n" +
-                              $"کد لیست: {link.SalesList.DisplayCode}\n" +
+                              $"{(link.SalesList.IsInventoryOffer?"کد موجودی":"کد لیست")}: {link.SalesList.DisplayCode}\n" +
                               $"تعداد فاکتور: {listOrders.Length}\n\n{string.Join("\n", rows)}\n\n" +
-                              $"✅ پرداخت‌شده   🔴 در انتظار پرداخت\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
+                              $"✅ پرداخت‌شده   🔴 در انتظار پرداخت"+(listOrders.Any(o=>invoices.TryGetValue(o.Id,out var i)&&restocked.Contains(i.Id))?"   🔵 انتقال به موجودی":"")+
+                              $"\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
                 var actions = listOrders.Where(order =>
                         invoices.TryGetValue(order.Id, out var invoice) &&
                         invoice.Status != ZibasheERP.Domain.Enums.InvoiceStatus.Paid &&
+                        invoice.Status != ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled &&
                         order.Status != OrderStatus.Paid)
                     .SelectMany(order => order.Items
                         .Where(item => item.SalesListId == link.SalesListId)
                         .Select(item => new InvoicePaymentTrackingAction(
                             item.Id,
                             $"📤 {(order.Customer?.Username ?? order.Customer?.TelegramId ?? "مشتری").TrimStart('@')} | " +
-                            $"{item.SalesList?.EnglishName ?? item.ManualDescription ?? "آیتم"} | {item.RequestedVolumeMl}ml")))
+                            $"{item.SalesList?.EnglishName ?? item.ManualDescription ?? "آیتم"} | {item.RequestedVolumeMl:0.#}ml")))
                     .ToArray();
                 return new InvoicePaymentTrackingReport(
                     batch.Id, link.SalesListId, message,
@@ -1044,15 +1107,16 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var roster = SalesListProductionGrouping.Build(list.Requests)
             .GroupBy(row => row.VolumeMl)
             .OrderByDescending(group => group.Key)
-            .Select(group => $"{group.Key} ml:\n" + string.Join("\n", group
+            .Select(group => $"{group.Key:0.#} ml:\n" + string.Join("\n", group
                 .OrderBy(row => row.Request.ConfirmedAt)
                 .ThenBy(row => row.Request.CreatedAt)
-                .Select(row => row.Request.IsGift && row.SourceCount > 1
+                .Select(row => (row.Request.IsGift && row.SourceCount > 1
                     ? GiftRecipientIdentity(row.Request) + " 🎁" +
                       (row.Request.Bottle?.Type == BottleType.Fancy ? " F" : "") +
                       (row.Request.OmitIdentityOnLabel ? " B Id" :
                           !string.IsNullOrWhiteSpace(row.Request.LabelIdentityText) ? $" {row.Request.LabelIdentityText}=L" : "")
-                    : ProductionIdentity(row.Request))))
+                    : ProductionIdentity(row.Request)) +
+                    (string.IsNullOrWhiteSpace(row.PreparationNotes)?"":" | "+row.PreparationNotes))))
             .ToArray();
         return string.Join("\n\n", new[]
         {
@@ -1079,9 +1143,9 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             $"🌸 نت‌های میانی: {list.MiddleNotes}\n" +
             $"🌳 نت‌های پایانی: {list.BaseNotes}\n" +
             $"🎼 آکوردها: {list.Accords}\n\n" +
-            $"حجم کل: {list.TotalVolume}ml\n" +
+            $"حجم کل: {list.TotalVolume:0.#}ml\n" +
             $"قیمت هر میل: {list.PricePerMl:N0} تومان\n" +
-            $"حداقل درخواست: {list.MinimumRequestVolumeMl} میل | باقی‌مانده: {list.RemainingVolume} میل";
+            $"حداقل درخواست: {list.MinimumRequestVolumeMl:0.#} میل | باقی‌مانده: {list.RemainingVolume:0.#} میل";
     }
 
     private static string FormatNextBottleSection(SalesList list)
@@ -1123,7 +1187,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
 
     private static string FormatLabelList(SalesList list)
     {
-        var labelRows = new List<(int Volume, DateTime SortAt, string Identity)>();
+        var labelRows = new List<(decimal Volume, DateTime SortAt, string Identity)>();
         foreach (var row in SalesListProductionGrouping.Build(list.Requests))
         {
             var request = row.Request;
@@ -1139,13 +1203,14 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 identity += " F";
             if (request.OmitIdentityOnLabel && string.IsNullOrWhiteSpace(request.LabelIdentityText))
                 identity += " B Id";
+            if(!string.IsNullOrWhiteSpace(row.PreparationNotes))identity+=" | "+row.PreparationNotes;
             labelRows.Add((volume, request.ConfirmedAt ?? request.CreatedAt, identity));
         }
 
         var roster = labelRows
             .GroupBy(row => row.Volume)
             .OrderByDescending(group => group.Key)
-            .Select(group => $"{group.Key} ml:\n" + string.Join("\n", group
+            .Select(group => $"{group.Key:0.#} ml:\n" + string.Join("\n", group
                 .OrderBy(row => row.SortAt)
                 .Select(row => row.Identity)))
             .ToArray();

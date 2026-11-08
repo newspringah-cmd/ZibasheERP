@@ -324,7 +324,7 @@ public class CreateOrderCommandHandler
          * بعداً برای شماره ردیف دقیق، یک Query اختصاصی
          * روی OrderItemهای همان SalesList اضافه می‌کنیم.
          */
-        return salesList.ReservedVolume + 1;
+        return checked((int)decimal.Ceiling(salesList.ReservedVolume)) + 1;
     }
 
     private static string? NormalizeNotes(

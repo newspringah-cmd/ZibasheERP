@@ -58,11 +58,36 @@ public static class InvoicedSalesListReportTests
         legacy.Source = OrderSource.ManualInvoice;
         check(InvoicedSalesListReport.ListIds(rows.AsQueryable(), new[] { legacy }.AsQueryable(), since, until).Count() == 2,
             "manual invoices do not inflate sales list counts");
+        var stock = Item(Guid.NewGuid(), since);
+        stock.Order!.IsInventory = true;
+        var oldStock = Item(Guid.NewGuid(), since, InvoiceStatus.Paid);
+        oldStock.SalesList = new SalesList { Id = oldStock.SalesListId!.Value, IsInventoryOffer = true };
+        var stockLegacy = Item(Guid.NewGuid(), since).Order!;
+        stockLegacy.SalesListId = Guid.NewGuid(); stockLegacy.IsInventory = true;
+        var oldStockLegacy = Item(Guid.NewGuid(), since).Order!;
+        oldStockLegacy.SalesListId = Guid.NewGuid();
+        oldStockLegacy.SalesList = new SalesList { Id = oldStockLegacy.SalesListId.Value, IsInventoryOffer = true };
+        var stockDuplicate = stock.Order;
+        stockDuplicate.SalesListId = stock.SalesListId;
+        var cancelledStock = Item(Guid.NewGuid(), since, InvoiceStatus.Cancelled); cancelledStock.Order!.IsInventory = true;
+        var outOfRangeStock = Item(Guid.NewGuid(), until); outOfRangeStock.Order!.IsInventory = true;
+        var combined = rows.Concat(new[] { stock, stock, oldStock, cancelledStock, outOfRangeStock }).AsQueryable();
+        var combinedOrders = new[] { stockLegacy, oldStockLegacy, stockDuplicate! }.AsQueryable();
+        var regularIds = InvoicedSalesListReport.ListIds(combined, combinedOrders, since, until).ToArray();
+        var inventoryIds = InvoicedSalesListReport.InventoryIds(combined, combinedOrders, since, until).ToArray();
+        check(regularIds.Length == 2, "completed list report excludes inventory marked on either the order or stock record, including legacy references");
+        check(inventoryIds.Length == 4 && !regularIds.Intersect(inventoryIds).Any(), "inventory packages have a separate non-overlapping count with current and legacy invoices");
+        check(inventoryIds.Contains(stock.SalesListId!.Value) && inventoryIds.Contains(oldStock.SalesListId!.Value) &&
+            !inventoryIds.Contains(cancelledStock.SalesListId!.Value) && !inventoryIds.Contains(outOfRangeStock.SalesListId!.Value),
+            "stock count deduplicates repeated customer invoices and applies the same cancellation and date rules");
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseSqlServer("Server=localhost;Database=ReportQuery;Trusted_Connection=True;TrustServerCertificate=True").Options);
         var sql = InvoicedSalesListReport.ListIds(db.OrderItems, db.Orders, since, until).ToQueryString();
         check(sql.Contains("EXISTS") && sql.Contains("IssuedAt") && sql.Contains("UNION") && !sql.Contains("UNION ALL"),
             "list-count report translates to server-side SQL with distinct cycles and invoice-date filtering");
+        var inventorySql = InvoicedSalesListReport.InventoryIds(db.OrderItems, db.Orders, since, until).ToQueryString();
+        check(sql.Contains("IsInventory") && sql.Contains("IsInventoryOffer") && inventorySql.Contains("IsInventoryOffer") && inventorySql.Contains("UNION"),
+            "both report categories translate inventory classification to server-side SQL");
         check(AdminItemActivityReport.CanView(123, 123, "private", "123") &&
             !AdminItemActivityReport.CanView(456, 456, "private", "123") &&
             !AdminItemActivityReport.CanView(123, -100, "supergroup", "123"),

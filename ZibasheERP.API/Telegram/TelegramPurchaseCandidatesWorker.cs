@@ -61,12 +61,20 @@ public sealed class TelegramPurchaseCandidatesWorker(IServiceScopeFactory scopes
                     !x.IsInventoryOffer && x.Status == SalesListStatus.Open && x.TotalVolume > 0 &&
                     x.ReservedVolume < x.TotalVolume && x.ReservedVolume * 100 > x.TotalVolume * 70)
                     .ToDictionaryAsync(x => x.Id, stoppingToken);
+                var missingPhotos = 0;
                 foreach (var id in ids)
                 {
                     if (!lists.TryGetValue(id, out var list)) continue;
+                    var photo = await SalesListPhotoResolver.ResolveAsync(db, list, stoppingToken);
+                    if (string.IsNullOrWhiteSpace(photo))
+                    {
+                        missingPhotos++;
+                        logger.LogWarning("Purchase candidate {SalesListId} deferred: no matching perfume photo", id);
+                        continue;
+                    }
                     var name = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(list.PersianName)
                         ? list.EnglishName : list.PersianName);
-                    var caption = $"<b>{name}</b>\nکد: {list.DisplayCode}\nتکمیل: {(decimal)list.ReservedVolume * 100 / list.TotalVolume:0.#}٪\nباقی‌مانده: {list.RemainingVolume} میل";
+                    var caption = $"<b>{name}</b>\nکد: {list.DisplayCode}\nتکمیل: {(decimal)list.ReservedVolume * 100 / list.TotalVolume:0.#}٪\nباقی‌مانده: {list.RemainingVolume:0.#} میل";
                     var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>();
                     if (list.TelegramMessageId.HasValue && !string.IsNullOrWhiteSpace(list.TelegramChannelId))
                         buttons.Add(new[] { new TelegramInlineButton("🔗 مشاهده لیست", Url:
@@ -74,10 +82,7 @@ public sealed class TelegramPurchaseCandidatesWorker(IServiceScopeFactory scopes
                     else if (Uri.TryCreate(list.ProductPageUrl, UriKind.Absolute, out var url) &&
                         (url.Scheme == "https" || url.Scheme == "http"))
                         buttons.Add(new[] { new TelegramInlineButton("🔗 صفحه عطر", Url: list.ProductPageUrl) });
-                    var result = string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)
-                        ? await sender.SendInlineKeyboardAsync(job.Chat.ToString(),
-                            System.Net.WebUtility.HtmlDecode(caption.Replace("<b>", "").Replace("</b>", "")), buttons, stoppingToken)
-                        : await sender.SendPhotoWithKeyboardAsync(job.Chat.ToString(), list.TelegramPhotoFileId,
+                    var result = await sender.SendPhotoWithKeyboardAsync(job.Chat.ToString(), photo,
                             caption, buttons, stoppingToken);
                     if (!result.IsSuccessful) throw new InvalidOperationException(result.Error);
                     await Task.Delay(3200, stoppingToken);
@@ -88,7 +93,8 @@ public sealed class TelegramPurchaseCandidatesWorker(IServiceScopeFactory scopes
                     navigation.Add(new[] { new TelegramInlineButton("صفحه بعد ➡️", $"purchasepage:{job.Session:N}:{job.Page + 1}") });
                 await sender.SendInlineKeyboardAsync(job.Chat.ToString(),
                     state.Ids.Length == 0 ? "لیست باز با بیش از ۷۰٪ تکمیل وجود ندارد." :
-                    $"صفحه {job.Page + 1} از {pages} — نمایش {lists.Count} لیست\nکل در زمان گزارش: {state.Ids.Length}", navigation, stoppingToken);
+                    $"صفحه {job.Page + 1} از {pages} — نمایش {lists.Count - missingPhotos} لیست\nکل در زمان گزارش: {state.Ids.Length}" +
+                    (missingPhotos == 0 ? "" : $"\nنیازمند افزودن عکس: {missingPhotos} لیست"), navigation, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception error)

@@ -24,10 +24,14 @@ public class AppDbContext : DbContext
 
     public DbSet<Batch> Batches => Set<Batch>();
     public DbSet<SalesList> SalesLists => Set<SalesList>();
+    public DbSet<DirhamExchangeRate> DirhamExchangeRates => Set<DirhamExchangeRate>();
+    public DbSet<PerfumePurchasePrice> PerfumePurchasePrices => Set<PerfumePurchasePrice>();
     public DbSet<SalesListRequest> SalesListRequests => Set<SalesListRequest>();
+    public DbSet<FlashSalePromotion> FlashSalePromotions => Set<FlashSalePromotion>();
     public DbSet<TelegramSalesListImport> TelegramSalesListImports => Set<TelegramSalesListImport>();
 
     public DbSet<Order> Orders => Set<Order>();
+    public DbSet<InventoryPositionChange> InventoryPositionChanges => Set<InventoryPositionChange>();
     public DbSet<OrderArtifact> OrderArtifacts => Set<OrderArtifact>();
     public DbSet<TelegramOrderDraft> TelegramOrderDrafts => Set<TelegramOrderDraft>();
     public DbSet<TelegramProcessedUpdate> TelegramProcessedUpdates => Set<TelegramProcessedUpdate>();
@@ -61,7 +65,49 @@ public class AppDbContext : DbContext
         ConfigureBottle(modelBuilder);
         ConfigureBatch(modelBuilder);
         ConfigureSalesList(modelBuilder);
+        modelBuilder.Entity<DirhamExchangeRate>(entity =>
+        {
+            entity.Property(x=>x.TomanPerDirham).HasPrecision(18,4);
+            entity.HasIndex(x=>x.EffectiveAtUtc).IsUnique();
+            entity.ToTable(t=>t.HasCheckConstraint("CK_DirhamExchangeRates_Positive","[TomanPerDirham] > 0"));
+        });
+        modelBuilder.Entity<PerfumePurchasePrice>(entity =>
+        {
+            entity.Property(x=>x.VariantKey).HasMaxLength(64);
+            entity.Property(x=>x.AmountAed).HasPrecision(18,4);
+            entity.Property(x=>x.BottleVolumeMl).HasPrecision(18,1);
+            entity.HasIndex(x=>new{x.VariantKey,x.CreatedAt});
+            entity.HasIndex(x=>new{x.SalesListId,x.CreatedAt});
+            entity.HasOne<SalesList>().WithMany().HasForeignKey(x=>x.SalesListId).OnDelete(DeleteBehavior.Restrict);
+            entity.ToTable(t=>t.HasCheckConstraint("CK_PerfumePurchasePrices_Positive","[AmountAed] > 0 AND [BottleVolumeMl] > 0"));
+        });
+        modelBuilder.Entity<SalesList>().Property(v=>v.TotalVolume).HasPrecision(18,1);
+        modelBuilder.Entity<SalesList>().Property(v=>v.ReservedVolume).HasPrecision(18,1);
+        modelBuilder.Entity<SalesList>().Property(v=>v.MinimumRequestVolumeMl).HasPrecision(18,1);
+        modelBuilder.Entity<SalesListRequest>().Property(v=>v.VolumeMl).HasPrecision(18,1);
+        modelBuilder.Entity<SalesList>().Property(value => value.InventoryReferencePricePerMl).HasPrecision(18, 2);
+        modelBuilder.Entity<SalesList>().HasIndex(value => value.InventoryCode).IsUnique()
+            .HasFilter("[InventoryCode] IS NOT NULL");
+        modelBuilder.Entity<InventoryPositionChange>(entity =>
+        {
+            entity.Property(value => value.Position).HasMaxLength(150);
+            entity.Property(value => value.PreviousPosition).HasMaxLength(150);
+            entity.HasOne<SalesList>().WithMany().HasForeignKey(value => value.SalesListId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(value => new { value.SalesListId, value.CreatedAt });
+        });
         ConfigureSalesListRequest(modelBuilder);
+        modelBuilder.Entity<FlashSalePromotion>(entity =>
+        {
+            entity.Property(value => value.OriginalPricePerMl).HasPrecision(18, 2);
+            entity.Property(value => value.DiscountAmountPerMl).HasPrecision(18, 2);
+            entity.Property(value => value.RequestedDurationMinutes).HasDefaultValue(120);
+            entity.Ignore(value => value.DiscountedPricePerMl);
+            entity.HasOne<SalesList>().WithMany().HasForeignKey(value => value.SalesListId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(value => new { value.SalesListId, value.StartsAtUtc, value.EndsAtUtc });
+        });
+        modelBuilder.Entity<SalesListRequest>().HasOne<FlashSalePromotion>().WithMany()
+            .HasForeignKey(value => value.FlashSalePromotionId).OnDelete(DeleteBehavior.Restrict);
         ConfigureTelegramSalesListImport(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderArtifact(modelBuilder);
@@ -127,7 +173,7 @@ public class AppDbContext : DbContext
                 !entry.OriginalValues.GetValue<bool>(nameof(SalesListRequest.IsDeleted)) &&
                 Active(entry.OriginalValues.GetValue<SalesListRequestStatus>(nameof(SalesListRequest.Status)));
             var afterActive = entry.State != EntityState.Deleted && !request.IsDeleted && Active(request.Status);
-            var oldVolume = entry.State == EntityState.Added ? (int?)null : entry.OriginalValues.GetValue<int>(nameof(SalesListRequest.VolumeMl));
+            var oldVolume = entry.State == EntityState.Added ? (int?)null : checked((int)entry.OriginalValues.GetValue<decimal>(nameof(SalesListRequest.VolumeMl)));
             AdminItemAction? action = !beforeActive && afterActive ? AdminItemAction.Registered :
                 beforeActive && !afterActive ? AdminItemAction.Removed :
                 beforeActive && afterActive && oldVolume != request.VolumeMl ? AdminItemAction.VolumeChanged : null;
@@ -135,7 +181,7 @@ public class AppDbContext : DbContext
             if (action == AdminItemAction.Registered && entry.State == EntityState.Added &&
                 request.ExternalReference.StartsWith("auto-next:", StringComparison.Ordinal)) continue;
             int? previous = action == AdminItemAction.Registered ? null : oldVolume;
-            int? next = action == AdminItemAction.Removed ? null : request.VolumeMl;
+            int? next = action == AdminItemAction.Removed ? null : checked((int)request.VolumeMl);
             var identity = FormattableString.Invariant($"admin-item:{actor.UpdateId}:{actor.UserId}:{request.Id:N}:{(int)action.Value}:{previous}:{next}");
             var id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(identity))[..16]);
             if (ChangeTracker.Entries<AdminItemActivity>().Any(existing => existing.Entity.Id == id)) continue;

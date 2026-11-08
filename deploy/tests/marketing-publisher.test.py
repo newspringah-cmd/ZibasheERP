@@ -2,6 +2,13 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import tempfile
+import contextlib
+import io
+import sqlite3
+import time
+from types import SimpleNamespace
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('publisher', Path(__file__).resolve().parents[1] / 'marketing-publisher.py')
 publisher = importlib.util.module_from_spec(spec)
@@ -25,6 +32,84 @@ class PublisherTests(unittest.TestCase):
                            ('TelegramPhotoFileId', None), ('TelegramMessageId', None), ('TelegramChannelId', 'invalid')]:
             row = self.row(); row[key] = value
             self.assertFalse(publisher.eligible(row))
+
+    def test_group_exclusion_rejects_code_and_rolled_cycle(self):
+        policy = {'codes': {7888}, 'list_ids': set()}
+        for codes in [(7888, None), (90001, 7888), (7888, 90002)]:
+            row = self.row(); row.update(PublicCode=codes[0], StablePublicCode=codes[1])
+            for maximum in (10, 20, 2**31):
+                self.assertFalse(publisher.eligible(row, maximum, policy))
+
+    def test_group_exclusion_matches_id_when_code_changes(self):
+        identity = '993D4AAB-9165-4CB8-BDF5-4A9A6D86071E'
+        row = self.row(); row['Id'] = identity
+        self.assertFalse(publisher.eligible(row, exclusions={'codes': set(), 'list_ids': {identity.lower()}}))
+        self.assertTrue(publisher.eligible(row, exclusions={'codes': {7888}, 'list_ids': set()}))
+
+    def test_persistent_exclusion_is_loaded_by_default_without_affecting_other_lists(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(publisher, 'STATE', Path(directory)):
+            path = Path(directory) / 'excluded-lists.json'
+            path.write_text(json.dumps({'version': 1, 'chat_id': publisher.CHAT,
+                                        'codes': [7888], 'list_ids': []}))
+            blocked = self.row(); blocked['PublicCode'] = 7888
+            self.assertFalse(publisher.eligible(blocked))
+            self.assertTrue(publisher.eligible(self.row()))
+            self.assertEqual(publisher.load_exclusions()['codes'], {7888})
+
+    def test_malformed_or_foreign_group_policy_stops_advertising(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(publisher, 'STATE', Path(directory)):
+            path = Path(directory) / 'excluded-lists.json'
+            for data in [{'version': 1, 'chat_id': '-100OTHER', 'codes': [7888]},
+                         {'version': 1, 'chat_id': publisher.CHAT, 'codes': ['7888']},
+                         {'version': 1, 'chat_id': publisher.CHAT, 'codes': [7888], 'list_ids': ['bad-id']}]:
+                path.write_text(json.dumps(data))
+                with self.assertRaises(ValueError):
+                    publisher.eligible(self.row())
+
+    def test_missing_policy_keeps_existing_selection_rules(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(publisher, 'STATE', Path(directory)):
+            self.assertTrue(publisher.eligible(self.row(5)))
+            self.assertFalse(publisher.eligible(self.row(10)))
+
+    def run_selection(self, history, code=42, publish=False, photo_count=0):
+        with tempfile.TemporaryDirectory() as directory, patch.object(publisher, 'STATE', Path(directory)):
+            row=self.row();row.update(Id='00000000-0000-0000-0000-000000000042',DisplayBrand='Test',PublicCode=code)
+            key=publisher.perfume_frequency_key(row);now=time.time()
+            with sqlite3.connect(Path(directory)/'history.sqlite') as db:
+                db.execute('CREATE TABLE slots(slot INTEGER PRIMARY KEY,status TEXT,list_id TEXT,at REAL,message_id INTEGER,error TEXT,perfume_key TEXT)')
+                for i,(status,age) in enumerate(history):
+                    db.execute('INSERT INTO slots VALUES(?,?,?,?,?,?,?)',(-100-i,status,row['Id'],now-age,1,None,key))
+            (Path(directory)/'excluded-lists.json').write_text(json.dumps({'version':1,'chat_id':publisher.CHAT,'codes':[7888],'list_ids':[]}))
+            content={'reviews_found':True,'analysis':'یه رایحه گلی و چوبی با حال‌وهوای گرم و دلنشین',
+                     'positive_reviews':'بعضی‌ها از ترکیب گل و چوب و حس نرمش خوششون اومده',
+                     'sources':['https://www.fragrantica.com/perfume/Test/Exact-42.html']}
+            out=io.StringIO()
+            images=SimpleNamespace(prepare=lambda *args:([Path(directory)/str(i) for i in range(photo_count)],'synthetic'),
+                send_album=lambda *args:list(range(700,700+photo_count)))
+            with patch('sys.argv',['publisher']+([] if publish else ['--dry-run'])), patch.object(publisher,'config',return_value={'Telegram__SilentGroupChatIds':publisher.CHAT,'Telegram__BotToken':'synthetic-only'}), \
+                 patch.object(publisher,'query',return_value=[row]), patch.object(publisher,'research',return_value=content), \
+                 patch.object(publisher,'image_provider',return_value=images), \
+                 patch.object(publisher,'post',return_value={'ok':True,'result':{'message_id':600}}), \
+                 contextlib.redirect_stdout(out):
+                publisher.main()
+            return [json.loads(line) for line in out.getvalue().splitlines()] if publish else json.loads(out.getvalue().strip())
+
+    def test_automatic_advertisement_includes_two_photo_fallback_album(self):
+        output=self.run_selection([],publish=True,photo_count=2)
+        self.assertTrue(any(line.get('official_album')=='sent' and line.get('message_ids')==[700,701] for line in output))
+
+    def test_previous_ad_three_days_ago_no_longer_blocks_direct_selection(self):
+        self.assertEqual(self.run_selection([('sent',3*86400)])['status'],'validated_without_posting')
+
+    def test_two_ads_in_24h_still_block_direct_selection(self):
+        result=self.run_selection([('sent',3600),('sent',7200)])
+        self.assertEqual(result['reason'],'daily_perfume_limit')
+
+    def test_recent_failed_attempt_backoff_remains(self):
+        self.assertEqual(self.run_selection([('failed',3600)])['status'],'no_new_eligible_list')
+
+    def test_explicit_group_exclusion_remains_in_main_selection(self):
+        self.assertEqual(self.run_selection([],7888)['status'],'no_new_eligible_list')
 
     def test_content_needs_actual_reviews(self):
         content = dict(reviews_found=True, analysis='یه رایحه گلی و چوبی با حال‌وهوای گرم و دلنشین',

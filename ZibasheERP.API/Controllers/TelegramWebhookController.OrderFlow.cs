@@ -347,7 +347,7 @@ public sealed partial class TelegramWebhookController
     {
         const int pageSize = 50;
         var selected = _orderFlowDrafts.GetArrivalSelection(chatId, userId);
-        var query = _db.SalesLists.AsNoTracking()
+        var query = ArrivalListsWithCompletion()
             .Where(list => !list.IsDeleted && _db.OrderItems.Any(item => !item.IsDeleted &&
                 item.SalesListId == list.Id &&
                 item.FulfillmentStatus == OrderItemFulfillmentStatus.WaitingForArrivalInIran))
@@ -414,7 +414,7 @@ public sealed partial class TelegramWebhookController
         HashSet<Guid> selected,
         CancellationToken ct)
     {
-        var list = await _db.SalesLists.AsNoTracking()
+        var list = await ArrivalListsWithCompletion()
             .FirstOrDefaultAsync(value => value.Id == listId && !value.IsDeleted, ct);
         if (list is null) return;
         var isPhotoCard = callback.Message!.Photo?.Count > 0;
@@ -433,10 +433,18 @@ public sealed partial class TelegramWebhookController
     private static string FormatArrivalCardCaption(SalesList list, bool html)
     {
         var name = string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName;
+        var completedAt = SalesListCompletionDate.FormatDateTime(list, list.Requests.ToArray());
         return html
-            ? $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.DisplayCode}</code>"
-            : $"📷 {name}\nکد لیست: {list.DisplayCode}";
+            ? $"📷 <b>{Html(name)}</b>\nکد لیست: <code>{list.DisplayCode}</code>\n📅 تکمیل لیست: <b>{Html(completedAt)}</b>"
+            : $"📷 {name}\nکد لیست: {list.DisplayCode}\n📅 تکمیل لیست: {completedAt}";
     }
+
+    private IQueryable<SalesList> ArrivalListsWithCompletion() => _db.SalesLists.AsNoTracking()
+        .Include(list => list.Requests.Where(request => !request.IsDeleted &&
+            request.Kind == SalesListRequestKind.CurrentBottle &&
+            (request.Status == SalesListRequestStatus.Confirmed || request.Status == SalesListRequestStatus.Promoted ||
+             request.Status == SalesListRequestStatus.QueuedForInvoice || request.Status == SalesListRequestStatus.Invoiced))
+            .OrderByDescending(request => request.ConfirmedAt).Take(1));
 
     private static IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> BuildArrivalCardButtons(
         Guid listId,
@@ -603,6 +611,7 @@ public sealed partial class TelegramWebhookController
                 .ToArrayAsync(ct);
             var groupedItems = await _db.OrderItems.AsNoTracking()
                 .Include(value => value.Order).ThenInclude(value => value!.Customer)
+                .Include(value => value.SourceSalesListRequest)
                 .Include(value => value.SalesList)
                 .Include(value => value.Perfume)
                 .Where(value => !value.IsDeleted &&
@@ -624,12 +633,14 @@ public sealed partial class TelegramWebhookController
 
         var items = await _db.OrderItems.AsNoTracking()
             .Include(value => value.Order).ThenInclude(value => value!.Customer)
+            .Include(value => value.SourceSalesListRequest)
             .Include(value => value.SalesList)
             .Include(value => value.Perfume)
             .Where(value => !value.IsDeleted && statuses.Contains(value.FulfillmentStatus))
             .OrderBy(value => value.UpdatedAt ?? value.CreatedAt).Take(50).ToArrayAsync(ct);
+        var recipientLabels = await ShippingRecipientLabelsAsync(items, ct);
         var lines = items.Select((item, index) =>
-            $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — " +
+            $"{index + 1}. {recipientLabels[item.Id]} — " +
             $"{item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر"} — {item.RequestedVolumeMl} میل");
         var title = status switch
         {
@@ -653,6 +664,7 @@ public sealed partial class TelegramWebhookController
         string statusTitle,
         CancellationToken ct)
     {
+        var recipientLabels = await ShippingRecipientLabelsAsync(items, ct);
         var groups = items
             .GroupBy(item => item.SalesListId.HasValue
                 ? $"list:{item.SalesListId.Value:N}"
@@ -668,6 +680,8 @@ public sealed partial class TelegramWebhookController
             var list = first.SalesList;
             var name = list?.PersianName ?? first.Perfume?.Name ?? first.ManualDescription ?? "عطر";
             var code = list is null ? "\n🔴 موجودی" : $"\nکد لیست: <code>{list.DisplayCode}</code>";
+            if(list?.IsInventoryOffer==true) code=$"\nکد موجودی: <code>{list.DisplayCode}</code>\nجایگاه نگهداری: {Html(list.StoragePosition??"جایگاه ثبت نشده")}";
+            else if(!string.IsNullOrWhiteSpace(list?.StoragePosition))code+=$"\nجایگاه نگهداری: {Html(list.StoragePosition)}";
             TelegramSendResult heading;
             if (!string.IsNullOrWhiteSpace(list?.TelegramPhotoFileId))
             {
@@ -689,7 +703,7 @@ public sealed partial class TelegramWebhookController
             }
 
             var lines = group.Select((item, index) =>
-                $"{index + 1}. {OrderCustomerLabel(item.Order?.Customer)} — {item.RequestedVolumeMl} میل" +
+                $"{index + 1}. {recipientLabels[item.Id]} — {item.RequestedVolumeMl} میل" +
                 (item.Order?.IsInventory == true || item.SalesList?.IsInventoryOffer == true
                     ? " — 🔴 موجودی"
                     : string.Empty));

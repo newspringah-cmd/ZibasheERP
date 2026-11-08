@@ -1,0 +1,11 @@
+# Physical recipients of shipping items
+
+Customer and administrator shipping requests use `ShippingRecipientPolicy.ItemsForCustomer`, including normal list gifts and manual inventory gifts. The donor remains the financial owner of the invoice; only the actual gift recipient may request physical delivery. Received gifts remain included. Explicit shared-post membership is the sole way to include several recipients in one parcel.
+
+`GiftShippingMembershipService` repairs historical outgoing gifts accidentally attached to the donor's still-open parcel. This runs before both shipping-request entry points, address reports, single/batch package reports and address-bound photo/list views. It clears only the gift item's request ID, request time and preparation-message link, leaving its volume, source request, recipient, ready state, invoice and debt unchanged. A processed audit receipt records the exact request, donor and recipient/item IDs; it creates no delivery job.
+
+Inspection remains read-only. Repair requires a uniquely resolved parcel primary and a uniquely resolved physical recipient under the same policy used by dispatch. Conflicting gift receipts, duplicate identities, canceled records and unrelated invalid purchases are not silently repaired. Shared recipients keep their gifts in the shared parcel; only proven gifts for outsiders are detached. Gift-only parcels belonging to their actual recipient remain intact.
+
+Updates recheck under the shared-parcel application lock plus customer, item, order, gift-source and tracking-row locks. Queued/attempted/sent tracking, partially dispatched parcels and closed shared parcels freeze membership. Such cases continue to require explicit review. Photo feedback remains separate from dispatch: no missing or outdated photo approval blocks tracking, and no gift correction invents customer confirmation. Tracking matching and final validation remain read-only and strict.
+
+Regression checks use only isolated SQL fixtures. They cover normal/manual gifts, multiple recipients and quantities, incoming gifts, shared parcels, duplicate identities, queued tracking, dispatched parcels, idempotent audit, paid invoices and unchanged financial and fulfillment fields.

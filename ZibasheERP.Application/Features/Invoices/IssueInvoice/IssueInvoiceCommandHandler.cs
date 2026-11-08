@@ -70,7 +70,7 @@ public sealed class IssueInvoiceCommandHandler
         };
 
         if (order.Status != OrderState.Paid)
-            order.Status = OrderState.Invoiced;
+            order.Status = order.IsInventory ? OrderState.ReadyToShip : OrderState.Invoiced;
         order.InvoiceIssuedAt = now;
         order.UpdatedAt = now;
 
@@ -89,6 +89,7 @@ public sealed class IssueInvoiceCommandHandler
                 invoice.BottleTotal,
                 invoice.TotalAmount,
                 CustomerUsername = order.Customer.Username,
+                order.IsInventory,
                 PaymentDeadlineHours = 24,
                 PaymentAccounts = paymentAccounts.Select(value => new
                 {
@@ -235,7 +236,7 @@ public sealed class IssueInvoiceCommandHandler
                     ,order.Customer.Username
                 },
                 PaymentDeadlineHours = 24,
-                request.IsInventory,
+                order.IsInventory,
                 GiftDeliveryRole = request.IsGift ? "Giver" : null,
                 request.GiftRecipientUsername,
                 request.GiftRecipientTelegramId,

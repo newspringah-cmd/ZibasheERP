@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import importlib.util
+import uuid
 from collections import Counter
 
 CHAT = '-1001283018740'
@@ -33,8 +34,30 @@ def image_provider():
     return module
 
 
-def eligible(row, maximum=10):
-    return (not row.get('IsDeleted') and not row.get('IsInventoryOffer') and row['Status'] == 1
+def load_exclusions():
+    """Persistent group-only preferences, retained across deployments with no expiry."""
+    path = STATE / 'excluded-lists.json'
+    if not path.exists():
+        return {'codes': set(), 'list_ids': set()}
+    data = json.loads(path.read_text())
+    if data.get('version') != 1 or data.get('chat_id') != CHAT:
+        raise ValueError('Group advertising exclusion identity mismatch')
+    codes, ids = data.get('codes', []), data.get('list_ids', [])
+    if (not isinstance(codes, list) or not isinstance(ids, list)
+            or any(type(code) is not int or code <= 0 for code in codes)):
+        raise ValueError('Invalid group advertising exclusions')
+    return {'codes': set(codes), 'list_ids': {str(uuid.UUID(value)).lower() for value in ids}}
+
+
+def excluded(row, policy=None):
+    policy = load_exclusions() if policy is None else policy
+    return (row.get('PublicCode') in policy['codes'] or row.get('StablePublicCode') in policy['codes']
+            or str(row.get('Id', '')).lower() in policy['list_ids'])
+
+
+def eligible(row, maximum=10, exclusions=None):
+    return (not excluded(row, exclusions)
+            and not row.get('IsDeleted') and not row.get('IsInventoryOffer') and row['Status'] == 1
             and 0 < row['TotalVolume'] - row['ReservedVolume'] < maximum
             and bool(row.get('TelegramPhotoFileId')) and bool(row.get('TelegramMessageId'))
             and re.fullmatch(r'-100\d+', row.get('TelegramChannelId', '')) is not None)
@@ -181,7 +204,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--test-code', type=int,
-                        help='Explicit manual sample: bypass remainder threshold and sales-list cooldown; daily perfume cap still applies')
+                        help='Explicit manual sample: bypass remainder threshold and failed-list backoff; daily perfume cap still applies')
     args = parser.parse_args()
     os.umask(0o077)
     STATE.mkdir(parents=True, exist_ok=True)
@@ -191,6 +214,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
+        exclusions = load_exclusions()
         with sqlite3.connect(STATE / 'history.sqlite') as db:
             db.execute('CREATE TABLE IF NOT EXISTS slots (slot INTEGER PRIMARY KEY,status TEXT,list_id TEXT,at REAL,message_id INTEGER,error TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS cache (list_id TEXT PRIMARY KEY,at REAL,content TEXT)')
@@ -201,7 +225,7 @@ def main():
             slot = -int(now) if args.test_code else int(now // 7200)
             if db.execute('SELECT 1 FROM slots WHERE slot=?', (slot,)).fetchone() and not args.dry_run:
                 return
-            # The approved sample is part of the seven-day cooldown after migration.
+            # Preserve the approved sample in advertising history and daily counts.
             sample = Path('/home/zibashe/backups/promo-sample-over70-20261026/sent.json')
             if sample.exists() and not db.execute('SELECT 1 FROM slots WHERE slot=-1').fetchone():
                 receipt = json.loads(sample.read_text())
@@ -212,8 +236,8 @@ def main():
             cfg, sqlenv = config('deploy-zibashe-api-1'), config('deploy-sqlserver-1')
             if CHAT not in cfg.get('Telegram__SilentGroupChatIds', '').split(','):
                 raise RuntimeError('Advertising destination must remain a silent group')
-            recent = {row[0] for row in db.execute("SELECT list_id FROM slots WHERE status IN ('sent','sending','unknown') AND at>?", (now - 7*86400,))}
-            recent.update(row[0] for row in db.execute("SELECT list_id FROM slots WHERE status='failed' AND at>?", (now - 86400,)))
+            # Successful past advertisements do not impose a multi-day list cooldown.
+            recent_failures = {row[0] for row in db.execute("SELECT list_id FROM slots WHERE status='failed' AND at>?", (now - 86400,))}
             images_module = image_provider()
             day_ago = now - 86400
             missing_keys = {row[0] for row in db.execute(
@@ -235,9 +259,9 @@ def main():
                 nonlocal daily_limit_skipped
                 result = []
                 for candidate in rows:
-                    if not eligible(candidate, volume_limit):
+                    if not eligible(candidate, volume_limit, exclusions):
                         continue
-                    if not args.test_code and candidate['Id'].lower() in {x.lower() for x in recent if x}:
+                    if not args.test_code and candidate['Id'].lower() in {x.lower() for x in recent_failures if x}:
                         continue
                     key = perfume_frequency_key(candidate)
                     if daily_counts[key] >= 2:
@@ -259,7 +283,7 @@ def main():
             if not candidates:
                 if not args.dry_run:
                     db.execute("UPDATE slots SET status='empty' WHERE slot=?", (slot,)); db.commit()
-                reason = 'daily_perfume_limit' if daily_limit_skipped else 'no_new_eligible_list_or_sales_list_cooldown'
+                reason = 'daily_perfume_limit' if daily_limit_skipped else 'no_eligible_list_or_recent_failure'
                 print(json.dumps({'status': 'no_new_eligible_list', 'reason': reason}))
                 return
             try:
@@ -286,7 +310,7 @@ def main():
                 except Exception as image_error:
                     image_status = 'Image verification unavailable: ' + str(image_error)[:180]
                 fresh = query(sqlenv, row['Id'], test_code=args.test_code, maximum_remaining=maximum)
-                if len(fresh) != 1 or not eligible(fresh[0], maximum):
+                if len(fresh) != 1 or not eligible(fresh[0], maximum, load_exclusions()):
                     raise ValueError('Selected list completed or no longer eligible; skip this slot')
                 row = fresh[0]; text = caption(row, content)
                 if len(text.encode('utf-16-le')) // 2 > 1024:
@@ -307,7 +331,7 @@ def main():
                     raise RuntimeError('Telegram rejected publication')
                 db.execute("UPDATE slots SET status='sent',message_id=? WHERE slot=?", (result['result']['message_id'], slot)); db.commit()
                 print(json.dumps({'status': 'sent', 'code': row['PublicCode'], 'message_id': result['result']['message_id']}))
-                if len(images) == 3:
+                if len(images) in (2, 3):
                     db.execute('INSERT INTO albums VALUES(?,?,?)', (slot, 'sending', '')); db.commit()
                     try:
                         ids = images_module.send_album(cfg, CHAT, images)

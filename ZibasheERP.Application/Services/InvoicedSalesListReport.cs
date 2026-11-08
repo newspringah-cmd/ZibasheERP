@@ -39,21 +39,38 @@ public static class InvoicedSalesListReport
             TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(end.Date.AddDays(1), DateTimeKind.Unspecified), zone));
     }
 
-    // Count cycles, not customer invoices or perfume catalogue entries.
-    public static IQueryable<Guid> ListIds(IQueryable<OrderItem> items, DateTime since, DateTime until) =>
+    private static IQueryable<OrderItem> InvoicedItems(IQueryable<OrderItem> items, DateTime since, DateTime until) =>
         items.Where(item => !item.IsDeleted && item.SalesListId.HasValue &&
                 item.Order != null && !item.Order.IsDeleted && item.Order.Status != OrderStatus.Cancelled &&
                 item.Order.Source == OrderSource.SalesListInvoice &&
                 item.Order.Invoices.Any(invoice => !invoice.IsDeleted &&
                     (invoice.Status == InvoiceStatus.Issued || invoice.Status == InvoiceStatus.Paid) &&
-                    invoice.IssuedAt >= since && invoice.IssuedAt < until))
+                    invoice.IssuedAt >= since && invoice.IssuedAt < until));
+
+    private static IQueryable<Order> InvoicedOrders(IQueryable<Order> orders, DateTime since, DateTime until) =>
+        orders.Where(order => !order.IsDeleted && order.SalesListId.HasValue &&
+            order.Status != OrderStatus.Cancelled && order.Source == OrderSource.SalesListInvoice &&
+            order.Invoices.Any(invoice => !invoice.IsDeleted &&
+                (invoice.Status == InvoiceStatus.Issued || invoice.Status == InvoiceStatus.Paid) &&
+                invoice.IssuedAt >= since && invoice.IssuedAt < until));
+
+    // Count completed list cycles separately from fixed inventory packages.
+    // Check both flags so older stock invoices cannot inflate the normal count.
+    public static IQueryable<Guid> ListIds(IQueryable<OrderItem> items, DateTime since, DateTime until) =>
+        InvoicedItems(items, since, until)
+            .Where(item => !item.Order!.IsInventory && (item.SalesList == null || !item.SalesList.IsInventoryOffer))
             .Select(item => item.SalesListId!.Value).Distinct();
 
     public static IQueryable<Guid> ListIds(IQueryable<OrderItem> items, IQueryable<Order> orders, DateTime since, DateTime until) =>
-        ListIds(items, since, until).Union(orders.Where(order => !order.IsDeleted && order.SalesListId.HasValue &&
-                order.Status != OrderStatus.Cancelled && order.Source == OrderSource.SalesListInvoice &&
-                order.Invoices.Any(invoice => !invoice.IsDeleted &&
-                    (invoice.Status == InvoiceStatus.Issued || invoice.Status == InvoiceStatus.Paid) &&
-                    invoice.IssuedAt >= since && invoice.IssuedAt < until))
+        ListIds(items, since, until).Union(InvoicedOrders(orders, since, until)
+            .Where(order => !order.IsInventory && (order.SalesList == null || !order.SalesList.IsInventoryOffer))
             .Select(order => order.SalesListId!.Value));
+
+    public static IQueryable<Guid> InventoryIds(IQueryable<OrderItem> items, IQueryable<Order> orders, DateTime since, DateTime until) =>
+        InvoicedItems(items, since, until)
+            .Where(item => item.Order!.IsInventory || (item.SalesList != null && item.SalesList.IsInventoryOffer))
+            .Select(item => item.SalesListId!.Value).Distinct()
+            .Union(InvoicedOrders(orders, since, until)
+                .Where(order => order.IsInventory || (order.SalesList != null && order.SalesList.IsInventoryOffer))
+                .Select(order => order.SalesListId!.Value));
 }

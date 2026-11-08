@@ -38,6 +38,29 @@ public static class AddressReadyItemsTests
             .Where(item => item.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip).ToQueryString();
         check(sql.Contains("GiftRecipientTelegramUsername") && sql.Contains("GiftRecipientTelegramUserId") && sql.Contains("FulfillmentStatus"),
             "gift ownership and ready status report filters translate to SQL");
+        var manualGift = Item(customer); manualGift.Id = Guid.NewGuid(); manualGift.OrderId = Guid.NewGuid();
+        manualGift.Order!.Source = OrderSource.ManualInvoice; manualGift.Order.Notes = "فاکتور دستی | هدیه برای receiver";
+        var own = Item(customer); own.Id = Guid.NewGuid(); own.OrderId = Guid.NewGuid();
+        var evidence = new NotificationOutbox { OrderId = manualGift.OrderId, CustomerId = other, Channel = "Telegram", EventType = "GiftInvoiceIssued" };
+        var testProfiles = new[] { new Customer { Id=customer }, new Customer { Id=other } }.AsQueryable();
+        var stockRows = new[] { manualGift, own }.AsQueryable();
+        var receipts = new[] { evidence }.AsQueryable();
+        check(ShippingRecipientPolicy.ItemsForCustomer(stockRows, receipts, customer, null, null, testProfiles).Select(i => i.Id).SequenceEqual(new[] { own.Id }),
+            "manual inventory gift is excluded from the payer's address report using its durable recipient identity");
+        check(ShippingRecipientPolicy.ItemsForCustomer(stockRows, receipts, other, null, null, testProfiles).Single().Id == manualGift.Id,
+            "manual gift belongs to the actual recipient even without a username or list request");
+        evidence.EventType = "InvoiceGiftDeliveryRequiresManualAction"; evidence.Status = NotificationOutboxStatus.Failed;
+        check(ShippingRecipientPolicy.ItemsForCustomer(stockRows, receipts, other, null, null, testProfiles).Single().Id == manualGift.Id,
+            "a gift whose recipient group is disconnected retains its recipient despite delivery failure");
+        check(!ShippingRecipientPolicy.ItemsForCustomer(new[] { manualGift }.AsQueryable(), Array.Empty<NotificationOutbox>().AsQueryable(), customer, null, null, testProfiles).Any(),
+            "a legacy manual gift without confirmed recipient evidence never falls back to the paying customer");
+        var conflicting = new[] { evidence, new NotificationOutbox { OrderId = manualGift.OrderId, CustomerId = customer, Channel = "Telegram", EventType = "GiftInvoiceIssued" } }.AsQueryable();
+        check(!ShippingRecipientPolicy.ItemsForCustomer(new[] { manualGift }.AsQueryable(), conflicting, other, null, null, testProfiles).Any() &&
+            !ShippingRecipientPolicy.ItemsForCustomer(new[] { manualGift }.AsQueryable(), conflicting, customer, null, null, testProfiles).Any(),
+            "conflicting manual gift recipients are excluded rather than guessed");
+        var manualSql = ShippingRecipientPolicy.ItemsForCustomer(db.OrderItems, db.NotificationOutbox, customer, "123", "Receiver", db.Customers).ToQueryString();
+        check(manualSql.Contains("GiftInvoiceIssued") && manualSql.Contains("CustomerId"),
+            "manual gift shipping ownership translates to server-side SQL without a schema change");
         var fancy = Item(other, true, "123");
         fancy.Bottle = new Bottle { Type = BottleType.Fancy, Name = "فانتزی" };
         fancy.RequestedVolumeMl = 3;

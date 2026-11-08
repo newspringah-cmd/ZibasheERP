@@ -5,7 +5,7 @@ public sealed record CompletedSalesListForInvoice(
     int PublicCode,
     string PerfumeName,
     int ConfirmedRequestCount,
-    int TotalVolume,
+    decimal TotalVolume,
     string? TelegramPhotoFileId);
 
 public sealed record ManualInvoiceLineInput(
@@ -96,7 +96,8 @@ public interface IInvoiceIssuanceService
     Task<InvoiceIssuanceResult> IssueCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,
         string issuedByTelegramUserId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IReadOnlyCollection<Guid>? expectedInventoryRequestIds = null);
 
     Task<InvoiceIssuancePreview> PreviewCompletedListsAsync(
         IReadOnlyCollection<Guid> salesListIds,

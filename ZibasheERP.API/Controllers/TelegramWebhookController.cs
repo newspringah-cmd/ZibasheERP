@@ -480,7 +480,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
                 ? item.EnglishName
                 : item.PerfumeName;
             return $"{index + 1}. {name} — {item.Brand}\n" +
-                $"هر میل: {item.PricePerMl:N0} تومان | باقی‌مانده: {item.RemainingVolumeMl} میل | {bottle}";
+                $"هر میل: {item.PricePerMl:N0} تومان | باقی‌مانده: {item.RemainingVolumeMl:0.#} میل | {bottle}";
         });
 
         var buttons = lists.Select(item =>
@@ -504,6 +504,14 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if(callback.Message is not null&&callback.Data?.StartsWith("groupchatreply:",StringComparison.Ordinal)!=true)
+            GroupChatReplyDrafts.TryRemove((callback.Message.Chat.Id,callback.From.Id),out _);
+        if(callback.Message is not null && callback.Data?.StartsWith("invoiceadmin:ready:",StringComparison.Ordinal)!=true)
+            InventoryDrafts.TryRemove((callback.Message.Chat.Id,callback.From.Id),out _);
+        if (callback.Message is not null && callback.Data?.StartsWith("invoiceadmin:flash:", StringComparison.Ordinal) != true)
+            FlashDrafts.TryRemove((callback.Message.Chat.Id, callback.From.Id), out _);
+        if (callback.Message is not null && callback.Data?.StartsWith("invoiceadmin:marketing:", StringComparison.Ordinal) != true)
+            MarketingDrafts.TryRemove((callback.Message.Chat.Id, callback.From.Id), out _);
         if (callback.Data?.StartsWith("purchasepage:", StringComparison.Ordinal) == true)
         {
             var parts = callback.Data.Split(':');
@@ -521,6 +529,12 @@ public sealed partial class TelegramWebhookController : ControllerBase
         if (await TryHandleTrackingImportCallbackAsync(callback, cancellationToken))
             return;
 
+        if (await TryHandlePurchaseCostCallbackAsync(callback, cancellationToken))
+            return;
+        if (await TryHandlePerfumePurchaseReportCallbackAsync(callback, cancellationToken))
+            return;
+        if (await TryHandleGroupChatReplyCallbackAsync(callback, cancellationToken))
+            return;
         if (await TryHandleShippingRequestCallbackAsync(callback, cancellationToken))
             return;
 
@@ -945,6 +959,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
 
         // Store eligible non-sensitive conversation turns for the optional accountant-style
         // assistant. Collection must never interrupt normal group processing.
+        try{await ObserveAccountantHumanReplyAsync(message, cancellationToken);}
+        catch(Exception ex)when(!cancellationToken.IsCancellationRequested)
+        {_logger.LogWarning(ex,"Capturing accountant reply receipt failed.");}
         await CaptureAccountantLearningMessageAsync(message, cancellationToken);
 
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
@@ -1046,6 +1063,31 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramMessage message,
         CancellationToken cancellationToken)
     {
+        if (await TryHandleShippingPackRevisionMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleShippingPackPhotoMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleInvoiceCleanupReplyAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleInvoiceCancellationMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandlePurchaseCostMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleGroupChatReplyMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleSharedShippingMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleInvoiceTransferMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleBottleUpgradeMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleReadyInventoryMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleFlashMessageAsync(message, cancellationToken))
+            return true;
+        if (await TryHandleMarketingMessageAsync(message, cancellationToken))
+            return true;
+
         if (await TryHandleInvoicedListReportMessageAsync(message, cancellationToken))
             return true;
 
@@ -1211,9 +1253,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
                     $"جزئیات {order.OrderNumber}",
                     $"order:{TelegramCallbackParser.EncodeGuid(order.Id)}")
             }).ToList();
-        var hasReadyItems = await _db.OrderItems.AsNoTracking().AnyAsync(item => !item.IsDeleted &&
-            item.Order != null && item.Order.Customer != null &&
-            item.Order.Customer.TelegramId == telegramId &&
+        var shippingCustomer = await _db.Customers.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted && c.TelegramId == telegramId, cancellationToken);
+        var hasReadyItems = shippingCustomer is not null && await CustomerShippingItems(shippingCustomer).AsNoTracking().AnyAsync(item =>
             item.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip &&
             item.ShippingRequestId == null, cancellationToken);
         if (hasReadyItems)
@@ -1493,7 +1534,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
             new GetOrderInvoiceQuery(order.Id),
             cancellationToken);
         var items = order.Items.Select(item =>
-            $"• {item.PerfumeName} — {item.RequestedVolumeMl} میل — {item.LineTotal:N0} تومان");
+            $"• {item.PerfumeName} — {item.RequestedVolumeMl:0.#} میل — {item.LineTotal:N0} تومان");
         var invoiceLine = invoice is null
             ? "فاکتور: هنوز صادر نشده"
             : $"فاکتور: {invoice.InvoiceNumber} — {invoice.Status}";
@@ -1606,7 +1647,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
                     ? "بدون شیشه"
                     : $"شیشه: {item.BottleName} — {item.BottlePrice:N0} تومان";
             return $"{index + 1}. {item.PerfumeName} — {item.PerfumeBrand}\n" +
-                $"{item.VolumeMl} میل × {item.PricePerMl:N0} تومان\n" +
+                $"{item.VolumeMl:0.#} میل × {item.PricePerMl:N0} تومان\n" +
                 $"{bottle}\nجمع ردیف: {item.LineTotal:N0} تومان";
         });
         var message = $"فاکتور {invoice.InvoiceNumber}\n" +

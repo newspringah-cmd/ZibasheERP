@@ -233,7 +233,7 @@ public sealed class TelegramGroupMembershipTracker(
             .Include(value => value.Order)
             .ThenInclude(value => value!.Customer)
             .FirstOrDefaultAsync(
-                value => value.InvoiceNumber == normalizedInvoiceNumber && !value.IsDeleted,
+                value => value.InvoiceNumber == normalizedInvoiceNumber && !value.IsDeleted && value.Status!=ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled,
                 cancellationToken);
         var customer = invoice?.Order?.Customer;
         if (customer is null || invoice!.Order!.IsDeleted || customer.IsDeleted)
@@ -270,7 +270,7 @@ public sealed class TelegramGroupMembershipTracker(
                 .ThenInclude(value => value.Perfume)
             .Include(value => value.Order).ThenInclude(value => value!.Items)
                 .ThenInclude(value => value.SalesList)
-            .FirstOrDefaultAsync(value => value.InvoiceNumber == invoiceNumber.Trim() && !value.IsDeleted,
+            .FirstOrDefaultAsync(value => value.InvoiceNumber == invoiceNumber.Trim() && !value.IsDeleted && value.Status!=ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled,
                 cancellationToken);
         var order = invoice?.Order;
         var giftItems = order?.Items.Where(item => !item.IsDeleted && item.SourceSalesListRequest?.IsGift == true &&
@@ -476,6 +476,7 @@ public sealed class TelegramGroupMembershipTracker(
                 .ThenInclude(value => value!.Items)
                     .ThenInclude(value => value.SourceSalesListRequest)
             .Where(value => !value.IsDeleted && value.Order != null && !value.Order.IsDeleted &&
+                value.Status!=ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled && value.Order.Status!=OrderStatus.Cancelled &&
                 value.Order.CustomerId == customerId &&
                 (value.DeliveryStatus == InvoiceDeliveryStatus.NeedsManualAction ||
                  value.DeliveryStatus == InvoiceDeliveryStatus.Failed))
@@ -558,6 +559,7 @@ public sealed class TelegramGroupMembershipTracker(
                         order.Customer.Username
                     },
                     PaymentDeadlineHours = 24,
+                    order.IsInventory,
                     PaymentAccounts = paymentAccounts,
                     Items = order.Items.OrderBy(item => item.RowNumber).Select(item => new
                     {

@@ -37,7 +37,7 @@ public class SalesListRepository : ISalesListRepository
             .Include(salesList => salesList.Batch)
             .Include(salesList => salesList.Perfume)
             .Where(salesList =>
-                salesList.Status == SalesListStatus.Open &&
+                !salesList.IsInventoryOffer && salesList.Status == SalesListStatus.Open &&
                 salesList.ReservedVolume < salesList.TotalVolume &&
                 salesList.Perfume.IsActive &&
                 !salesList.IsDeleted)
@@ -65,14 +65,14 @@ public class SalesListRepository : ISalesListRepository
         CancellationToken cancellationToken = default)
     {
         return await _dbContext.SalesLists
-            .Where(salesList => !salesList.IsDeleted && salesList.Status == SalesListStatus.Open)
+            .Where(salesList => !salesList.IsDeleted && !salesList.IsInventoryOffer && salesList.Status == SalesListStatus.Open)
             .OrderBy(salesList => salesList.OpenDate)
             .ToArrayAsync(cancellationToken);
     }
 
     public Task<int> CountAllOpenAsync(CancellationToken cancellationToken = default) =>
         _dbContext.SalesLists.CountAsync(
-            salesList => !salesList.IsDeleted && salesList.Status == SalesListStatus.Open,
+            salesList => !salesList.IsDeleted && !salesList.IsInventoryOffer && salesList.Status == SalesListStatus.Open,
             cancellationToken);
 
     public async Task<IReadOnlyCollection<SalesList>> SearchForAdminAsync(

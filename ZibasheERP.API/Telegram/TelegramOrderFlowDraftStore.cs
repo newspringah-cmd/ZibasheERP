@@ -168,6 +168,7 @@ public enum TelegramShippingPreparationStage
 
 public sealed class TelegramShippingPreparationDraft
 {
+    public long? InputPromptMessageId { get; set; }
     public required long ChatId { get; init; }
     public required long UserId { get; init; }
     public Guid CustomerId { get; set; }

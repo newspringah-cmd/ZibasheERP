@@ -16,7 +16,7 @@ public sealed record PerfumeRecommendationCatalogItem(
     string MiddleNotes,
     string BaseNotes,
     string Accords,
-    int RemainingVolumeMl);
+    decimal RemainingVolumeMl);
 
 public sealed record PerfumeRecommendationResult(
     bool IsSuccessful,

@@ -21,7 +21,7 @@ public sealed partial class TelegramWebhookController
     {
         try
         {
-            if (message.From is null)
+            if (message.From is null || message.From.IsBot)
                 return;
 
             var text = FirstTelegramMessageText(message);
@@ -85,28 +85,18 @@ public sealed partial class TelegramWebhookController
     }
 
     private async Task<bool> TryHandleAccountantReplacementQuestionAsync(
-        TelegramMessage message,
-        CancellationToken cancellationToken)
+        TelegramMessage message, CancellationToken cancellationToken)
     {
-        if (message.From is null ||
-            NormalizeLearningUsername(message.From.Username) == LearningAccountantUsername ||
-            string.IsNullOrWhiteSpace(message.Text) ||
-            message.Text.TrimStart().StartsWith('/') ||
-            ContainsSensitiveAccountantLearningData(message.Text) ||
-            !LooksLikeAccountantReplacementQuestion(message.Text) ||
-            !await IsAccountantReplacementReplyEnabledAsync(cancellationToken))
-            return false;
+        if (!CanQueueAccountantQuestion(message) || !await IsAccountantReplacementReplyEnabledAsync(cancellationToken)) return false;
+        await QueueAccountantQuestionAsync(message,DateTime.UtcNow,cancellationToken);
+        return true;
+    }
 
-        var chatId = message.Chat.Id.ToString(CultureInfo.InvariantCulture);
-        var isConnectedGroup = await _db.CustomerTelegramGroups.AsNoTracking()
-            .AnyAsync(value => !value.IsDeleted && value.IsActive && value.ChatId == chatId,
-                cancellationToken);
-        if (!isConnectedGroup)
-            return false;
-
+    private async Task<string?> GenerateAccountantReplacementAnswerAsync(TelegramMessage message,CancellationToken cancellationToken)
+    {
         var since = DateTime.UtcNow.AddDays(-31);
         var history = await _db.TelegramAccountantLearningMessages.AsNoTracking()
-            .Where(value => value.CreatedAt >= since)
+            .Where(value => !value.IsDeleted && value.CreatedAt >= since)
             .OrderByDescending(value => value.CreatedAt)
             .Take(1500)
             .Select(value => new
@@ -120,6 +110,7 @@ public sealed partial class TelegramWebhookController
             })
             .ToArrayAsync(cancellationToken);
 
+        history=history.Where(value=>!ContainsSensitiveAccountantLearningData(value.MessageText)).ToArray();
         var examples = new List<AccountantAnswerExample>();
         foreach (var answer in history.Where(value => value.IsAccountant))
         {
@@ -140,7 +131,7 @@ public sealed partial class TelegramWebhookController
                 examples.Add(new AccountantAnswerExample(question.MessageText, answer.MessageText));
         }
 
-        var questionTokens = LearningTokens(message.Text);
+        var questionTokens = LearningTokens(message.Text!);
         var relevant = examples
             .Select(example => new
             {
@@ -153,20 +144,16 @@ public sealed partial class TelegramWebhookController
             .Select(value => value.Example)
             .ToArray();
         if (relevant.Length < 3)
-            return false;
+            return null;
 
         var result = await _accountantReplacementService.AnswerAsync(
-            message.Text.Trim(), relevant, cancellationToken);
+            message.Text!.Trim(), relevant, cancellationToken);
+        if(result.Error is not null)throw new InvalidOperationException("AccountantGenerationFailed");
         if (!result.ShouldAnswer || string.IsNullOrWhiteSpace(result.Answer) ||
             ContainsSensitiveAccountantLearningData(result.Answer))
-            return false;
+            return null;
 
-        var signedAnswer = ZibaAssistantIdentity.Signature + "\n\n" + result.Answer;
-        var sent = await _sender.SendReplyAsync(
-            chatId, signedAnswer, message.MessageId, cancellationToken);
-        if (!sent.IsSuccessful)
-            _logger.LogWarning("Telegram accountant replacement answer failed: {Error}", sent.Error);
-        return sent.IsSuccessful;
+        return ZibaAssistantIdentity.Signature + "\n\n" + result.Answer;
     }
 
     private async Task ToggleAccountantLearningAsync(
@@ -181,6 +168,7 @@ public sealed partial class TelegramWebhookController
         }
 
         var setting = await _db.TelegramAccountantLearningSettings
+            .Where(value=>!value.IsDeleted)
             .OrderByDescending(value => value.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
         var now = DateTime.UtcNow;
@@ -225,14 +213,19 @@ public sealed partial class TelegramWebhookController
         }
 
         var setting = await GetOrCreateAccountantLearningSettingAsync(callback.From.Id, cancellationToken);
+        var backlogSince=setting.UpdatedAt??setting.CollectionStartedAt??DateTime.UtcNow.AddHours(-24);
         setting.IsAutoReplyEnabled = !setting.IsAutoReplyEnabled;
         setting.UpdatedAt = DateTime.UtcNow;
+        if(setting.IsAutoReplyEnabled)
+            _db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=Guid.Empty,Channel="AccountantReplyControl",EventType="Activated",
+                Recipient=callback.From.Id.ToString(CultureInfo.InvariantCulture),Status=NotificationOutboxStatus.Processed,CreatedAt=DateTime.UtcNow,ProcessedAt=DateTime.UtcNow,
+                Payload=System.Text.Json.JsonSerializer.Serialize(new{SettingId=setting.Id,SinceUtc=backlogSince})});
         setting.UpdatedByTelegramUserId = callback.From.Id.ToString(CultureInfo.InvariantCulture);
         await _db.SaveChangesAsync(cancellationToken);
         await _sender.AnswerCallbackAsync(
             callback.Id,
             setting.IsAutoReplyEnabled
-                ? "پاسخ‌گویی جایگزین حسابدار فعال شد."
+                ? "پاسخ جایگزین فعال شد؛ پیام‌های بی‌پاسخ ۲۴ ساعت اخیر بررسی می‌شوند."
                 : "پاسخ‌گویی جایگزین حسابدار غیرفعال شد.",
             cancellationToken: cancellationToken);
         await SendAccountantAssistantSettingsAsync(callback.Message!.Chat.Id, callback.From, cancellationToken);
@@ -243,6 +236,7 @@ public sealed partial class TelegramWebhookController
         CancellationToken cancellationToken)
     {
         var setting = await _db.TelegramAccountantLearningSettings
+            .Where(value=>!value.IsDeleted)
             .OrderByDescending(value => value.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (setting is not null)
@@ -267,6 +261,7 @@ public sealed partial class TelegramWebhookController
     {
         var setting = await _db.TelegramAccountantLearningSettings
             .AsNoTracking()
+            .Where(value=>!value.IsDeleted)
             .OrderByDescending(value => value.CreatedAt)
             .Select(value => new
             {
@@ -286,6 +281,7 @@ public sealed partial class TelegramWebhookController
 
     private async Task<bool> IsAccountantReplacementReplyEnabledAsync(CancellationToken cancellationToken) =>
         await _db.TelegramAccountantLearningSettings.AsNoTracking()
+            .Where(value=>!value.IsDeleted)
             .OrderByDescending(value => value.CreatedAt)
             .Select(value => (bool?)value.IsAutoReplyEnabled)
             .FirstOrDefaultAsync(cancellationToken) ?? false;
@@ -308,6 +304,7 @@ public sealed partial class TelegramWebhookController
             $"🧠 جمع‌آوری و یادگیری: {(status.IsLearningEnabled ? "فعال ✅" : "غیرفعال ⛔")}\n" +
             $"💬 پاسخ‌گویی جایگزین حسابدار: {(status.IsAutoReplyEnabled ? "فعال ✅" : "غیرفعال ⛔")}\n" +
             $"📝 پاسخ‌های حسابدار ثبت‌شده: {status.SampleCount}\n\n" +
+            "با شروع پاسخ جایگزین، پرسش‌های ذخیره‌شده و بی‌پاسخ ۲۴ ساعت اخیر بررسی می‌شوند؛ پیام‌های جدید گروه‌های حسابداری بدون تگ دریافت و بررسی می‌شوند. ربات به علامت unread تلگرام یا تاریخچهٔ دریافت‌نشده دسترسی ندارد.\n\n" +
             "پاسخ وضعیت عطر و پیشنهاد عطر مستقل از این تنظیمات همیشه فعال است. " +
             "پرسش‌های مالی و موارد نامطمئن نیز حتی در حالت جایگزین پاسخ داده نمی‌شوند.";
         IReadOnlyCollection<TelegramInlineButton>[] buttons =
@@ -340,7 +337,7 @@ public sealed partial class TelegramWebhookController
     {
         var normalized = NormalizeCustomerQuestion(text);
         return text.Contains('?') || text.Contains('؟') ||
-               new[] { "میشه", "می شود", "چطور", "چگونه", "چرا", "کجا", "کی", "چه", "لطفا" }
+               new[] { "میشه", "می شود", "میتونید", "می تونید", "میتونی", "میخوام", "می خواهم", "چطور", "چگونه", "چرا", "کجا", "کی", "چه", "لطفا", "لطفاً" }
                    .Any(value => normalized.Contains(value, StringComparison.Ordinal));
     }
 
@@ -354,7 +351,8 @@ public sealed partial class TelegramWebhookController
         string.IsNullOrWhiteSpace(message.Text) ? message.Caption : message.Text;
 
     private static bool ContainsSensitiveAccountantLearningData(string value) =>
-        IsFinancialQuestion(value) || SensitiveLearningNumberPattern.IsMatch(value);
+        FinancialSubjects.Any(subject=>NormalizeCustomerQuestion(value).Contains(subject,StringComparison.Ordinal)) ||
+        SensitiveLearningNumberPattern.IsMatch(value);
 
     private static string? TruncateLearningValue(string? value, int maximumLength)
     {

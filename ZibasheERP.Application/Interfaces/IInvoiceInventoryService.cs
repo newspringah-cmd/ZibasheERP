@@ -13,7 +13,7 @@ public sealed record InvoiceInventoryReleaseResult(
     Guid SalesListId,
     int PublicCode,
     string PerfumeName,
-    int VolumeMl,
+    decimal VolumeMl,
     string BottleName,
     decimal TotalAmount,
     string PhotoFileId,

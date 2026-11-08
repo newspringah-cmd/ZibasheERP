@@ -133,7 +133,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             throw new InvalidOperationException(CustomerListReservationPolicy.DuplicateMessage);
         if (request.Status != SalesListRequestStatus.PendingConfirmation || request.ExpiresAt <= DateTime.UtcNow)
             throw new InvalidOperationException("مهلت تأیید این درخواست تمام شده است.");
-        if (string.IsNullOrWhiteSpace(request.TelegramUsername))
+        if (string.IsNullOrWhiteSpace(request.TelegramUsername) &&
+            !(request.CreatedByAdmin && request.SalesList.IsInventoryOffer && request.SalesList.InventoryCode.HasValue &&
+              long.TryParse(request.TelegramUserId,out var inventoryBuyerId) && inventoryBuyerId>0))
             throw new InvalidOperationException(
                 "ثبت آیتم بدون یوزرنیم تلگرام مجاز نیست؛ ابتدا در تنظیمات تلگرام یوزرنیم تعیین کنید.");
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
@@ -141,6 +143,13 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             throw new InvalidOperationException("نوع شیشه برای این درخواست مشخص نشده است.");
         if (!request.SalesList.CanReserveVolume(request.VolumeMl, request.CreatedByAdmin))
             throw new InvalidOperationException($"این مقدار قابل ثبت نیست؛ حداقل فعلی {request.SalesList.EffectiveMinimumRequestVolumeMl} میل و باقی‌مانده {request.SalesList.RemainingVolume} میل است.");
+        if(request.SalesList.IsInventoryOffer)
+        {
+            if(request.IsBottleOwner || request.IsComplimentaryBottle || !request.SalesList.FixedBottleId.HasValue ||
+                request.BottleId!=request.SalesList.FixedBottleId || !request.SalesList.FixedBottlePrice.HasValue)
+                throw new InvalidOperationException("این موجودی فقط با شیشهٔ ثابت همان بسته قابل ثبت است.");
+            request.BottlePrice=request.SalesList.FixedBottlePrice.Value;
+        }
         if (request.IsBottleOwner && request.SalesList.HasBottleOwner)
             throw new InvalidOperationException("صاحب باتل این لیست قبلاً مشخص شده است.");
 
@@ -165,13 +174,23 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             }
         }
 
+        var confirmedAt = DateTime.UtcNow;
+        var quote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(
+            _dbContext, request.SalesList, confirmedAt, cancellationToken);
+        if (request.FlashSalePromotionId.HasValue &&
+            (quote.PromotionId != request.FlashSalePromotionId || quote.PricePerMl > request.PerfumePricePerMl))
+            throw new InvalidOperationException("مهلت تخفیف این انتخاب تمام شده است؛ برای دیدن قیمت جدید، حجم را دوباره انتخاب کنید.");
+        if(request.SalesList.InventoryCode.HasValue&&quote.PricePerMl>request.PerfumePricePerMl)
+            throw new InvalidOperationException("قیمت این موجودی به‌روز شده است؛ مقدار را دوباره انتخاب و مبلغ جدید را تأیید کنید.");
+        request.PerfumePricePerMl = quote.PricePerMl;
+        request.FlashSalePromotionId = quote.PromotionId;
         request.SalesList.ReservedVolume += request.VolumeMl;
         request.SalesList.Status = request.SalesList.RemainingVolume == 0
             ? SalesListStatus.Full
             : SalesListStatus.Open;
         request.SalesList.UpdatedAt = DateTime.UtcNow;
         request.Status = SalesListRequestStatus.Confirmed;
-        request.ConfirmedAt = DateTime.UtcNow;
+        request.ConfirmedAt = confirmedAt;
         request.UpdatedAt = DateTime.UtcNow;
         if (queueCompletion)
             _dbContext.NotificationOutbox.Add(new NotificationOutbox
@@ -245,7 +264,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     }
 
     public async Task UpdateConfirmedVolumeAsync(
-        Guid requestId, int expectedVolumeMl, int volumeMl, CancellationToken cancellationToken = default)
+        Guid requestId, decimal expectedVolumeMl, decimal volumeMl, CancellationToken cancellationToken = default)
     {
         if (volumeMl <= 0)
             throw new InvalidOperationException("مقدار باید مثبت باشد.");
@@ -255,9 +274,19 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.Status != SalesListRequestStatus.Confirmed)
             throw new InvalidOperationException("این مورد دیگر فعال نیست.");
+        if (!request.SalesList.IsInventoryOffer && volumeMl != decimal.Truncate(volumeMl))
+            throw new InvalidOperationException("مقدار لیست عادی باید عدد صحیح باشد؛ نیم‌میل فقط برای موجودی است.");
         if (request.VolumeMl != expectedVolumeMl)
             throw new InvalidOperationException(
                 $"این مقدار هم‌زمان توسط مدیر دیگری از {expectedVolumeMl} به {request.VolumeMl} میل تغییر کرده است؛ دوباره وارد ویرایش شوید.");
+
+        if (volumeMl > request.VolumeMl && request.FlashSalePromotionId.HasValue)
+        {
+            var promotion = await _dbContext.FlashSalePromotions.AsNoTracking()
+                .SingleAsync(value => value.Id == request.FlashSalePromotionId, cancellationToken);
+            if (!promotion.IsActiveAt(DateTime.UtcNow))
+                throw new InvalidOperationException("بعد از پایان تخفیف نمی‌توان حجم آیتم تخفیف‌دار را افزایش داد؛ آیتم جدید با قیمت عادی ثبت کنید.");
+        }
         if (request.Kind == SalesListRequestKind.CurrentBottle)
         {
             var changedReserved = request.SalesList.ReservedVolume - request.VolumeMl + volumeMl;
@@ -283,7 +312,7 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
     }
 
     public async Task UpdateConfirmedCurrentBottleRequestAsync(
-        Guid requestId, int expectedVolumeMl, int volumeMl, Guid? bottleId, decimal bottlePrice,
+        Guid requestId, decimal expectedVolumeMl, decimal volumeMl, Guid? bottleId, decimal bottlePrice,
         CancellationToken cancellationToken = default)
     {
         if (volumeMl <= 0)
@@ -295,9 +324,19 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
         if (request.Status != SalesListRequestStatus.Confirmed ||
             request.Kind != SalesListRequestKind.CurrentBottle)
             throw new InvalidOperationException("فقط آیتم فعال باتل فعلی قابل تغییر است.");
+        if (!request.SalesList.IsInventoryOffer && volumeMl != decimal.Truncate(volumeMl))
+            throw new InvalidOperationException("مقدار لیست عادی باید عدد صحیح باشد؛ نیم‌میل فقط برای موجودی است.");
         if (request.VolumeMl != expectedVolumeMl)
             throw new InvalidOperationException(
                 $"این مقدار هم‌زمان توسط مدیر دیگری از {expectedVolumeMl} به {request.VolumeMl} میل تغییر کرده است؛ دوباره وارد ویرایش شوید.");
+
+        if (volumeMl > request.VolumeMl && request.FlashSalePromotionId.HasValue)
+        {
+            var promotion = await _dbContext.FlashSalePromotions.AsNoTracking()
+                .SingleAsync(value => value.Id == request.FlashSalePromotionId, cancellationToken);
+            if (!promotion.IsActiveAt(DateTime.UtcNow))
+                throw new InvalidOperationException("بعد از پایان تخفیف نمی‌توان حجم آیتم تخفیف‌دار را افزایش داد؛ آیتم جدید با قیمت عادی ثبت کنید.");
+        }
 
         var changedReserved = request.SalesList.ReservedVolume - request.VolumeMl + volumeMl;
         if (changedReserved > request.SalesList.TotalVolume)

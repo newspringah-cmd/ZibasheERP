@@ -11,6 +11,6 @@ public sealed record OpenSalesListResponse(
     string EnglishName,
     string Brand,
     decimal PricePerMl,
-    int RemainingVolumeMl,
+    decimal RemainingVolumeMl,
     bool BottleOwnerAvailable,
     DateTime OpenDate);

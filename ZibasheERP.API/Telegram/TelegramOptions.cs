@@ -21,6 +21,7 @@ public sealed class TelegramOptions
     public string AddressLabelPrintChatId { get; set; } = string.Empty;
     public string NewPaymentsChatId { get; set; } = string.Empty;
     public string InventoryChatId { get; set; } = string.Empty;
+    public string ReadyInventoryChannelId { get; set; } = "@zibasheperfume_mojodi";
     public string ShippingChatId { get; set; } = string.Empty;
     public string AccountingChatId { get; set; } = string.Empty;
     public string InvoiceGreetingStickerFileId { get; set; } = string.Empty;

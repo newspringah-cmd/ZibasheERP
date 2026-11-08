@@ -12,6 +12,8 @@ public sealed class CancelOrderCommandHandlerTests
     [Fact]
     public async Task Handle_RollsBackDebtCapacityInvoiceAndPendingPayment()
     {
+        foreach (var volume in new[] { 10m, 1.5m })
+        {
         var customer = new Customer
         {
             Id = Guid.NewGuid(),
@@ -21,8 +23,8 @@ public sealed class CancelOrderCommandHandlerTests
         var salesList = new SalesList
         {
             Id = Guid.NewGuid(),
-            ReservedVolume = 10,
-            TotalVolume = 10,
+            ReservedVolume = volume,
+            TotalVolume = volume,
             Status = ZibasheERP.Domain.Entities.SalesListStatus.Full,
             HasBottleOwner = true,
             BottleOwnerCustomerId = customer.Id
@@ -38,7 +40,7 @@ public sealed class CancelOrderCommandHandlerTests
             FinalAmount = 1_000_000,
             Status = OrderStatus.Invoiced
         };
-        order.Items.Add(new OrderItem { RequestedVolumeMl = 10, IsBottleOwner = true });
+        order.Items.Add(new OrderItem { RequestedVolumeMl = volume, IsBottleOwner = true });
         var payment = new Payment { Status = PaymentState.Pending };
         order.Payments.Add(payment);
         var invoice = new Invoice { OrderId = order.Id, Status = InvoiceState.Issued };
@@ -62,6 +64,7 @@ public sealed class CancelOrderCommandHandlerTests
         Assert.Equal(InvoiceState.Cancelled, invoice.Status);
         Assert.Equal("OrderCancelled", outbox.Added?.EventType);
         Assert.True(orders.SaveChangesCalled);
+        }
     }
 
     [Fact]

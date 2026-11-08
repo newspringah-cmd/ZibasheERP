@@ -32,6 +32,9 @@ public interface ITelegramMessageSender
         long replyToMessageId,
         CancellationToken cancellationToken = default);
 
+    Task<TelegramSendResult> SendReplyOnceAsync(string chatId,string message,long replyToMessageId,CancellationToken cancellationToken=default);
+    Task<TelegramSendResult> DeleteMessageOnceAsync(string chatId,long messageId,CancellationToken cancellationToken=default)=>DeleteMessageAsync(chatId,messageId,cancellationToken);
+
     Task<TelegramSendResult> SendHtmlAsync(
         string chatId,
         string message,
@@ -47,6 +50,8 @@ public interface ITelegramMessageSender
         string message,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> SendKeyboardDismissAsync(string chatId,string message,CancellationToken cancellationToken=default);
 
     Task<TelegramSendResult> SendForceReplyAsync(
         string chatId,
@@ -76,6 +81,9 @@ public interface ITelegramMessageSender
         string caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
         CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> SendPhotoOnceWithKeyboardAsync(string chatId, string photo, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, CancellationToken cancellationToken = default);
 
     Task<TelegramSendResult> SendPhotoBytesWithKeyboardAsync(
         string chatId, byte[] photo, string fileName, string caption,
@@ -121,6 +129,9 @@ public interface ITelegramMessageSender
         string document,
         string caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,
+        CancellationToken cancellationToken = default);
+
+    Task<TelegramSendResult> ReadSourcePhotoAsync(string privateChatId,string sourceChatId,long sourceMessageId,
         CancellationToken cancellationToken = default);
 
     Task<TelegramSendResult> CopyMessageWithKeyboardAsync(
@@ -177,7 +188,12 @@ public sealed record TelegramSendResult(
     bool IsSuccessful,
     string? Error = null,
     long? MessageId = null,
-    string? ExternalFileId = null);
+    string? ExternalFileId = null)
+{
+    // Only a definite rejection before delivery may be retried automatically.
+    public bool IsRetryable { get; init; }
+    public int? RetryAfterSeconds { get; init; }
+}
 public sealed record TelegramFileDownloadResult(
     bool IsSuccessful,
     byte[]? Content = null,
@@ -221,7 +237,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         CancellationToken cancellationToken = default)
         => await SendRequestAsync(
             "sendMessage",
-            new { chat_id = chatId, text = message },
+            new { chat_id = chatId, text = message, entities = ShippingCountEntities(message) },
             cancellationToken);
 
     public async Task<TelegramSendResult> SendReplyAsync(
@@ -238,6 +254,9 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 reply_parameters = new { message_id = replyToMessageId }
             },
             cancellationToken);
+
+    public Task<TelegramSendResult> SendReplyOnceAsync(string chatId,string message,long replyToMessageId,CancellationToken cancellationToken=default)=>
+        SendRequestAsync("sendMessage",new{chat_id=chatId,text=message,reply_parameters=new{message_id=replyToMessageId,allow_sending_without_reply=false}},cancellationToken,false,true);
 
     public async Task<TelegramSendResult> RequestContactAsync(
         string chatId,
@@ -272,6 +291,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             {
                 chat_id = chatId,
                 text = message,
+                entities = ShippingCountEntities(message),
                 reply_markup = new
                 {
                     inline_keyboard = rows.Select(row =>
@@ -279,6 +299,23 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                 }
             },
             cancellationToken);
+
+    private static object[] ShippingCountEntities(string message)
+    {
+        const string label = "🔴 تعداد آیتم‌ها: ";
+        var offset = message.LastIndexOf(label, StringComparison.Ordinal);
+        if (offset < 0 || (offset > 0 && message[offset - 1] != '\n')) return [];
+        var amount = message[(offset + label.Length)..].TrimEnd();
+        if (amount.Length == 0 || !amount.All(char.IsDigit)) return [];
+        // Telegram entity positions use UTF-16, matching .NET string indices.
+        return [new { type = "bold", offset, length = label.Length + amount.Length }];
+    }
+
+    public Task<TelegramSendResult> SendPhotoOnceWithKeyboardAsync(string chatId, string photo, string caption,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, CancellationToken cancellationToken = default) =>
+        SendRequestAsync("sendPhoto", new { chat_id=chatId, photo, caption,
+            reply_markup=new { inline_keyboard=rows.Select(row=>row.Select(BuildInlineButton).ToArray()).ToArray() } },
+            cancellationToken, false, true);
 
     public async Task<TelegramSendResult> SendHtmlAsync(
         string chatId,
@@ -288,6 +325,14 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             "sendMessage",
             new { chat_id = chatId, text = message, parse_mode = "HTML" },
             cancellationToken);
+
+    public Task<TelegramSendResult> SendKeyboardDismissAsync(string chatId,string message,CancellationToken cancellationToken=default) =>
+        SendRequestAsync("sendMessage",new
+        {
+            chat_id=chatId,text=message,
+            reply_markup=new{remove_keyboard=true,selective=false},
+            entities=ShippingCountEntities(message)
+        },cancellationToken,singleAttempt:true);
 
     public async Task<TelegramSendResult> SendForceReplyAsync(
         string chatId,
@@ -418,7 +463,12 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         using var response = await _httpClient.PostAsync($"./bot{_botToken}/{method}", content, cancellationToken);
         var body = await response.Content.ReadFromJsonAsync<TelegramApiResponse>(cancellationToken: cancellationToken);
         if (!response.IsSuccessStatusCode || body?.Ok != true)
-            return new TelegramSendResult(false, body?.Description ?? $"Telegram HTTP {(int)response.StatusCode}");
+            return new TelegramSendResult(false, body?.Description ?? $"Telegram HTTP {(int)response.StatusCode}")
+            {
+                IsRetryable = (int)response.StatusCode == 429,
+                RetryAfterSeconds = (int)response.StatusCode == 429
+                    ? Math.Max(1, body?.Parameters?.RetryAfter ?? 60) : null
+            };
         return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result),
             ExternalFileId: ReadPhotoFileId(body.Result));
     }
@@ -486,6 +536,9 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         return await SendMultipartRequestAsync("editMessageMedia", content, cancellationToken);
     }
 
+    public Task<TelegramSendResult> DeleteMessageOnceAsync(string chatId,long messageId,CancellationToken cancellationToken=default)=>
+        SendRequestAsync("deleteMessage",new{chat_id=chatId,message_id=messageId},cancellationToken,false,true);
+
     public async Task<TelegramSendResult> DeleteMessageAsync(
         string chatId, long messageId, CancellationToken cancellationToken = default) =>
         await SendRequestAsync("deleteMessage", new { chat_id = chatId, message_id = messageId }, cancellationToken);
@@ -506,7 +559,7 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         CancellationToken cancellationToken = default) =>
         await SendRequestAsync("editMessageText", new
         {
-            chat_id = chatId, message_id = messageId, text = message,
+            chat_id = chatId, message_id = messageId, text = message, entities = ShippingCountEntities(message),
             reply_markup = new
             {
                 inline_keyboard = rows.Select(row => row.Select(BuildInlineButton).ToArray()).ToArray()
@@ -621,6 +674,19 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
             }
         }, cancellationToken);
 
+    public async Task<TelegramSendResult> ReadSourcePhotoAsync(string privateChatId,string sourceChatId,long sourceMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        if(!long.TryParse(privateChatId,out var chat)||chat<=0||sourceMessageId<=0||string.IsNullOrWhiteSpace(sourceChatId))
+            return new TelegramSendResult(false,"Source photo preview requires a private administrator chat.");
+        // Telegram has no bot getMessage endpoint. Read the original photo via a
+        // private forward, then remove that temporary copy; the source is untouched.
+        var result=await SendRequestAsync("forwardMessage",new{chat_id=chat,from_chat_id=sourceChatId,message_id=sourceMessageId,disable_notification=true},cancellationToken,false);
+        if(result.IsSuccessful&&result.MessageId.HasValue)
+            await DeleteMessageAsync(privateChatId,result.MessageId.Value,cancellationToken);
+        return result;
+    }
+
     public async Task<TelegramSendResult> CopyMessageWithKeyboardAsync(
         string chatId,
         string fromChatId,
@@ -642,11 +708,24 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string callbackQueryId,
         string? message = null,
         CancellationToken cancellationToken = default,
-        bool showAlert = false) =>
-        await SendRequestAsync(
-            "answerCallbackQuery",
-            new { callback_query_id = callbackQueryId, text = message ?? string.Empty, show_alert = showAlert, cache_time = 0 },
-            cancellationToken);
+        bool showAlert = false)
+    {
+        var request = new { callback_query_id = callbackQueryId, text = message ?? string.Empty, show_alert = showAlert, cache_time = 0 };
+        if (!string.IsNullOrEmpty(message) || showAlert)
+            return await SendRequestAsync("answerCallbackQuery", request, cancellationToken);
+
+        // Clearing the spinner is best effort; it must not hold up an accepted next step.
+        using var acknowledgement = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        acknowledgement.CancelAfter(TimeSpan.FromSeconds(1));
+        try
+        {
+            return await SendRequestAsync("answerCallbackQuery", request, acknowledgement.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new TelegramSendResult(false, "Telegram callback acknowledgement timed out.");
+        }
+    }
 
     public async Task<bool> IsChatAdministratorAsync(
         string chatId,
@@ -764,7 +843,8 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         string method,
         object request,
         CancellationToken cancellationToken,
-        bool retryServerErrors = true)
+        bool retryServerErrors = true,
+        bool singleAttempt = false)
     {
         if (string.IsNullOrWhiteSpace(_botToken))
             return new TelegramSendResult(false, "Telegram bot token is not configured.");
@@ -796,14 +876,19 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
                         _logger.LogInformation("Telegram edit response method={Method} attempt={Attempt} returnedChat={ChatId} returnedPost={PostId} keyboardMatches={KeyboardMatches}",
                             method, attempt + 1, returnedChat, ReadMessageId(body.Result), keyboardMatches);
                     }
-                    return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result));
+                    return new TelegramSendResult(true, MessageId: ReadMessageId(body.Result),
+                        ExternalFileId: method == "forwardMessage" ? ReadPhotoFileId(body.Result) : null);
                 }
                 _logger.LogWarning("Telegram request rejected method={Method} attempt={Attempt} http={HttpStatus} retryAfter={RetryAfter} error={Error}",
                     method, attempt + 1, (int)response.StatusCode, body?.Parameters?.RetryAfter, body?.Description);
                 var retryable = (int)response.StatusCode == 429 || (retryServerErrors && (int)response.StatusCode >= 500);
-                if (!retryable || attempt == 2)
+                if (!retryable || attempt == 2 || singleAttempt)
                     return new TelegramSendResult(false,
-                        body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.");
+                        body?.Description ?? $"Telegram returned HTTP {(int)response.StatusCode}.")
+                    {
+                        IsRetryable=singleAttempt&&(int)response.StatusCode==429,
+                        RetryAfterSeconds=(int)response.StatusCode==429?body?.Parameters?.RetryAfter:null
+                    };
                 var delay = TimeSpan.FromSeconds(Math.Clamp(body?.Parameters?.RetryAfter ?? attempt + 1, 1, 10));
                 await Task.Delay(delay, cancellationToken);
             }

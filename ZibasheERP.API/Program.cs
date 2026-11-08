@@ -149,6 +149,7 @@ builder.Services.AddSingleton<IAccountantReplacementService, AccountantReplaceme
 builder.Services.AddSingleton<IPerfumeLabelPdfService, PerfumeLabelPdfService>();
 builder.Services.AddScoped<ITrackingImportService, TrackingImportService>();
 builder.Services.AddSingleton<TrackingImportDraftStore>();
+builder.Services.AddHostedService<TrackingDispatchWorker>();
 builder.Services.AddSingleton<ITelegramMessageSender, TelegramMessageSender>();
 builder.Services.AddScoped<IDecantListDeliveryStore, DecantListDeliveryStore>();
 builder.Services.AddScoped<TelegramDecantListDelivery>();
@@ -168,6 +169,16 @@ builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramTemporaryMessageCleaner>());
 builder.Services.AddSingleton<TelegramSalesListRebuildWorker>();
 builder.Services.AddHostedService<TelegramReservationCompletionWorker>();
+builder.Services.AddHostedService<ReadyInventoryMaintenanceWorker>();
+builder.Services.AddHostedService<ShippingPackApprovalWorker>();
+builder.Services.AddHostedService<ShippingPackFeedbackWorker>();
+builder.Services.AddHostedService<ShippingTrackingNoticeWorker>();
+builder.Services.AddHostedService<ShippingDecantReferenceWorker>();
+builder.Services.AddHostedService<PerfumePurchaseReportWorker>();
+builder.Services.AddHostedService<InvoiceTransferWorker>();
+builder.Services.AddHostedService<SharedShippingWorker>();
+builder.Services.AddHostedService<GroupChatReplyWorker>();
+builder.Services.AddHostedService<AccountantReplyWorker>();
 builder.Services.AddSingleton<TelegramPurchaseCandidatesWorker>();
 builder.Services.AddHostedService(serviceProvider =>
     serviceProvider.GetRequiredService<TelegramPurchaseCandidatesWorker>());

@@ -8,6 +8,20 @@ namespace ZibasheERP.Application.Tests.Features.SalesLists;
 public sealed class SalesListManagementTests
 {
     [Fact]
+    public async Task CreateSalesList_StoresAndReturnsPriceRoundedUpToThousand()
+    {
+      foreach(var (input,expected) in new (decimal,decimal)[]{(339768m,340000m),(340000m,340000m),(1m,1000m),(1001m,2000m),(1000.01m,2000m),(999999m,1000000m)})
+      {
+        var batch=CreateBatch();var lists=new SalesListRepositoryStub();
+        var handler=new CreateSalesListCommandHandler(lists,new PerfumeRepositoryStub(batch.Perfume));
+        var result=await handler.Handle(new CreateSalesListCommand(batch.PerfumeId,input,100,"@channel",null),CancellationToken.None);
+        Assert.Equal(expected,result.PricePerMl);
+        Assert.Equal(expected,lists.AddedSalesList!.PricePerMl);
+        Assert.Equal(100,result.TotalVolume);
+      }
+    }
+
+    [Fact]
     public async Task CreateSalesList_OpensPreorderWithoutPurchasedBatch()
     {
         var batch = CreateBatch();

@@ -7,7 +7,8 @@ public enum InvoiceDeliveryStatus
     RetryScheduled = 2,
     NeedsManualAction = 3,
     ManuallySent = 4,
-    Failed = 5
+    Failed = 5,
+    Cancelled = 6
 }
 
 public class Invoice : BaseEntity

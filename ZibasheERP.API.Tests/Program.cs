@@ -5,6 +5,95 @@ using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
 
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
+var priceController=typeof(ZibasheERP.API.Controllers.TelegramWebhookController);
+var pricingInput=new object?[]{"۳۳۹۷۶۸\n۱۰۰\n۵",null,null,null,null};
+Check((bool)priceController.GetMethod("TryParseSalesListPricing",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,pricingInput)!&&
+    (decimal)pricingInput[1]! ==340000m&&(int)pricingInput[2]! ==100&&(int)pricingInput[3]! ==5,
+    "sales-list price input rounds upward before preview while preserving volume and minimum");
+Check((decimal)priceController.GetMethod("AdjustedPrice",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,[339768m,0m])! == 340000m&&
+    (decimal)priceController.GetMethod("AdjustedPrice",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,[1000m,0.0001m])! == 2000m,
+    "bulk percentage pricing always rounds upward without discarding a fractional-toman increase");
+if(args.Contains("--production-recipient-totals"))
+{
+    ProductionGiftGroupingTests.Run(Check);
+    Console.WriteLine("Production recipient total tests passed.");
+    return;
+}
+if(args.Contains("--tracking-address-notices"))
+{
+    await ShippingTrackingNoticeTests.Run(Check);
+    await ShippingReferenceTests.Run(Check);
+    await TrackingRetryTests.Run(Check);
+    Console.WriteLine("Tracking address notice tests passed.");
+    return;
+}
+if(args.Contains("--manual-tracking-owner"))
+{
+    await ShippingReferenceTests.Run(Check);
+    await TrackingAddressNameTests.Run(Check);
+    await TrackingRetryTests.Run(Check);
+    Console.WriteLine("Manual tracking owner tests passed.");
+    return;
+}
+if(args.Contains("--tracking-photo-optional"))
+{
+    await ShippingReferenceTests.Run(Check);
+    await ShippingPackageTests.Run(Check);
+    await SharedShippingTests.Run(Check);
+    await TrackingRetryTests.Run(Check);
+    Console.WriteLine("Optional tracking photo tests passed.");
+    return;
+}
+if(args.Contains("--gift-parcels"))
+{
+    await GiftParcelMembershipTests.Run(Check);
+    await ShippingPackageTests.Run(Check);
+    Console.WriteLine("Gift parcel tests passed.");
+    return;
+}
+if(args.Contains("--tracking-addresses"))
+{
+    await TrackingAddressNameTests.Run(Check);
+    await TrackingMatchingTests.Run(Check);
+    Console.WriteLine("Tracking address tests passed.");
+    return;
+}
+if(args.Contains("--legacy-pack-photos"))
+{
+    await LegacyPackPhotoTests.Run(Check);
+    Console.WriteLine("Legacy pack photo tests passed.");
+    return;
+}
+if(args.Contains("--dirham-cost"))
+{
+    await PurchaseCostTests.Run(Check);
+    Console.WriteLine("Dirham cost tests passed.");
+    return;
+}
+if(args.Contains("--purchase-report"))
+{
+    await PerfumePurchaseReportTests.Run(Check);
+    Console.WriteLine("Purchase report tests passed.");
+    return;
+}
+if(args.Contains("--ready-inventory"))
+{
+    await ReadyInventoryTests.Run(Check);
+    Console.WriteLine("Ready inventory tests passed.");
+    return;
+}
+if(args.Contains("--group-chat-reply"))
+{
+    await GroupChatReplyTests.Run(Check);
+    Console.WriteLine("Group chat reply tests passed.");
+    return;
+}
+if(args.Contains("--shared-shipping"))
+{
+    await SharedShippingTests.Run(Check);
+    Console.WriteLine("Shared shipping tests passed.");
+    return;
+}
 static Task Restore(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
     .GetMethod("RestoreDueAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cleaner, [DateTime.UtcNow.AddMinutes(1), CancellationToken.None])!;
 static Task Publish(TelegramTemporaryMessageCleaner cleaner) => (Task)typeof(TelegramTemporaryMessageCleaner)
@@ -93,6 +182,24 @@ deferredBefore = keyboardProxy.Captions.Count;
 await Publish(keyboardCleaner);
 Check(keyboardProxy.Captions.Count == deferredBefore, "cancelled or confirmed queued step never appears");
 
+var mediaSender = DispatchProxy.Create<ITelegramMessageSender, SenderProxy>();
+var mediaProxy = (SenderProxy)(object)mediaSender;
+var mediaCleaner = new TelegramTemporaryMessageCleaner(mediaSender, NullLogger<TelegramTemporaryMessageCleaner>.Instance);
+mediaCleaner.QueuePrompt("channel", 3, "first-click next step", rows, "original perfume", rows, "original-photo");
+await Publish(mediaCleaner);
+Check(mediaProxy.LastPhoto == "original-photo" && mediaProxy.Captions.SequenceEqual(["first-click next step"]) &&
+        mediaProxy.LastRows!.Single().Single().CallbackData == rows.Single().Single().CallbackData,
+    "queued first click updates original photo, caption and next-step buttons in one Telegram request");
+Check(mediaProxy.KeyboardEdits == 0, "queued photo step never relies on a second keyboard refresh or customer click");
+await Restore(mediaCleaner);
+Check(mediaProxy.LastPhoto == "original-photo" && mediaProxy.Captions.Last() == "original perfume",
+    "queued photo step restores the original photo and perfume caption when selection times out");
+
+await ReservationPromptDeliveryTests.Run(Check);
+await CallbackAcknowledgementTests.Run(Check);
+await ReservationClickCompletionTests.Run(Check);
+await ChannelKeyboardFlowTests.Run(Check);
+
 using var realSender = new TelegramMessageSender(Options.Create(new TelegramOptions { BotToken = "test-token" }));
 var handler = new MembershipHandler();
 var field = typeof(TelegramMessageSender).GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -126,6 +233,7 @@ using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload
 {
     Check(payload.RootElement.GetProperty("text").GetString() == string.Empty, "empty callback never sends JSON null");
     Check(payload.RootElement.GetProperty("cache_time").GetInt32() == 0, "callback response is not cached by client");
+    Check(!payload.RootElement.TryGetProperty("url", out _), "ordinary callback never sends a null navigation URL");
 }
 await realSender.AnswerCallbackAsync("error", "access denied", showAlert: true);
 using (var payload = System.Text.Json.JsonDocument.Parse(callbackHandler.Payload!))
@@ -141,14 +249,44 @@ Check(shippingSelectionStore.GetShippingSelectionSnapshot(100, 200).SetEquals([n
     "shipping report clears reported address selections but preserves later selections");
 ProductionGiftGroupingTests.Run(Check);
 await DecantListDeliveryTests.Run(Check);
+await ArrivalCompletionTests.RunAsync(Check);
 await ProductionCopyDeliveryTests.Run(Check);
 SmallRemainderReservationTests.Run(Check);
+await SmallRemainderReservationTests.RunSqlAsync(Check);
+await FlashSaleTests.RunAsync(Check);
 InvoicedSalesListReportTests.Run(Check);
 AddressReadyItemsTests.Run(Check);
+ShippingRecipientInvariantTests.Run(Check);
 SharedDecantGroupTests.Run(Check);
 SilentGroupTests.Run(Check);
 AdminItemActivityTests.Run(Check);
 CustomerListReservationTests.Run(Check);
+await AccountantReplyTests.Run(Check);
+await TrackingMatchingTests.Run(Check);
+await TrackingAddressNameTests.Run(Check);
+await TrackingRetryTests.Run(Check);
+await ShippingPackageTests.Run(Check);
+await ShippingTrackingNoticeTests.Run(Check);
+await GiftParcelMembershipTests.Run(Check);
+await SharedShippingTests.Run(Check);
+await GroupChatReplyTests.Run(Check);
+await PerfumePurchaseReportTests.Run(Check);
+await PurchaseCostTests.Run(Check);
+await LegacyPackPhotoTests.Run(Check);
+await GiftShippingStatisticsTests.Run(Check);
+await ShippingPromptIsolationTests.Run(Check);
+await ShippingReferenceTests.Run(Check);
+await PurchaseAlertPhotoTests.Run(Check);
+await AdminMarketingTests.Run(Check);
+await HourlyPromotionTests.Run(Check);
+await ReadyInventoryTests.Run(Check);
+await InvoiceCancellationTests.Run(Check);
+await InvoiceTransferTests.Run(Check);
+await InvoiceBundleTests.Run(Check);
+await InvoicePaymentCopyTests.Run(Check);
+await BottleUpgradeTests.Run(Check);
+await SourcePhotoReadTests.Run(Check);
+await InventoryReferencePricingTests.Run(Check);
 Console.WriteLine("All API tests passed.");
 
 public class SenderProxy : DispatchProxy
@@ -170,11 +308,13 @@ public class SenderProxy : DispatchProxy
         {
             LastPhoto = (string)args![2]!;
             var mediaCaption = (string)args[3]!;
+            LastRows = (IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args[4]!;
             Captions.Add(mediaCaption);
             return Edit(mediaCaption);
         }
         if (targetMethod!.Name != "EditPhotoCaptionAsync") throw new NotSupportedException(targetMethod.Name);
         var caption = (string)args![2]!;
+        LastRows = (IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args[3]!;
         Captions.Add(caption);
         return Edit(caption);
     }

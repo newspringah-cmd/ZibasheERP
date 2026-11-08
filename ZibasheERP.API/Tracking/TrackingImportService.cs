@@ -45,7 +45,7 @@ public interface ITrackingImportService
     Task<TrackingImportParseResult> ParseChaparAsync(string text, CancellationToken ct);
     Task<TrackingImportParseResult> ParseIranPostExpressAsync(string text, CancellationToken ct);
     Task<TrackingImportParseResult> ParseIranPostPdfAsync(byte[] pdf, CancellationToken ct);
-    Task<TrackingMatch> MatchAsync(string recipientName, string destination, CancellationToken ct);
+    Task<TrackingMatch> MatchAsync(string recipientName, string destination, CancellationToken ct,DateTime? sourceAsOf=null);
     Task<string?> RecheckRecipientNameAsync(byte[] cardImage, CancellationToken ct);
     byte[] BuildCard(TrackingCarrier carrier, string recipientName, string trackingCode, string? trackingUrl);
 }
@@ -58,17 +58,22 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<TrackingImportService> _logger;
     private readonly HttpClient _httpClient;
+    private readonly string _shippingChatId;
+    private readonly string _ownerUserId;
 
     public TrackingImportService(
         AppDbContext db,
         IOptions<AddressLabelOptions> options,
         IWebHostEnvironment environment,
-        ILogger<TrackingImportService> logger)
+        ILogger<TrackingImportService> logger,
+        IOptions<ZibasheERP.API.Telegram.TelegramOptions>? telegramOptions=null)
     {
         _db = db;
         _options = options.Value;
         _environment = environment;
         _logger = logger;
+        _shippingChatId=telegramOptions?.Value.ShippingChatId.Trim()??"";
+        _ownerUserId=telegramOptions?.Value.OwnerUserId.Trim()??"";
         _httpClient = new HttpClient
         {
             BaseAddress = new Uri("https://api.openai.com/v1/"),
@@ -371,8 +376,9 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         }
     }
 
-    public async Task<TrackingMatch> MatchAsync(string recipientName, string destination, CancellationToken ct)
+    public async Task<TrackingMatch> MatchAsync(string recipientName, string destination, CancellationToken ct,DateTime? sourceAsOf=null)
     {
+        var asOf=sourceAsOf??DateTime.UtcNow;
         var target = NormalizeName(recipientName);
         if (target.Length < 2)
             return new TrackingMatch(null, null, TrackingDispatchStatus.NeedsReview, "نام گیرنده قابل تطبیق نیست");
@@ -381,10 +387,13 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             .Include(value => value.Order)!.ThenInclude(value => value!.Customer)
             .Include(value => value.Order)!.ThenInclude(value => value!.DeliveryAddress)
             .Where(value => !value.IsDeleted && value.ShippingRequestId != null && value.Order != null &&
-                value.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped)
+                !value.Order.IsDeleted && value.Order.Status != OrderStatus.Cancelled &&
+                value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && (value.ShippingRequestedAt??value.CreatedAt)<=asOf &&
+                !_db.OrderItems.Any(other => !other.IsDeleted && other.ShippingRequestId == value.ShippingRequestId &&
+                    (other.FulfillmentStatus == OrderItemFulfillmentStatus.Shipped || other.ShippedAt != null)))
             .OrderByDescending(value => value.ShippingRequestedAt)
             .Select(value => new Candidate(
-                value.Order!.CustomerId,
+                value.Order!.DeliveryAddress != null ? value.Order.DeliveryAddress.CustomerId : value.Order.CustomerId,
                 value.ShippingRequestId!.Value,
                 value.Order.DeliveryAddress != null ? value.Order.DeliveryAddress.ReceiverName : string.Empty,
                 value.Order.DeliveryAddress != null ? value.Order.DeliveryAddress.City : string.Empty,
@@ -395,18 +404,53 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             .Distinct()
             .ToArrayAsync(ct);
 
-        var activeResult = SelectUnique(target, destination, active, requireExact: false);
-        if (activeResult is not null) return activeResult;
+        var activeResult = SelectUnique(recipientName, destination, active, requireExact: false);
+        if (activeResult is not null)
+        {
+            if (activeResult.ShippingRequestId is { } requestId)
+            {
+                try
+                {
+                    var recipient = await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidatePackageAsync(_db, requestId, null, ct);
+                    return activeResult with { CustomerId = recipient.Id };
+                }
+                catch (InvalidOperationException)
+                {
+                    return new TrackingMatch(null, null, TrackingDispatchStatus.NeedsReview, "گیرندهٔ بسته با اطلاعات هدیه قابل تأیید نیست؛ بررسی لازم است");
+                }
+            }
+            return activeResult;
+        }
 
-        var recentCutoff = DateTime.UtcNow.AddDays(-180);
+        var prepared=await TrackingPreparedAddresses.LoadAsync(_db,_shippingChatId,ct,asOf);
+        var preparedResult=SelectUnique(recipientName,destination,prepared.Select(p=>new Candidate(p.CustomerId,p.RequestId,p.ReceiverName,p.City,p.FullAddress,p.CustomerName,p.PostedAt,true)),requireExact:true);
+        if(preparedResult is not null&&preparedResult.CustomerId is Guid preparedCustomer)
+        {
+            if(preparedResult.Status!=TrackingDispatchStatus.Ready)return preparedResult;
+            var packages=active.Where(c=>c.CustomerId==preparedCustomer).Select(c=>c.ShippingRequestId).Distinct().ToArray();
+            if(packages.Length>1)return new(preparedCustomer,null,TrackingDispatchStatus.NeedsReview,"نام مشتری با آدرس آماده‌سازی تطبیق دارد اما چند بستهٔ باز دارد؛ بستهٔ مقصد باید مشخص شود");
+            var request=preparedResult.ShippingRequestId??packages.SingleOrDefault();
+            if(request is Guid package)
+            {
+                try
+                {
+                    var owner=await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidatePackageAsync(_db,package,preparedCustomer,ct);
+                    if(owner.Id!=preparedCustomer)throw new InvalidOperationException();
+                }
+                catch(InvalidOperationException){return new(null,null,TrackingDispatchStatus.NeedsReview,"گیرندهٔ بستهٔ آماده‌سازی قابل تأیید نیست؛ بررسی لازم است");}
+            }
+            return new(preparedCustomer,request,preparedResult.Status,"تطبیق دقیق نام کامل با آدرس گروه آماده‌سازی بسته");
+        }
+
+        var recentCutoff = asOf.AddDays(-180);
         var recent = await _db.Addresses.AsNoTracking()
-            .Where(value => !value.IsDeleted && (value.UpdatedAt ?? value.CreatedAt) >= recentCutoff)
+            .Where(value => !value.IsDeleted && (value.UpdatedAt ?? value.CreatedAt) >= recentCutoff&&(value.UpdatedAt??value.CreatedAt)<=asOf)
             .OrderByDescending(value => value.UpdatedAt ?? value.CreatedAt)
             .Select(value => new Candidate(value.CustomerId, null, value.ReceiverName, value.City,
                 value.FullAddress, value.Customer != null ? value.Customer.FullName : string.Empty,
                 value.UpdatedAt ?? value.CreatedAt, false))
             .ToArrayAsync(ct);
-        var recentResult = SelectUnique(target, destination, recent, requireExact: false);
+        var recentResult = SelectUnique(recipientName, destination, recent, requireExact: false);
         if (recentResult is not null)
         {
             // A tracking row can match the customer's saved address even when its
@@ -431,7 +475,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                         "تطبیق با آدرس یکتای مشتری و تنها درخواست ارسال فعال");
                 }
             }
-            return recentResult;
+            return await CheckManualAddressDestinationAsync(recentResult,ct);
         }
 
         var old = await _db.Addresses.AsNoTracking()
@@ -441,9 +485,29 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                 value.FullAddress, value.Customer != null ? value.Customer.FullName : string.Empty,
                 value.UpdatedAt ?? value.CreatedAt, false))
             .ToArrayAsync(ct);
-        var oldResult = SelectUnique(target, destination, old, requireExact: true);
-        return oldResult ?? new TrackingMatch(null, null, TrackingDispatchStatus.NeedsReview,
-            "تطبیق یکتا پیدا نشد؛ نیازمند بررسی ادمین");
+        var oldResult = SelectUnique(recipientName, destination, old, requireExact: true);
+        return oldResult is null?new TrackingMatch(null,null,TrackingDispatchStatus.NeedsReview,"تطبیق یکتا پیدا نشد؛ نیازمند بررسی ادمین"):
+            await CheckManualAddressDestinationAsync(oldResult,ct);
+    }
+
+    private async Task<TrackingMatch> CheckManualAddressDestinationAsync(TrackingMatch match,CancellationToken ct)
+    {
+        if(match.Status!=TrackingDispatchStatus.Ready||match.CustomerId is not Guid id)return match;
+        var customer=await _db.Customers.AsNoTracking().SingleOrDefaultAsync(c=>c.Id==id&&!c.IsDeleted,ct);
+        if(customer is not null&&customer.Notes?.StartsWith("manual-address-registration:",StringComparison.Ordinal)==true)
+        {
+            try
+            {
+                if(ZibasheERP.Infrastructure.Services.ManualShippingRegistration.TrackingDestination(customer,_ownerUserId) is not null)
+                    return match with{Notes="تطبیق ثبت دستی؛ کد رهگیری برای مدیر ارسال می‌شود"};
+            }
+            catch(InvalidOperationException)
+            {return match with{Status=TrackingDispatchStatus.NeedsReview,ShippingRequestId=null,Notes="مقصد مدیر برای ثبت دستی قابل تأیید نیست؛ بررسی لازم است"};}
+        }
+        if(customer is not null&&string.IsNullOrWhiteSpace(customer.Username)&&!long.TryParse(customer.TelegramId,out _)&&
+            !await _db.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==id,ct))
+            return match with{Status=TrackingDispatchStatus.NeedsReview,ShippingRequestId=null,Notes="نام و آدرس پیدا شد، اما این ثبت دستی آیدی یا گروه متصل مشتری ندارد؛ مقصد باید تعیین شود"};
+        return match;
     }
 
     public byte[] BuildCard(
@@ -537,10 +601,13 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             var best = group.Select(value => new
                 {
                     Candidate = value,
-                    Score = CandidateNameScore(target, value) +
-                        (!string.IsNullOrWhiteSpace(normalizedDestination) &&
-                         (NormalizeName(value.City).Contains(normalizedDestination, StringComparison.Ordinal) ||
-                          NormalizeName(value.FullAddress).Contains(normalizedDestination, StringComparison.Ordinal)) ? .03 : 0)
+                    NameScore = CandidateNameScore(target, value)
+                }).Select(value => new
+                {
+                    value.Candidate, value.NameScore,
+                    Score = value.NameScore +
+                        (normalizedDestination.Length >= 3 && NormalizeName(value.Candidate.City) == normalizedDestination ? .10 :
+                         normalizedDestination.Length >= 3 && NormalizeName(value.Candidate.FullAddress).Contains(normalizedDestination, StringComparison.Ordinal) ? .03 : 0)
                 })
                 .OrderByDescending(value => value.Score)
                 .ThenByDescending(value => value.Candidate.Date)
@@ -549,12 +616,17 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         }).OrderByDescending(value => value.Score).ThenByDescending(value => value.Candidate.Date).ToArray();
         if (ranked.Length == 0) return null;
         var threshold = requireExact ? .999 : .87;
-        if (ranked[0].Score < threshold) return null;
+        if (ranked[0].NameScore < threshold) return null;
         if (ranked.Length > 1 && ranked[0].Score - ranked[1].Score < .08) return null;
         var candidate = ranked[0].Candidate;
         var note = candidate.IsActive
             ? "تطبیق با درخواست پست فعال و آدرس اخیر"
             : requireExact ? "تطبیق دقیق با آدرس قدیمی" : "تطبیق با آدرس ثبت‌شده اخیر";
+        var packages = source.Where(v => v.CustomerId == candidate.CustomerId && v.IsActive && v.ShippingRequestId.HasValue)
+            .Select(v => v.ShippingRequestId!.Value).Distinct().ToArray();
+        if (packages.Length > 1)
+            return new TrackingMatch(candidate.CustomerId, null, TrackingDispatchStatus.NeedsReview,
+                "نام مشتری تطبیق دارد اما چند بستهٔ باز دارد؛ بستهٔ مقصد باید مشخص شود");
         return new TrackingMatch(candidate.CustomerId, candidate.ShippingRequestId,
             TrackingDispatchStatus.Ready, note);
     }
@@ -1030,6 +1102,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
     {
         var normalized = value.Normalize(NormalizationForm.FormKC)
             .Replace('ي', 'ی').Replace('ى', 'ی').Replace('ك', 'ک')
+            .Replace('آ', 'ا').Replace('أ', 'ا').Replace('إ', 'ا').Replace('ٱ', 'ا')
+            .Replace('ئ', 'ی').Replace('ؤ', 'و').Replace("ـ", "")
             .Replace("‌", " ");
         return Regex.Replace(normalized, @"[^\p{L}\p{N}]", string.Empty).ToLowerInvariant();
     }
@@ -1044,14 +1118,82 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
 
     private static double CandidateNameScore(string target, Candidate candidate)
     {
-        var receiverScore = NameScore(target, NormalizeName(candidate.ReceiverName));
-        var customerScore = NameScore(target, NormalizeName(candidate.CustomerFullName));
-        var normalizedRawAddress = NormalizeName(candidate.FullAddress);
-        var rawAddressScore = target.Length >= 5 &&
-                              normalizedRawAddress.Contains(target, StringComparison.Ordinal)
-            ? 1d
-            : 0d;
-        return Math.Max(receiverScore, Math.Max(customerScore, rawAddressScore));
+        var names = new[] { candidate.ReceiverName, candidate.CustomerFullName }.Where(IsFullRecipientName)
+            .Concat(RecipientNameLines(candidate.FullAddress, IsFullRecipientName(target)))
+            .Concat(RecipientNameLines(candidate.ReceiverName,IsFullRecipientName(target)))
+            .Concat(RecipientNameLines(candidate.CustomerFullName,IsFullRecipientName(target)));
+        var normalizedTarget = NormalizeName(target);
+        return names.Select(name => NameScore(normalizedTarget, NormalizeName(name))).DefaultIfEmpty(0).Max();
+    }
+
+    internal static string[] PreparedRecipientNames(PreparedTrackingAddress p)=>new[]{p.ReceiverName,p.CustomerName}.Where(IsFullRecipientName)
+        .Concat(RecipientNameLines(p.FullAddress,true)).Concat(RecipientNameLines(p.ReceiverName,true)).Distinct().ToArray();
+    internal static string[] PreparedSuggestionNames(PreparedTrackingAddress p)=>PreparedRecipientNames(p).Concat(
+        p.FullAddress.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries).Select(n=>n.Trim())
+            .Where(n=>Regex.IsMatch(n,@"^[\p{L}\p{M}]+$")&&NormalizeName(n).Length>=3&&NormalizeName(n)!=NormalizeName(p.City)))
+        .Distinct().ToArray();
+    internal static int SimilarRecipientWords(string target,string name)
+    {
+        var targetWords=Regex.Matches(target,@"[\p{L}\p{M}]+").Select(m=>NormalizeName(m.Value)).Where(w=>w.Length>=3).Distinct().ToArray();
+        var words=Regex.Matches(name,@"[\p{L}\p{M}]+").Select(m=>NormalizeName(m.Value)).ToArray();
+        return targetWords.Count(t=>words.Any(w=>t==w||Math.Min(t.Length,w.Length)>=4&&NameScore(t,w)>=.87)||words.Length==1&&t.Length>=4&&words[0].Contains(t,StringComparison.Ordinal));
+    }
+    internal static string[] PreparedSimilarNames(string target,PreparedTrackingAddress p)=>PreparedSuggestionNames(p)
+        .Where(n=>SimilarRecipientWords(target,n)>0||NameScore(NormalizeName(target),NormalizeName(n))>=.80)
+        .OrderByDescending(n=>SimilarRecipientWords(target,n)).ThenByDescending(n=>NameScore(NormalizeName(target),NormalizeName(n))).ToArray();
+    internal static double PreparedSuggestionScore(string target,PreparedTrackingAddress p)
+    {
+        var normalized=NormalizeName(target);if(normalized.Length<2)return 0;
+        var nameScore=PreparedRecipientNames(p).Select(name=>NormalizeName(name)).Select(name=>name==normalized?1d:name.EndsWith(normalized,StringComparison.Ordinal)?.95:NameScore(normalized,name)).DefaultIfEmpty(0).Max();
+        // Substring evidence is advisory only; it never enters automatic matching.
+        var words=PreparedSuggestionNames(p).Select(n=>SimilarRecipientWords(target,n)).DefaultIfEmpty(0).Max();
+        var raw=normalized.Length>=3&&NormalizeName(p.FullAddress).Contains(normalized,StringComparison.Ordinal);
+        return Math.Max(nameScore+words*2,raw?(IsFullRecipientName(target)?4.5:.5):0);
+    }
+
+    private static bool IsFullRecipientName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Contains('@') || value.Any(char.IsDigit)) return false;
+        var words = Regex.Matches(value, @"[\p{L}\p{M}]+");
+        return words.Count is >= 2 and <= 6 && NormalizeName(value).Length >= 5 &&
+            !Regex.IsMatch(value, @"مشتری|ثبت دستی|خیابان|کوچه|پلاک|بلوار|کد\s*پستی|تلفن|شماره|تماس|طبقه|واحد|ساختمان|آدرس|نشانی|محله|روبرو|روبه|میدان|بزرگراه|استان|شهرستان");
+    }
+
+    private static IEnumerable<string> RecipientNameLines(string raw, bool allowJoinedName)
+    {
+        const string label=@"(?:نام\s*و\s*نام\s*خانوادگی|نام\s*گیرنده|نام\s*خانوادگی\s*و\s*نام|تحویل\s*گیرنده|گیرنده|برسد\s*به|به\s*دست|به\s*نام|بنام|نام(?=\s*[:：]))";
+        var text=(raw??string.Empty).Normalize(NormalizationForm.FormKC).Replace('ي','ی').Replace('ى','ی').Replace('ك','ک').Replace('‌',' ');
+        // A labelled name may appear after an entire street address, or on the
+        // next line. Bound the segment at contact/address fields, never treat
+        // the whole address or a street's surname as a recipient.
+        foreach(Match field in Regex.Matches(text,label+@"\s*[:：-]?\s*(?<name>[^\r\n/،,;؛.]+)"))
+        {
+            var value=Regex.Split(field.Groups["name"].Value,@"[\p{N}]|(?:شماره\s*(?:تماس|همراه|موبایل)|کد\s*پستی|تلفن|موبایل|آدرس|ادرس|نشانی)" )[0];
+            foreach(var name in ValidRecipientSegment(value,true,allowJoinedName))yield return name;
+        }
+        foreach (var line in text.Split(['\r','\n','/','؛',';'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if(line.Contains('@'))continue;
+            // Names often live in the free-form address while ReceiverName is @username.
+            // Never fuzzy-match a surname against the street/address as a whole.
+            var standardized = line.Normalize(NormalizationForm.FormKC).Replace('ي','ی').Replace('ى','ی').Replace('ك','ک');
+            var explicitName = Regex.IsMatch(standardized,label);
+            var name = Regex.Replace(standardized, @"[\p{N}]+", " ");
+            name = Regex.Replace(name, label+@"\s*[:：-]?", " ");
+            name = Regex.Replace(name, @"(?:شماره\s*(?:تماس|همراه|موبایل)|تلفن|موبایل|تماس|همراه)\s*[:：-]?", " ");
+            name = Regex.Replace(name, @"[^\p{L}\p{M}\s]", " ").Trim();
+            foreach(var candidate in ValidRecipientSegment(name,explicitName,allowJoinedName))yield return candidate;
+        }
+    }
+
+    private static IEnumerable<string> ValidRecipientSegment(string value,bool explicitName,bool allowJoinedName)
+    {
+        // Usernames are routing identities, not OCR recipient names.
+        if(value.Contains('@'))yield break;
+        var name=Regex.Replace(value,@"[^\p{L}\p{M}\s]"," ").Trim();
+        name=Regex.Replace(name,@"^(?:خانم|آقای|اقای|جناب|سرکار)\s+","");
+        if(IsFullRecipientName(name)||(explicitName&&allowJoinedName&&Regex.Matches(name,@"[\p{L}\p{M}]+").Count==1&&NormalizeName(name).Length>=7))
+            yield return name;
     }
 
     private static async Task<IReadOnlyDictionary<string, PdfTrackingLocation>> ExtractTrackingCodeLocationsFromPdfAsync(

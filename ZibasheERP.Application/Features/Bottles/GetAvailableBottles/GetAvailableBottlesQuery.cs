@@ -2,7 +2,7 @@ using MediatR;
 
 namespace ZibasheERP.Application.Features.Bottles.GetAvailableBottles;
 
-public sealed record GetAvailableBottlesQuery(int VolumeMl)
+public sealed record GetAvailableBottlesQuery(decimal VolumeMl)
     : IRequest<IReadOnlyCollection<AvailableBottleResponse>>;
 
 public sealed record AvailableBottleResponse(

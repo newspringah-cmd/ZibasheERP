@@ -44,7 +44,7 @@ public sealed class TelegramBottlePriceSyncWorker : BackgroundService
                 .Where(group => group.Defaults.Length == 1 ||
                     (group.Defaults.Length == 0 && group.Bottles.Length == 1))
                 .ToDictionary(
-                    group => group.VolumeMl,
+                    group => (decimal)group.VolumeMl,
                     group => group.Defaults.Length == 1
                         ? group.Defaults[0]
                         : group.Bottles[0]);

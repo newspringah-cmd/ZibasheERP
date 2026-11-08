@@ -36,10 +36,12 @@ public sealed class SalesListRequest : BaseEntity
     public bool OmitIdentityOnLabel { get; set; }
     public string? LabelIdentityText { get; set; }
     public string? AdminNotes { get; set; }
-    public int VolumeMl { get; set; }
+    public decimal VolumeMl { get; set; }
     public Guid? BottleId { get; set; }
     public Bottle? Bottle { get; set; }
     public decimal PerfumePricePerMl { get; set; }
+    // A confirmed offer keeps this perfume-price snapshot when invoiced later.
+    public Guid? FlashSalePromotionId { get; set; }
     public decimal BottlePrice { get; set; }
     public SalesListRequestKind Kind { get; set; } = SalesListRequestKind.CurrentBottle;
     public SalesListRequestStatus Status { get; set; } = SalesListRequestStatus.PendingConfirmation;

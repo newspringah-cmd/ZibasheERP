@@ -384,6 +384,98 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.ToTable("CustomerTelegramGroups");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.DirhamExchangeRate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("EffectiveAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("RecordedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("TomanPerDirham")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EffectiveAtUtc")
+                        .IsUnique();
+
+                    b.ToTable("DirhamExchangeRates", t =>
+                        {
+                            t.HasCheckConstraint("CK_DirhamExchangeRates_Positive", "[TomanPerDirham] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.FlashSalePromotion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal?>("DiscountAmountPerMl")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("DiscountPercent")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("EndsAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("GroupChatId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal>("OriginalPricePerMl")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("RequestedDurationMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(120);
+
+                    b.Property<Guid>("SalesListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("StartsAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("TelegramMessageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SalesListId", "StartsAtUtc", "EndsAtUtc");
+
+                    b.ToTable("FlashSalePromotions");
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.IntegrationDeliveryFailure", b =>
                 {
                     b.Property<Guid>("Id")
@@ -449,6 +541,43 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasIndex("ResolvedAt", "ReportedAt");
 
                     b.ToTable("IntegrationDeliveryFailures");
+                });
+
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.InventoryPositionChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("AdminUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Position")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("PreviousPosition")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<Guid>("SalesListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SalesListId", "CreatedAt");
+
+                    b.ToTable("InventoryPositionChanges");
                 });
 
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Invoice", b =>
@@ -1118,6 +1247,52 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.ToTable("Perfumes");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.PerfumePurchasePrice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("AmountAed")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal>("BottleVolumeMl")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("RecordedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SalesListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("VariantKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SalesListId", "CreatedAt");
+
+                    b.HasIndex("VariantKey", "CreatedAt");
+
+                    b.ToTable("PerfumePurchasePrices", t =>
+                        {
+                            t.HasCheckConstraint("CK_PerfumePurchasePrices_Positive", "[AmountAed] > 0 AND [BottleVolumeMl] > 0");
+                        });
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.SalesList", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1169,6 +1344,23 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<bool>("HasBottleOwner")
                         .HasColumnType("bit");
 
+                    b.Property<int?>("InventoryCode")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("InventoryCreatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("InventoryPublicDescription")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<Guid?>("InventoryReferenceListId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("InventoryReferencePricePerMl")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
@@ -1183,8 +1375,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<int>("MinimumRequestVolumeMl")
-                        .HasColumnType("int");
+                    b.Property<decimal>("MinimumRequestVolumeMl")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(500)
@@ -1219,8 +1412,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<int>("ReleaseYear")
                         .HasColumnType("int");
 
-                    b.Property<int>("ReservedVolume")
-                        .HasColumnType("int");
+                    b.Property<decimal>("ReservedVolume")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -1236,6 +1430,10 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
+
+                    b.Property<string>("StoragePosition")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
 
                     b.Property<string>("TelegramChannelId")
                         .HasMaxLength(100)
@@ -1259,8 +1457,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<int>("TotalVolume")
-                        .HasColumnType("int");
+                    b.Property<decimal>("TotalVolume")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -1272,6 +1471,10 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasIndex("BottleOwnerCustomerId");
 
                     b.HasIndex("FixedBottleId");
+
+                    b.HasIndex("InventoryCode")
+                        .IsUnique()
+                        .HasFilter("[InventoryCode] IS NOT NULL");
 
                     b.HasIndex("PerfumeId");
 
@@ -1323,6 +1526,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<Guid?>("FlashSalePromotionId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("GiftRecipientTelegramUserId")
                         .HasMaxLength(50)
@@ -1382,8 +1588,9 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("VolumeMl")
-                        .HasColumnType("int");
+                    b.Property<decimal>("VolumeMl")
+                        .HasPrecision(18, 1)
+                        .HasColumnType("decimal(18,1)");
 
                     b.HasKey("Id");
 
@@ -1391,6 +1598,8 @@ namespace ZibasheERP.Infrastructure.Migrations
 
                     b.HasIndex("ExternalReference")
                         .IsUnique();
+
+                    b.HasIndex("FlashSalePromotionId");
 
                     b.HasIndex("SalesListId", "TelegramUserId", "Status");
 
@@ -1961,6 +2170,24 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Navigation("Customer");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.FlashSalePromotion", b =>
+                {
+                    b.HasOne("ZibasheERP.Domain.Entities.SalesList", null)
+                        .WithMany()
+                        .HasForeignKey("SalesListId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.InventoryPositionChange", b =>
+                {
+                    b.HasOne("ZibasheERP.Domain.Entities.SalesList", null)
+                        .WithMany()
+                        .HasForeignKey("SalesListId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.Invoice", b =>
                 {
                     b.HasOne("ZibasheERP.Domain.Entities.Order", "Order")
@@ -2084,6 +2311,15 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.Navigation("Order");
                 });
 
+            modelBuilder.Entity("ZibasheERP.Domain.Entities.PerfumePurchasePrice", b =>
+                {
+                    b.HasOne("ZibasheERP.Domain.Entities.SalesList", null)
+                        .WithMany()
+                        .HasForeignKey("SalesListId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("ZibasheERP.Domain.Entities.SalesList", b =>
                 {
                     b.HasOne("ZibasheERP.Domain.Entities.Batch", "Batch")
@@ -2121,6 +2357,11 @@ namespace ZibasheERP.Infrastructure.Migrations
                     b.HasOne("ZibasheERP.Domain.Entities.Bottle", "Bottle")
                         .WithMany()
                         .HasForeignKey("BottleId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("ZibasheERP.Domain.Entities.FlashSalePromotion", null)
+                        .WithMany()
+                        .HasForeignKey("FlashSalePromotionId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("ZibasheERP.Domain.Entities.SalesList", "SalesList")

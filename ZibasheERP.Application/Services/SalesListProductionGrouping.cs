@@ -1,68 +1,88 @@
+using System.Globalization;
 using ZibasheERP.Domain.Entities;
 
 namespace ZibasheERP.Application.Services;
 
-public sealed record SalesListProductionRow(SalesListRequest Request, int VolumeMl, int SourceCount = 1);
+public sealed record SalesListProductionRow(SalesListRequest Request, decimal VolumeMl, int SourceCount = 1,
+    string? PreparationNotes = null);
 
-/// <summary>Combines physical gift portions without changing reservations or billing.</summary>
+/// <summary>Physical recipient totals only; source reservations and billing stay separate.</summary>
 public static class SalesListProductionGrouping
 {
+    private sealed record Identity(string NumericId,string Username);
+
     public static IReadOnlyList<SalesListProductionRow> Build(IEnumerable<SalesListRequest> source)
     {
-        var requests = source.Where(request => !request.IsDeleted &&
-            request.Kind == SalesListRequestKind.CurrentBottle &&
-            request.Status is SalesListRequestStatus.Confirmed or SalesListRequestStatus.Promoted or
+        var requests=source.Where(r=>!r.IsDeleted&&r.Kind==SalesListRequestKind.CurrentBottle&&
+            r.Status is SalesListRequestStatus.Confirmed or SalesListRequestStatus.Promoted or
                 SalesListRequestStatus.QueuedForInvoice or SalesListRequestStatus.Invoiced).ToArray();
-        var owners = requests.Where(request => request.IsBottleOwner)
-            .GroupBy(request => request.SalesListId).ToDictionary(group => group.Key, group => group.First());
-        var aliases = requests.SelectMany(request => new[]
+        Identity User(SalesListRequest r)=>Read(r.TelegramUserId,r.TelegramUsername);
+        Identity Recipient(SalesListRequest r)=>r.IsGift&&!r.IsBottleOwner?Read(r.GiftRecipientTelegramUserId,r.GiftRecipientTelegramUsername):User(r);
+        var aliases=requests.SelectMany(r=>new[]{(r.SalesListId,Identity:User(r)),(r.SalesListId,Identity:Recipient(r))})
+            .Where(x=>x.Identity.NumericId.Length>0&&x.Identity.Username.Length>0)
+            .GroupBy(x=>(x.SalesListId,x.Identity.Username))
+            .ToDictionary(g=>g.Key,g=>g.Select(x=>x.Identity.NumericId).Distinct().ToArray());
+        string Key(SalesListRequest r,int index)
+        {
+            var identity=Recipient(r);
+            if(identity.NumericId.Length>0)return "id:"+identity.NumericId;
+            if(identity.Username.Length>0)
             {
-                (request.SalesListId, Username: Normalize(request.TelegramUsername), Id: request.TelegramUserId.Trim()),
-                (request.SalesListId, Username: Normalize(request.GiftRecipientTelegramUsername), Id: request.GiftRecipientTelegramUserId?.Trim())
-            })
-            .Where(identity => identity.Username.Length > 0 && !string.IsNullOrWhiteSpace(identity.Id))
-            .GroupBy(identity => (identity.SalesListId, identity.Username))
-            .ToDictionary(group => group.Key, group => group.Select(identity => identity.Id!).Distinct().ToArray());
-
-        string RecipientKey(SalesListRequest request, int index)
-        {
-            if (!string.IsNullOrWhiteSpace(request.GiftRecipientTelegramUserId))
-                return "id:" + request.GiftRecipientTelegramUserId.Trim();
-            var username = Normalize(request.GiftRecipientTelegramUsername);
-            if (username.Length == 0) return "unknown:" + index;
-            return aliases.TryGetValue((request.SalesListId, username), out var ids) && ids.Length == 1
-                ? "id:" + ids[0] : "username:" + username;
+                if(aliases.TryGetValue((r.SalesListId,identity.Username),out var ids))
+                    return ids.Length==1?"id:"+ids[0]:"ambiguous:"+index;
+                return "username:"+identity.Username;
+            }
+            return "unknown:"+index;
         }
-
-        bool OwnerGift(SalesListRequest request) => request.IsGift && !request.IsBottleOwner &&
-            owners.TryGetValue(request.SalesListId, out var owner) && IsGiftFor(request, owner);
-
-        var rows = requests.Where(request => !request.IsGift || request.IsBottleOwner)
-            .Select(request => new SalesListProductionRow(request, request.VolumeMl +
-                (request.IsBottleOwner ? requests.Where(gift => gift.SalesListId == request.SalesListId &&
-                    OwnerGift(gift)).Sum(gift => gift.VolumeMl) : 0)))
-            .ToList();
-        var gifts = requests.Select((request, index) => (Request: request, Index: index))
-            .Where(item => item.Request.IsGift && !item.Request.IsBottleOwner && !OwnerGift(item.Request))
-            .GroupBy(item => (
-                item.Request.SalesListId, Recipient: RecipientKey(item.Request, item.Index),
-                Type: item.Request.Bottle?.Type ?? BottleType.Normal,
-                FancyName: item.Request.Bottle?.Type == BottleType.Fancy ? Normalize(item.Request.Bottle.Name) : "",
-                Label: item.Request.LabelIdentityText?.Trim() ?? "", item.Request.OmitIdentityOnLabel));
-        foreach (var group in gifts)
+        string? Notes(SalesListRequest[] portions,SalesListRequest representative)
         {
-            var ordered = group.Select(item => item.Request)
-                .OrderBy(request => request.ConfirmedAt ?? request.CreatedAt).ThenBy(request => request.Id).ToArray();
-            rows.Add(new(ordered[0], ordered.Sum(request => request.VolumeMl), ordered.Length));
+            var notes=new List<string>();
+            var conflict=false;
+            var id=Recipient(representative);
+            if(id.Username.Length>0&&aliases.TryGetValue((representative.SalesListId,id.Username),out var ids)&&ids.Length>1)
+            {notes.Add("مشخصات گیرنده نیازمند بررسی است");conflict=true;}
+            var packaging=portions.Select(r=>r.Bottle?.Type==BottleType.Fancy?"فانتزی "+r.Bottle.Name:"معمولی").Distinct().ToArray();
+            if(packaging.Length>1){notes.Add("شیشه‌های ثبت‌شده: "+string.Join(" / ",packaging));conflict=true;}
+            var labels=portions.Select(r=>r.OmitIdentityOnLabel?"بدون آیدی":r.LabelIdentityText?.Trim()??"").Distinct().ToArray();
+            if(labels.Length>1){notes.Add("توضیح لیبل: "+string.Join(" / ",labels.Select(s=>s.Length==0?"پیش‌فرض":s)));conflict=true;}
+            var comments=portions.Select(r=>r.AdminNotes?.Trim()).Where(s=>!string.IsNullOrWhiteSpace(s)).Distinct().ToArray();
+            if(portions.Length>1&&comments.Length>0)notes.Add("توضیحات: "+string.Join(" / ",comments));
+            if(notes.Count==0)return null;
+            var text=(conflict?"⚠️ ":"📝 ")+string.Join("؛ ",notes);
+            return text.Length>380?text[..377]+"…":text;
+        }
+        var rows=new List<SalesListProductionRow>();
+        foreach(var group in requests.Select((r,i)=>(Request:r,Index:i)).GroupBy(x=>(x.Request.SalesListId,Recipient:Key(x.Request,x.Index))))
+        {
+            var portions=group.Select(x=>x.Request).OrderBy(r=>r.ConfirmedAt??r.CreatedAt).ThenBy(r=>r.Id).ToArray();
+            var gifts=portions.Where(r=>r.IsGift&&!r.IsBottleOwner).ToArray();
+            var own=portions.Where(r=>!r.IsGift||r.IsBottleOwner).ToArray();
+            if(gifts.Length==0)
+            {
+                rows.AddRange(own.Select(r=>new SalesListProductionRow(r,r.VolumeMl,PreparationNotes:Notes([r],r))));continue;
+            }
+            var owner=own.FirstOrDefault(r=>r.IsBottleOwner);
+            if(owner!=null)
+            {
+                rows.Add(new(owner,portions.Sum(r=>r.VolumeMl),portions.Length,Notes(portions,owner)));continue;
+            }
+            // The receiver's own selected bottle/label takes precedence. For a
+            // gift-only portion retain an explicitly selected fancy bottle first.
+            var representative=own.FirstOrDefault()??gifts.OrderByDescending(r=>r.Bottle?.Type==BottleType.Fancy)
+                .ThenByDescending(r=>!string.IsNullOrWhiteSpace(r.LabelIdentityText)).ThenBy(r=>r.ConfirmedAt??r.CreatedAt).ThenBy(r=>r.Id).First();
+            rows.Add(new(representative,portions.Sum(r=>r.VolumeMl),portions.Length,Notes(portions,representative)));
         }
         return rows;
     }
 
-    private static bool IsGiftFor(SalesListRequest gift, SalesListRequest recipient) =>
-        (!string.IsNullOrWhiteSpace(gift.GiftRecipientTelegramUserId) &&
-         string.Equals(gift.GiftRecipientTelegramUserId.Trim(), recipient.TelegramUserId.Trim(), StringComparison.Ordinal)) ||
-        (Normalize(gift.GiftRecipientTelegramUsername).Length > 0 &&
-         Normalize(gift.GiftRecipientTelegramUsername) == Normalize(recipient.TelegramUsername));
-
-    private static string Normalize(string? value) => value?.Trim().TrimStart('@').ToLowerInvariant() ?? "";
+    private static Identity Read(string? rawId,string? rawUsername)
+    {
+        var id=rawId?.Trim()??"";var name=Normalize(rawUsername);
+        if(long.TryParse(id,NumberStyles.None,CultureInfo.InvariantCulture,out var numeric)&&numeric>0)
+            return new(numeric.ToString(CultureInfo.InvariantCulture),name);
+        foreach(var prefix in new[]{"imported:","admin-username:"})
+            if(id.StartsWith(prefix,StringComparison.OrdinalIgnoreCase))return new("",name.Length>0?name:Normalize(id[prefix.Length..]));
+        return new("",name);
+    }
+    private static string Normalize(string? value)=>value?.Trim().TrimStart('@').ToLowerInvariant()??"";
 }

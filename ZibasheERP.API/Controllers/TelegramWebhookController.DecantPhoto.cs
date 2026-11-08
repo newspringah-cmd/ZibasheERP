@@ -295,8 +295,7 @@ public sealed partial class TelegramWebhookController
         var waiting = 0;
         var unmatched = 0;
         var now = DateTime.UtcNow;
-        var caption = $"📸 عکس دکانت\n{draft.SalesListName}\n\n" +
-                      "مبارکتون باشه 🌸\nاین عطر آماده ارسال می‌باشد.";
+        var caption = DecantPhotoCaption.CustomerMessage;
 
         foreach (var target in targets)
         {

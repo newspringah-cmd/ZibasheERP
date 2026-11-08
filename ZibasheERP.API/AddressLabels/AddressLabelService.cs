@@ -265,7 +265,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         var digits = new string(value.Select(ToLatinDigit).Where(char.IsAsciiDigit).ToArray());
-        return digits.Length == 10 ? value.Trim() : string.Empty;
+        return digits.Length == 10 ? digits : string.Empty;
     }
 
     private static char ToLatinDigit(char value) => value switch

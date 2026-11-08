@@ -43,7 +43,7 @@ public class BottleRepository : IBottleRepository
         CancellationToken cancellationToken = default)
     {
         return await _dbContext.Bottles
-            .Where(x => x.IsActive && !x.IsDeleted)
+            .Where(x => x.IsActive && !x.IsDeleted && x.Id != ZibasheERP.Infrastructure.Services.ReadyInventoryService.OriginalBottleId)
             .OrderBy(x => x.VolumeMl)
             .ToListAsync(cancellationToken);
     }

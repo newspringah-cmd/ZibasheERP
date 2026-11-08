@@ -5,10 +5,10 @@ function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
-function number(value) {
+function number(value, maximumFractionDigits = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error('Invoice contains an invalid numeric value.');
-  return new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 }).format(parsed);
+  return new Intl.NumberFormat('fa-IR', { maximumFractionDigits }).format(parsed);
 }
 function money(value) { return `${number(value)} تومان`; }
 function persianDate(value) {
@@ -31,9 +31,17 @@ if (!isManualReview && !/^-\d+$/.test(invoiceDeliveryChatId)) {
   throw new Error('Invoice customer group id is invalid.');
 }
 const invoice = event.data;
+const isTransferredInvoice = invoice.IsTransferredInvoice === true;
+const transferredPaidAmount = isTransferredInvoice ? Number(invoice.PaidAmount) : 0;
+const transferredOutstanding = isTransferredInvoice ? Number(invoice.OutstandingAmount) : Number(invoice.TotalAmount);
+if (isTransferredInvoice && (!Number.isFinite(transferredPaidAmount) || !Number.isFinite(transferredOutstanding) ||
+    transferredPaidAmount < 0 || transferredOutstanding < 0 ||
+    Math.abs(transferredPaidAmount + transferredOutstanding - Number(invoice.TotalAmount)) > 0.01)) {
+  throw new Error('Transferred invoice payment amounts do not reconcile.');
+}
 const customer = invoice.Customer ?? {};
 const items = Array.isArray(invoice.Items) ? invoice.Items : [];
-const paymentAccounts = Array.isArray(invoice.PaymentAccounts) ? invoice.PaymentAccounts.slice(0, 4) : [];
+const paymentAccounts = isTransferredInvoice && transferredOutstanding === 0 ? [] : Array.isArray(invoice.PaymentAccounts) ? invoice.PaymentAccounts.slice(0, 4) : [];
 const username = String(customer.Username ?? '').trim().replace(/^@/, '');
 const customerName = username ? `@${username}` : (customer.FullName ?? 'مشتری زیباشی');
 const invoiceFileBase = String(invoice.InvoiceNumber ?? 'invoice')
@@ -68,7 +76,7 @@ const giftCaptionLines = items
     const recipient = itemUsername ? `@${itemUsername}` : itemTelegramId;
     if (!recipient) return [];
     return [
-      `🎁 ${number(item.RequestedVolumeMl)} میل — ${money(item.LineTotal)}`,
+      `🎁 ${number(item.RequestedVolumeMl, 1)} میل — ${money(item.LineTotal)}`,
       `هدیه به ${recipient}`
     ];
   });
@@ -79,7 +87,7 @@ const renderRows = (pageItems) => pageItems.map((item) => {
   const englishTitle = [item.PerfumeBrand, englishName].filter(Boolean).join(' ');
   return `<div class="invoice-row"><span>${number(item.RowNumber)}</span>
     <span class="item-name"><strong>${escapeHtml(persianName)}</strong><small dir="ltr">${escapeHtml(englishTitle)}</small></span>
-    <span>${number(item.RequestedVolumeMl)}</span><span>${number(item.Quantity ?? 1)}</span>
+    <span>${number(item.RequestedVolumeMl, 1)}</span><span>${number(item.Quantity ?? 1)}</span>
     <span>${number(item.PerfumePricePerMl ?? 0)}</span><span>${number(item.BottlePrice ?? 0)}</span>
     <span>${number(item.LineTotal)}</span></div>`;
 }).join('');
@@ -95,6 +103,9 @@ const captionLines = [
     ? [`🎁 فاکتور هدیه به ${explicitGiftRecipient}`]
     : []),
   `تاریخ: ${persianDate(invoice.IssuedAt)}`,
+  ...(isTransferredInvoice ? [`شماره فاکتور: ${invoice.InvoiceNumber}`] : []),
+  ...(isTransferredInvoice ? [`مبلغ کل فاکتور: ${money(invoice.TotalAmount)}`,
+    transferredOutstanding === 0 ? '✅ پرداخت‌شده؛ پرداخت مجدد لازم نیست.' : `⏳ مانده قابل پرداخت: ${money(transferredOutstanding)}`] : []),
   ''
 ];
 if (isManualReview) {
@@ -108,11 +119,15 @@ if (isManualReview) {
 items.forEach((item) => {
   const name = item.PerfumePersianName ?? item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
   captionLines.push(`🧴 ${name}`);
-  captionLines.push(`مقدار: ${number(item.RequestedVolumeMl)} میل`);
+  captionLines.push(`مقدار: ${number(item.RequestedVolumeMl, 1)} میل`);
   captionLines.push(`مبلغ عطر و شیشه: ${money(item.LineTotal)}`);
   captionLines.push('');
 });
-captionLines.push(`💰 مبلغ قابل پرداخت: ${money(invoice.TotalAmount)}`);
+if (isTransferredInvoice) {
+  captionLines.push(`💰 مبلغ کل فاکتور: ${money(invoice.TotalAmount)}`,
+    `پرداخت‌شده: ${money(transferredPaidAmount)}`, `مانده قابل پرداخت: ${money(transferredOutstanding)}`);
+  if (transferredOutstanding === 0) captionLines.push('✅ این فاکتور پرداخت‌شده است؛ پرداخت مجدد لازم نیست.');
+} else captionLines.push(`💰 مبلغ قابل پرداخت: ${money(invoice.TotalAmount)}`);
 if (paymentAccounts.length > 0) {
   captionLines.push('', 'شماره کارت جهت واریز:');
   paymentAccounts.forEach((account) => {
@@ -121,7 +136,9 @@ if (paymentAccounts.length > 0) {
   });
 }
 captionLines.push('', 'با تشکر از خرید شما');
-if (Number(invoice.PaymentDeadlineHours ?? 0) > 0) {
+if (isTransferredInvoice && transferredOutstanding === 0) {
+  captionLines.push('وضعیت پرداخت قبلی حفظ شده است.');
+} else if (Number(invoice.PaymentDeadlineHours ?? 0) > 0) {
   captionLines.push(`مهلت پرداخت فاکتور: ${number(invoice.PaymentDeadlineHours)} ساعت`);
 } else {
   captionLines.push('🎁 این فاکتور هدیه است و مبلغ قابل پرداخت ندارد.');
@@ -145,7 +162,8 @@ const pagesHtml = pages.map((pageItems, pageIndex) => {
     <section class="rows">${renderRows(pageItems)}</section>
     ${isLastPage ? `<div class="total subtotal">${money(invoice.TotalAmount)}</div>
     <div class="shipping-mask"></div>
-    <div class="total final">${money(invoice.TotalAmount)}</div>` : '<div class="shipping-mask"></div>'}
+    ${isTransferredInvoice ? `<div style="position:absolute;z-index:4;top:75%;right:8%;width:84%;background:#faece8;font-size:11px;text-align:center">پرداخت‌شده: ${money(transferredPaidAmount)} — مانده: ${money(transferredOutstanding)}${transferredOutstanding === 0 ? ' — ✅ پرداخت‌شده' : ''}</div>` : ''}
+    <div class="total final">${money(isTransferredInvoice ? transferredOutstanding : invoice.TotalAmount)}</div>` : '<div class="shipping-mask"></div>'}
     ${pages.length > 1 ? `<div class="page-counter">صفحه ${number(pageIndex + 1)} از ${number(pages.length)}</div>` : ''}
   </main>`;
 }).join('');

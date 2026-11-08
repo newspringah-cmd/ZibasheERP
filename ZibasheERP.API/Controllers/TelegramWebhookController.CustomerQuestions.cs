@@ -110,20 +110,15 @@ public sealed partial class TelegramWebhookController
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var reportCustomers = selectedLinks.Select(link => new Customer
+        {
+            Id = link.CustomerId, TelegramId = link.TelegramId, Username = link.Username
+        }).ToArray();
+        var ownedItemIds = CustomerShippingItemIds(reportCustomers);
+        var giftRequestIds = CustomerGiftRequestIds(reportCustomers);
         var rows = await _db.OrderItems
             .AsNoTracking()
-            .Where(item =>
-                !item.IsDeleted &&
-                item.Order != null &&
-                !item.Order.IsDeleted &&
-                customerIds.Contains(item.Order.CustomerId) &&
-                item.Order.Status != OrderStatus.Cancelled &&
-                (item.SourceSalesListRequest == null ||
-                 !item.SourceSalesListRequest.IsGift ||
-                 (item.SourceSalesListRequest.GiftRecipientTelegramUserId != null &&
-                  customerTelegramIds.Contains(item.SourceSalesListRequest.GiftRecipientTelegramUserId)) ||
-                 (item.SourceSalesListRequest.GiftRecipientTelegramUsername != null &&
-                  customerUsernames.Contains(item.SourceSalesListRequest.GiftRecipientTelegramUsername))))
+            .Where(item => ownedItemIds.Contains(item.Id))
             .OrderByDescending(item => item.UpdatedAt ?? item.CreatedAt)
             .Take(150)
             .Select(item => new CustomerItemStatusRow(
@@ -152,16 +147,14 @@ public sealed partial class TelegramWebhookController
                 request.Status != SalesListRequestStatus.PendingConfirmation &&
                 request.Status != SalesListRequestStatus.Cancelled &&
                 request.Status != SalesListRequestStatus.Expired &&
+                !_db.OrderItems.Any(item => !item.IsDeleted && item.SourceSalesListRequestId == request.Id &&
+                    item.Order != null && !item.Order.IsDeleted && item.Order.Status != OrderStatus.Cancelled) &&
                 ((!request.IsGift &&
                   ((request.TelegramUserId != null &&
                     customerTelegramIds.Contains(request.TelegramUserId)) ||
                    (request.TelegramUsername != null &&
                     customerUsernames.Contains(request.TelegramUsername)))) ||
-                 (request.IsGift &&
-                   ((request.GiftRecipientTelegramUserId != null &&
-                     customerTelegramIds.Contains(request.GiftRecipientTelegramUserId)) ||
-                    (request.GiftRecipientTelegramUsername != null &&
-                     customerUsernames.Contains(request.GiftRecipientTelegramUsername))))))
+                 (request.IsGift && giftRequestIds.Contains(request.Id))))
             .OrderByDescending(request => request.UpdatedAt ?? request.CreatedAt)
             .Take(150)
             .Select(request => new
@@ -722,8 +715,8 @@ public sealed partial class TelegramWebhookController
         string MiddleNotes,
         string BaseNotes,
         string Accords,
-        int TotalVolume,
-        int ReservedVolume,
+        decimal TotalVolume,
+        decimal ReservedVolume,
         string? TelegramPhotoFileId,
         string ProductPageUrl,
         string? TelegramChannelId,

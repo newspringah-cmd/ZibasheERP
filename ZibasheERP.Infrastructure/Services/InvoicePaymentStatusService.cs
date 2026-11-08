@@ -34,6 +34,9 @@ public sealed class InvoicePaymentStatusService(AppDbContext db) : IInvoicePayme
         CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r=sp_getapplock @Resource={"invoice-cancel:"+invoiceId},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Invoice accounting operation busy',1;",cancellationToken);
+        if(db.ChangeTracker.HasChanges())throw new InvalidOperationException("پیش از تأیید پرداخت، تغییرات قبلی را ذخیره کنید.");
+        db.ChangeTracker.Clear();
         var invoice = await Query().FirstOrDefaultAsync(
             value => value.Id == invoiceId && !value.IsDeleted,
             cancellationToken) ?? throw new InvalidOperationException("فاکتور پیدا نشد.");
@@ -82,7 +85,7 @@ public sealed class InvoicePaymentStatusService(AppDbContext db) : IInvoicePayme
 
         await db.Customers.Where(value => value.Id == customer.Id && !value.IsDeleted)
             .ExecuteUpdateAsync(setters => setters
-                .SetProperty(value => value.CurrentDebt, Math.Max(0, customer.CurrentDebt - remaining))
+                .SetProperty(value => value.CurrentDebt, value => value.CurrentDebt>=remaining?value.CurrentDebt-remaining:0)
                 .SetProperty(value => value.UpdatedAt, now), cancellationToken);
         await db.Invoices.Where(value => value.Id == invoice.Id && !value.IsDeleted)
             .ExecuteUpdateAsync(setters => setters
@@ -95,10 +98,11 @@ public sealed class InvoicePaymentStatusService(AppDbContext db) : IInvoicePayme
                 .SetProperty(value => value.UpdatedAt, now), cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        invoice.Status = InvoiceStatus.Paid;
-        order.Status = OrderStatus.Paid;
-        order.PaidAt = now;
-        return Build(invoice, order);
+        // ExecuteUpdate has already advanced database row versions. Return a
+        // fresh read instead of leaving stale tracked entities marked Modified.
+        db.ChangeTracker.Clear();
+        var saved=await Query().AsNoTracking().SingleAsync(i=>i.Id==invoiceId,cancellationToken);
+        return Build(saved,saved.Order!);
     }
 
     public async Task<InvoicePaymentStatusResult> KeepWaitingAsync(

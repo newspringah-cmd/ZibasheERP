@@ -17,9 +17,9 @@ public interface ISalesListRequestRepository
     Task CancelAsync(Guid requestId, string telegramUserId, CancellationToken cancellationToken = default);
     Task RemoveConfirmedAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task PromoteNextBottleOwnerAsync(Guid requestId, CancellationToken cancellationToken = default);
-    Task UpdateConfirmedVolumeAsync(Guid requestId, int expectedVolumeMl, int volumeMl,
+    Task UpdateConfirmedVolumeAsync(Guid requestId, decimal expectedVolumeMl, decimal volumeMl,
         CancellationToken cancellationToken = default);
-    Task UpdateConfirmedCurrentBottleRequestAsync(Guid requestId, int expectedVolumeMl, int volumeMl, Guid? bottleId,
+    Task UpdateConfirmedCurrentBottleRequestAsync(Guid requestId, decimal expectedVolumeMl, decimal volumeMl, Guid? bottleId,
         decimal bottlePrice, CancellationToken cancellationToken = default);
     Task UpdateBottleOwnerIdentityAsync(Guid requestId, string expectedIdentity, string identity,
         CancellationToken cancellationToken = default);

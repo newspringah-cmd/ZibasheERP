@@ -84,6 +84,28 @@ public sealed class N8nIntegrationsController : ControllerBase
                 : Guid.Empty;
         if (invoiceId == Guid.Empty)
             return BadRequest(new { Message = "شناسه فاکتور در رویداد معتبر نیست." });
+        await using var deliveryTransaction=await _context.Database.BeginTransactionAsync(cancellationToken);
+        await _context.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r=sp_getapplock @Resource={"invoice-cancel:"+invoiceId},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Invoice accounting operation busy',1;",cancellationToken);
+        if(!await _context.NotificationOutbox.AsNoTracking().AnyAsync(n=>n.Id==sourceEventId&&!n.IsDeleted,cancellationToken))
+            return Conflict(new{Message="نسخهٔ قبلی فاکتور پس از انتقال یا لغو معتبر نیست."});
+        var deliveryInvoice = await _context.Invoices.AsNoTracking()
+            .Where(i => i.Id == invoiceId && !i.IsDeleted && i.Status != ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled)
+            .Select(i => new { i.TotalAmount,i.Status,CustomerId=i.Order!.CustomerId }).SingleOrDefaultAsync(cancellationToken);
+        if(deliveryInvoice is null)
+            return Conflict(new{Message="فاکتور لغو شده است؛ ارسال PDF متوقف شد."});
+        var transferred=data.TryGetProperty("IsTransferredInvoice",out var transferredFlag)&&transferredFlag.ValueKind==JsonValueKind.True;
+        if(transferred)await _context.CustomerTelegramGroups.FromSqlInterpolated($"SELECT * FROM CustomerTelegramGroups WITH(UPDLOCK,HOLDLOCK) WHERE ChatId={chatId}").AsNoTracking().ToArrayAsync(cancellationToken);
+        if(transferred&&(!await _context.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==deliveryInvoice.CustomerId&&g.ChatId==chatId,cancellationToken)||
+            await _context.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId!=deliveryInvoice.CustomerId&&g.ChatId==chatId,cancellationToken)))
+            return Conflict(new{Message="گروه گیرندهٔ فاکتور منتقل‌شده دیگر اتصال یکتای معتبری ندارد."});
+
+        // Historical retry payloads can predate IsInventory. Use the saved order
+        // so reconnecting a customer group cannot lose the inventory heading.
+        var isInventory = await _context.Orders.AsNoTracking().AnyAsync(
+            value => value.Id == sourceEvent.OrderId && value.IsInventory, cancellationToken);
+        caption = EnsureInventoryCaption(caption, isInventory);
+        var giftRecipient = data.TryGetProperty("GiftDeliveryRole", out var deliveryRole) &&
+            string.Equals(deliveryRole.GetString(), "Recipient", StringComparison.OrdinalIgnoreCase);
 
         var rows = new List<IReadOnlyCollection<TelegramInlineButton>>
         {
@@ -93,7 +115,11 @@ public sealed class N8nIntegrationsController : ControllerBase
                 new("⏳ در انتظار پرداخت", $"invoicepay:waiting:{invoiceId:N}")
             }
         };
-        if (data.TryGetProperty("PaymentAccounts", out var accounts) &&
+        var copyAmount=transferred?(deliveryInvoice.Status==ZibasheERP.Domain.Enums.InvoiceStatus.Paid?0:
+            Math.Max(0,deliveryInvoice.TotalAmount-await _context.Payments.Where(p=>p.OrderId==sourceEvent.OrderId&&!p.IsDeleted&&p.Status==ZibasheERP.Domain.Enums.PaymentStatus.Confirmed).SumAsync(p=>p.Amount,cancellationToken))):deliveryInvoice.TotalAmount;
+        if (!giftRecipient && InvoicePaymentCopyPresentation.Button(copyAmount) is { } amountButton)
+            rows.Add(new[] { amountButton });
+        if ((!transferred||copyAmount>0)&&data.TryGetProperty("PaymentAccounts", out var accounts) &&
             accounts.ValueKind == JsonValueKind.Array)
         {
             foreach (var account in accounts.EnumerateArray().Take(4))
@@ -132,10 +158,12 @@ public sealed class N8nIntegrationsController : ControllerBase
         {
             invoice.TelegramInvoiceChatId = chatId;
             invoice.TelegramInvoiceMessageId = result.MessageId.Value;
+            await ZibasheERP.Infrastructure.Services.InvoiceMessageLifecycle.RecordAsync(_context,invoice.OrderId,sourceEventId,chatId,result.MessageId.Value,"InvoicePdf",cancellationToken);
             invoice.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
         }
 
+        await deliveryTransaction.CommitAsync(cancellationToken);
         return Ok(new
         {
             result = new
@@ -144,6 +172,16 @@ public sealed class N8nIntegrationsController : ControllerBase
                 document = new { file_id = result.ExternalFileId }
             }
         });
+    }
+
+    internal static string EnsureInventoryCaption(string caption, bool isInventory)
+    {
+        const string heading = "🔴🔴موجودی🔴🔴";
+        if (!isInventory || caption.StartsWith(heading, StringComparison.Ordinal)) return caption;
+        var result = heading + "\n" + caption;
+        if (result.Length <= 1024) return result;
+        var length = char.IsHighSurrogate(result[1023]) ? 1023 : 1024;
+        return result[..length];
     }
 
     private static string EnsureGiftGiverCaption(JsonElement data, string caption)
@@ -261,7 +299,14 @@ public sealed class N8nIntegrationsController : ControllerBase
             return BadRequest(new { Message = "نوع فایل سفارش معتبر نیست." });
         }
 
-        return Ok(await _mediator.Send(
+        var invoiceId=type==OrderArtifactType.InvoicePdf?await _context.Invoices.AsNoTracking().Where(i=>i.OrderId==request.OrderId&&!i.IsDeleted).Select(i=>(Guid?)i.Id).SingleOrDefaultAsync(cancellationToken):null;
+        await using var artifactTransaction=invoiceId.HasValue?await _context.Database.BeginTransactionAsync(cancellationToken):null;
+        if(invoiceId.HasValue)
+        {
+            await _context.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r=sp_getapplock @Resource={"invoice-cancel:"+invoiceId.Value},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Invoice accounting operation busy',1;",cancellationToken);
+            if(!await _context.NotificationOutbox.AsNoTracking().AnyAsync(n=>n.Id==request.SourceEventId&&!n.IsDeleted,cancellationToken))return Conflict(new{Message="نسخهٔ قبلی فاکتور دیگر معتبر نیست."});
+        }
+        var response=await _mediator.Send(
             new RecordOrderArtifactCommand(
                 request.SourceEventId,
                 request.OrderId,
@@ -269,7 +314,9 @@ public sealed class N8nIntegrationsController : ControllerBase
                 request.FileUrl,
                 request.ExternalFileId,
                 request.ContentType),
-            cancellationToken));
+            cancellationToken);
+        if(artifactTransaction is not null)await artifactTransaction.CommitAsync(cancellationToken);
+        return Ok(response);
     }
 
     public sealed record RecordOrderArtifactRequest(
@@ -308,6 +355,11 @@ public sealed class N8nIntegrationsController : ControllerBase
                 cancellationToken);
         if (sourceEvent is null)
             return NotFound(new { Message = "رویداد مبدأ n8n پیدا نشد." });
+        var failureInvoiceId=sourceEvent.EventType=="InvoiceIssued"?await _context.Invoices.AsNoTracking().Where(i=>i.OrderId==sourceEvent.OrderId&&!i.IsDeleted).Select(i=>(Guid?)i.Id).SingleOrDefaultAsync(cancellationToken):null;
+        await using var failureTransaction=failureInvoiceId.HasValue?await _context.Database.BeginTransactionAsync(cancellationToken):null;
+        if(failureInvoiceId.HasValue)
+            await _context.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r=sp_getapplock @Resource={"invoice-cancel:"+failureInvoiceId.Value},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Invoice accounting operation busy',1;",cancellationToken);
+        if(!await _context.NotificationOutbox.AsNoTracking().AnyAsync(n=>n.Id==request.SourceEventId&&!n.IsDeleted,cancellationToken))return Conflict(new{Message="خطای نسخهٔ قبلی فاکتور پس از انتقال نادیده گرفته شد."});
         if (!N8nDeliveryTargetValidator.MatchesTelegramGroup(sourceEvent.Payload, chatId))
             return Conflict(new { Message = "مقصد گزارش با مقصد مجاز رویداد یکسان نیست." });
 
@@ -396,6 +448,7 @@ public sealed class N8nIntegrationsController : ControllerBase
                 throw;
             return Ok(ToFailureResponse(concurrent, true));
         }
+        if(failureTransaction is not null)await failureTransaction.CommitAsync(cancellationToken);
         return Ok(ToFailureResponse(failure, false));
     }
 

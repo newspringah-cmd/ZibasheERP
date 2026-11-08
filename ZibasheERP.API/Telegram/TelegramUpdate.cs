@@ -21,7 +21,18 @@ public sealed record TelegramMessage(
     [property: JsonPropertyName("reply_to_message")] TelegramMessage? ReplyToMessage = null,
     [property: JsonPropertyName("sender_chat")] TelegramChat? SenderChat = null,
     [property: JsonPropertyName("migrate_to_chat_id")] long? MigrateToChatId = null,
-    [property: JsonPropertyName("migrate_from_chat_id")] long? MigrateFromChatId = null);
+    [property: JsonPropertyName("migrate_from_chat_id")] long? MigrateFromChatId = null,
+    [property: JsonPropertyName("date")] long? Date = null,
+    [property: JsonPropertyName("media_group_id")] string? MediaGroupId = null,
+    [property: JsonPropertyName("reply_markup")] TelegramIncomingKeyboard? ReplyMarkup = null);
+
+public sealed record TelegramIncomingKeyboard([property: JsonPropertyName("inline_keyboard")] TelegramIncomingButton[][] Rows);
+public sealed record TelegramIncomingCopyText([property: JsonPropertyName("text")] string Text);
+public sealed record TelegramIncomingButton([property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("callback_data")] string? CallbackData = null,
+    [property: JsonPropertyName("url")] string? Url = null,
+    [property: JsonPropertyName("copy_text")] TelegramIncomingCopyText? CopyText = null,
+    [property: JsonPropertyName("style")] string? Style = null);
 
 public sealed record TelegramPhotoSize(
     [property: JsonPropertyName("file_id")] string FileId,
