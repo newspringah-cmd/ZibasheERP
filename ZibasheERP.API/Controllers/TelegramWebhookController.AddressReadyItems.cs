@@ -58,7 +58,7 @@ public sealed partial class TelegramWebhookController
             var bottleText = bottleDetails.Length == 0
                 ? string.Empty
                 : $" | جزئیات شیشه: {string.Join("؛ ", bottleDetails)}";
-            return $"{index + 1}. {group.Key} — {string.Join(" + ", components)}{bottleText}{listCodeText}";
+            return $"{index + 1}. {ShippingItemName(groupItems[0]).Trim()} — {string.Join(" + ", components)}{bottleText}{listCodeText}";
         }).ToArray();
 
         return "📦 آیتم‌های آماده ارسال\n\n" +
