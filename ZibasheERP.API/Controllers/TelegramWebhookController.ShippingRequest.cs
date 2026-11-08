@@ -448,8 +448,10 @@ public sealed partial class TelegramWebhookController
     {
         var senderUserId = message.From?.Id ?? 0;
         var isAnonymousReply = message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
+        var isAddressPromptReply = message.ReplyToMessage is { From.IsBot: true } promptReply &&
+            promptReply.Text?.StartsWith("آدرس کامل را وارد کنید", StringComparison.Ordinal) == true;
         if (!_orderFlowDrafts.TryGetShippingPreparation(
-                message.Chat.Id, senderUserId, out var draft, isAnonymousReply))
+                message.Chat.Id, senderUserId, out var draft, isAnonymousReply || isAddressPromptReply))
             return false;
         var isAnonymousAdminReply = draft.Stage == TelegramShippingPreparationStage.AwaitingNewAddress &&
             message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
