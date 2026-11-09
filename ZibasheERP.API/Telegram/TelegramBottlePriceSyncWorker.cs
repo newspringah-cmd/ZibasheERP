@@ -83,7 +83,8 @@ public sealed class TelegramBottlePriceSyncWorker : BackgroundService
                 {
                     bottlesById.TryGetValue(request.BottleId.Value, out bottle);
                 }
-                else if (normalBottlesByVolume.TryGetValue(request.VolumeMl, out bottle))
+                else if (request.VolumeMl % 1 == 0 &&
+                         normalBottlesByVolume.TryGetValue(decimal.ToInt32(request.VolumeMl), out bottle))
                 {
                     request.BottleId = bottle.Id;
                     request.UpdatedAt = now;

@@ -72,7 +72,7 @@ public sealed class TelegramOrderFlowDraftStore
         long chatId,
         long userId,
         out TelegramShippingPreparationDraft draft,
-        bool allowAnonymousChatFallback = false)
+        bool allowAddressPromptChatFallback = false)
     {
         RemoveExpired();
         if (_shippingPreparations.TryGetValue((chatId, userId), out draft!))
@@ -80,24 +80,24 @@ public sealed class TelegramOrderFlowDraftStore
             draft.UpdatedAt = DateTime.UtcNow;
             return true;
         }
-        if (!allowAnonymousChatFallback)
+        if (!allowAddressPromptChatFallback)
         {
             draft = null!;
             return false;
         }
-        var anonymousCandidates = _shippingPreparations.Values
+        var pendingAddressCandidates = _shippingPreparations.Values
             .Where(value => value.ChatId == chatId &&
                 value.Stage == TelegramShippingPreparationStage.AwaitingNewAddress &&
                 value.UpdatedAt >= DateTime.UtcNow - Lifetime)
             .OrderByDescending(value => value.UpdatedAt)
             .Take(2)
             .ToArray();
-        if (anonymousCandidates.Length != 1)
+        if (pendingAddressCandidates.Length != 1)
         {
             draft = null!;
             return false;
         }
-        draft = anonymousCandidates[0];
+        draft = pendingAddressCandidates[0];
         draft.UpdatedAt = DateTime.UtcNow;
         return true;
     }

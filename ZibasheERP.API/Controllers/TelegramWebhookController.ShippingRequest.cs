@@ -436,9 +436,40 @@ public sealed partial class TelegramWebhookController
     {
         var senderUserId = message.From?.Id ?? 0;
         var isAnonymousReply = message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
-        if (!_orderFlowDrafts.TryGetShippingPreparation(
-                message.Chat.Id, senderUserId, out var draft, isAnonymousReply))
-            return false;
+        var isAddressPromptReply = message.ReplyToMessage is { From.IsBot: true } promptReply &&
+            promptReply.Text?.StartsWith("آدرس کامل را وارد کنید", StringComparison.Ordinal) == true;
+        var hasDraft = _orderFlowDrafts.TryGetShippingPreparation(
+            message.Chat.Id, senderUserId, out var draft, isAnonymousReply || isAddressPromptReply);
+        if (!hasDraft && isAddressPromptReply && message.From is not null &&
+            await IsAuthorizedAccountingShippingAdminAsync(message.Chat.Id, message.From.Id, ct))
+        {
+            // The in-memory flow can be lost on an API restart after the prompt was sent.
+            // Reconstruct only from a direct reply to that exact bot prompt and only when
+            // this chat has one unambiguous active customer link.
+            var linkedCustomerIds = await _db.CustomerTelegramGroups.AsNoTracking()
+                .Where(value => !value.IsDeleted && value.IsActive &&
+                    value.ChatId == message.Chat.Id.ToString())
+                .Select(value => value.CustomerId)
+                .Distinct()
+                .Take(2)
+                .ToArrayAsync(ct);
+            if (linkedCustomerIds.Length == 1)
+            {
+                draft = new TelegramShippingPreparationDraft
+                {
+                    ChatId = message.Chat.Id,
+                    UserId = message.From.Id,
+                    CustomerId = linkedCustomerIds[0],
+                    Stage = TelegramShippingPreparationStage.AwaitingNewAddress
+                };
+                _orderFlowDrafts.SetShippingPreparation(draft);
+                hasDraft = true;
+                _logger.LogInformation(
+                    "Recovered shipping address registration after API restart for chat {ChatId} and operator {OperatorId}.",
+                    message.Chat.Id, message.From.Id);
+            }
+        }
+        if (!hasDraft) return false;
         var isAnonymousAdminReply = draft.Stage == TelegramShippingPreparationStage.AwaitingNewAddress &&
             message.SenderChat?.Id == message.Chat.Id && message.ReplyToMessage is not null;
         var authorized = isAnonymousAdminReply || (message.From is not null &&
@@ -514,19 +545,24 @@ public sealed partial class TelegramWebhookController
             }
             var customer = await _db.Customers.AsNoTracking()
                 .FirstAsync(value => value.Id == draft.CustomerId && !value.IsDeleted, ct);
-            var hasAddress = await _db.Addresses.AnyAsync(value => !value.IsDeleted && value.CustomerId == draft.CustomerId, ct);
-            var address = new Address
+            var address = await _db.Addresses.FirstOrDefaultAsync(value =>
+                !value.IsDeleted && value.CustomerId == draft.CustomerId && value.FullAddress == input, ct);
+            if (address is null)
             {
-                Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, CustomerId = draft.CustomerId,
-                ReceiverName = customer.FullName, Mobile = customer.Mobile,
-                Province = string.Empty, City = string.Empty, PostalCode = string.Empty,
-                FullAddress = input, Description = "آدرس خام ثبت‌شده توسط حسابدار",
-                RegistrationTelegramChatId = (draft.RegistrationOnly ? draft.UserId : message.Chat.Id)
-                    .ToString(System.Globalization.CultureInfo.InvariantCulture),
-                IsDefault = !hasAddress
-            };
-            _db.Addresses.Add(address);
-            await _db.SaveChangesAsync(ct);
+                var hasAddress = await _db.Addresses.AnyAsync(value => !value.IsDeleted && value.CustomerId == draft.CustomerId, ct);
+                address = new Address
+                {
+                    Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, CustomerId = draft.CustomerId,
+                    ReceiverName = customer.FullName, Mobile = customer.Mobile,
+                    Province = string.Empty, City = string.Empty, PostalCode = string.Empty,
+                    FullAddress = input, Description = "آدرس خام ثبت‌شده توسط حسابدار",
+                    RegistrationTelegramChatId = (draft.RegistrationOnly ? draft.UserId : message.Chat.Id)
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    IsDefault = !hasAddress
+                };
+                _db.Addresses.Add(address);
+                await _db.SaveChangesAsync(ct);
+            }
             // Removing the consumed bot prompt also clears its ForceReply for members
             // who open the group after the operator has registered the address.
             if (message.ReplyToMessage is { MessageId: > 0, From.IsBot: true } addressPrompt &&
@@ -1374,7 +1410,8 @@ public sealed partial class TelegramWebhookController
         => $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل" +
            $" | {FormatShippingBottleAndLabel(item)}";
 
-    private static string FormatShippingBottleAndLabel(OrderItem item)
+    private static string FormatShippingBottleAndLabel(
+        OrderItem item, IReadOnlyCollection<string>? otherSelectedFancyModels = null)
     {
         var bottle = item.IsBottleOwner
             ? "صاحب باتل"
@@ -1390,9 +1427,15 @@ public sealed partial class TelegramWebhookController
             : item.SourceSalesListRequest?.OmitIdentityOnLabel == true
                 ? "، لیبل: بدون آیدی"
                 : string.Empty;
-        var fancyComment = item.Bottle?.Type == BottleType.Fancy &&
-            !string.IsNullOrWhiteSpace(item.SourceSalesListRequest?.AdminNotes)
-            ? $"، توضیحات شیشه: {item.SourceSalesListRequest.AdminNotes.Trim()}" : string.Empty;
+        var adminNotes = item.SourceSalesListRequest?.AdminNotes?.Trim();
+        var selectedFancyModel = GetSelectedFancyModel(adminNotes, item.Bottle?.Name);
+        var fancyComment = item.Bottle?.Type == BottleType.Fancy
+            ? selectedFancyModel is not null
+                ? (!string.IsNullOrWhiteSpace(adminNotes) ? $"، توضیحات شیشه: {adminNotes}" : string.Empty)
+                : otherSelectedFancyModels is null
+                    ? "، مدل تعیین نشده"
+                    : $"، {FormatFancyModelAvailability(otherSelectedFancyModels)}"
+            : string.Empty;
         var position = item.SalesList?.IsInventoryOffer == true
             ? $" | کد موجودی: {item.SalesList.DisplayCode} | جایگاه نگهداری: {item.SalesList.StoragePosition ?? "جایگاه ثبت نشده"}"
             : !string.IsNullOrWhiteSpace(item.SalesList?.StoragePosition)?$" | کد لیست: {item.SalesList.DisplayCode} | جایگاه نگهداری: {item.SalesList.StoragePosition}":string.Empty;

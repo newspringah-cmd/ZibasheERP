@@ -191,7 +191,9 @@ public class AppDbContext : DbContext
                 ActorUsername = actor.Username?[..Math.Min(actor.Username.Length, 100)],
                 ActorDisplayName = actor.DisplayName[..Math.Min(actor.DisplayName.Length, 128)],
                 SourceUpdateId = actor.UpdateId, SalesListId = request.SalesListId,
-                SalesListRequestId = request.Id, Action = action.Value, PreviousVolumeMl = previous, NewVolumeMl = next
+                SalesListRequestId = request.Id, Action = action.Value,
+                PreviousVolumeMl = previous.HasValue ? decimal.ToInt32(decimal.Truncate(previous.Value)) : null,
+                NewVolumeMl = next.HasValue ? decimal.ToInt32(decimal.Truncate(next.Value)) : null
             });
         }
     }
@@ -380,6 +382,18 @@ public class AppDbContext : DbContext
             .HasPrecision(18, 2);
 
         modelBuilder.Entity<SalesList>()
+            .Property(x => x.TotalVolume)
+            .HasPrecision(18, 1);
+
+        modelBuilder.Entity<SalesList>()
+            .Property(x => x.ReservedVolume)
+            .HasPrecision(18, 1);
+
+        modelBuilder.Entity<SalesList>()
+            .Property(x => x.MinimumRequestVolumeMl)
+            .HasPrecision(18, 1);
+
+        modelBuilder.Entity<SalesList>()
             .Property(x => x.FixedBottlePrice)
             .HasPrecision(18, 2);
 
@@ -520,6 +534,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SalesListRequest>().Property(value => value.ExternalReference).HasMaxLength(100);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.PerfumePricePerMl).HasPrecision(18, 2);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.BottlePrice).HasPrecision(18, 2);
+        modelBuilder.Entity<SalesListRequest>().Property(value => value.VolumeMl).HasPrecision(18, 1);
         modelBuilder.Entity<SalesListRequest>().Property(value => value.RowVersion).IsRowVersion();
         modelBuilder.Entity<SalesListRequest>()
             .HasIndex(value => value.ExternalReference)

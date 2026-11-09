@@ -67,15 +67,48 @@ public static class AddressReadyItemsTests
         fancy.SalesList = new SalesList { PublicCode = 1234, PersianName = "عطر تست" };
         fancy.SourceSalesListRequest!.AdminNotes = "سرشیشه صورتی";
         fancy.SourceSalesListRequest.LabelIdentityText = "هدیه";
-        string Format(params OrderItem[] items) => (string)typeof(TelegramWebhookController)
-            .GetMethod("FormatAddressReadyItems", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [items])!;
-        var text = Format(fancy);
+        string Format(OrderItem[] items,
+            IReadOnlyDictionary<(Guid SalesListId, decimal VolumeMl), IReadOnlyCollection<string>>? selectedModels = null) =>
+            (string)typeof(TelegramWebhookController)
+                .GetMethod("FormatAddressReadyItems", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [items, selectedModels ?? new Dictionary<(Guid SalesListId, decimal VolumeMl), IReadOnlyCollection<string>>()])!;
+        var text = Format([fancy]);
         check(text.Contains("سرشیشه صورتی") && text.Contains("هدیه دریافتی") && text.Contains("1234") && text.Contains("عطر تست") && text.Contains("3 میل"),
             "address report displays fancy bottle instructions, received gift marker, perfume, volume and list code");
-        check(text.Contains("لیبل: هدیه") && text.Contains("تعداد آیتم‌ها: 1"), "address report retains label instructions and item count");
+        check(text.Contains("لیبل: هدیه") && text.Contains("تعداد عطرها: 1"), "address report retains label instructions and perfume count");
         fancy.Bottle.Type = BottleType.Normal;
-        check(!Format(fancy).Contains("سرشیشه صورتی"), "fancy bottle comment is not appended to normal bottle rows");
-        check(Format().Contains("موردی ثبت نشده است.") && Format().Contains("تعداد آیتم‌ها: 0"),
+        check(!Format([fancy]).Contains("سرشیشه صورتی"), "fancy bottle comment is not appended to normal bottle rows");
+        check(Format([]).Contains("موردی ثبت نشده است.") && Format([]).Contains("تعداد عطرها: 0"),
             "address without ready items still contains an explicit empty report");
+
+        var unspecifiedFancy = Item(other);
+        unspecifiedFancy.Bottle = new Bottle { Type = BottleType.Fancy, Name = "شیشه فانتزی" };
+        unspecifiedFancy.RequestedVolumeMl = 10;
+        var salesListId = Guid.NewGuid();
+        unspecifiedFancy.SalesListId = salesListId;
+        unspecifiedFancy.SalesList = new SalesList { Id = salesListId, PublicCode = 1235, PersianName = "عطر دوم" };
+        var priorModels = new Dictionary<(Guid SalesListId, decimal VolumeMl), IReadOnlyCollection<string>>
+        {
+            [(salesListId, 10)] = ["سر آبی", "سر قرمز"]
+        };
+        var availabilityText = Format([unspecifiedFancy], priorModels);
+        check(availabilityText.Contains("مدل تعیین نشده") && availabilityText.Contains("سر آبی") &&
+              availabilityText.Contains("سر قرمز"),
+            "unspecified fancy bottle excludes models already selected for the same list and volume");
+        var perfumeId=Guid.NewGuid();fancy.PerfumeId=perfumeId;
+        fancy.SalesList!.StoragePosition="A-12";
+        var samePerfumeOwn=Item(customer);samePerfumeOwn.PerfumeId=perfumeId;
+        samePerfumeOwn.SalesList=fancy.SalesList;samePerfumeOwn.RequestedVolumeMl=2;
+        var samePerfumeManualGift=Item(other);samePerfumeManualGift.PerfumeId=perfumeId;
+        samePerfumeManualGift.SalesList=fancy.SalesList;samePerfumeManualGift.RequestedVolumeMl=2;
+        samePerfumeManualGift.Order!.Source=OrderSource.ManualInvoice;
+        samePerfumeManualGift.Order.Notes=ShippingRecipientPolicy.ManualGiftMarker+"receiver";
+        var mergedReport=Format([fancy,samePerfumeOwn,samePerfumeManualGift]);
+        check(mergedReport.Contains("2 میل آیتم خودش")&&mergedReport.Contains("5 میل هدیه دریافتی"),
+            "recovered grouped report separates own volume from ordinary and manual incoming gifts");
+        check(mergedReport.Contains("تعداد عطرها: 1")&&mergedReport.Contains("🔴 تعداد آیتم‌ها: 3")&&mergedReport.Contains("A-12"),
+            "new grouped perfume counts preserve the original item count marker and physical storage position");
+        check(mergedReport.Contains("عطر تست")&&!mergedReport.Contains("perfume:"),
+            "latest runtime name correction is preserved without displaying internal perfume grouping keys");
     }
 }

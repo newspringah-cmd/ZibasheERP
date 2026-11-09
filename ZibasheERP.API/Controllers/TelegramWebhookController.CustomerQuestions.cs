@@ -352,7 +352,7 @@ public sealed partial class TelegramWebhookController
                 value.MiddleNotes,
                 value.BaseNotes,
                 value.Accords,
-                Math.Max(0, value.TotalVolume - value.ReservedVolume)))
+                decimal.ToInt32(decimal.Truncate(Math.Max(0, value.TotalVolume - value.ReservedVolume)))) )
             .ToArray();
 
         var result = await _perfumeRecommendationService.RecommendAsync(

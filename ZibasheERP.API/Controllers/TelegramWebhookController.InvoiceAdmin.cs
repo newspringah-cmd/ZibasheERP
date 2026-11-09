@@ -4101,7 +4101,7 @@ public sealed partial class TelegramWebhookController
                 return;
             }
             changeDraft.SelectedRequestId = request.Id;
-            changeDraft.OriginalVolumeMl = request.VolumeMl;
+            changeDraft.OriginalVolumeMl = decimal.ToInt32(decimal.Truncate(request.VolumeMl));
             changeDraft.Stage = TelegramAdminRequestStage.AwaitingVolume;
             _adminRequestDrafts.Set(changeDraft);
             await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -4353,7 +4353,7 @@ public sealed partial class TelegramWebhookController
                     return;
                 }
                 queueDraft.SelectedRequestId = requestId;
-                queueDraft.OriginalVolumeMl = queuedRequest.VolumeMl;
+                queueDraft.OriginalVolumeMl = decimal.ToInt32(decimal.Truncate(queuedRequest.VolumeMl));
                 queueDraft.Stage = TelegramAdminRequestStage.AwaitingQueueVolume;
                 _adminRequestDrafts.Set(queueDraft);
                 await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
@@ -5817,7 +5817,7 @@ public sealed partial class TelegramWebhookController
             ? _options.AdminChatId
             : _options.SalesAuditChatId;
         var tehranNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTimeOffset.UtcNow, "Asia/Tehran");
-        var adminIdentity = DisplayTelegramUser(callback.From);
+        var adminIdentity = DisplaySalesListRegistrationActor(callback.From);
         if (draft.Kind is TelegramAdminRequestKind.CustomRequest or TelegramAdminRequestKind.GiftRequest)
         {
             var bottleLabel = draft.IsBottleOwner
