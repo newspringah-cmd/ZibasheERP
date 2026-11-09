@@ -4,6 +4,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using ZibasheERP.API.Telegram;
 
+if (args.Contains("--initialize-test-database"))
+{
+    await IsolatedTestDatabase.InitializeAsync();
+    return;
+}
+
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
 var priceController=typeof(ZibasheERP.API.Controllers.TelegramWebhookController);
 var pricingInput=new object?[]{"۳۳۹۷۶۸\n۱۰۰\n۵",null,null,null,null};

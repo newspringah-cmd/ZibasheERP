@@ -16,10 +16,25 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      test-sql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: CiOnly!${{ github.run_id }}-${{ github.run_attempt }}aA
+        ports:
+          - 127.0.0.1:14333:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
     env:
       ASPNETCORE_ENVIRONMENT: Development
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
+      TRACKING_TEST_DB_CONNECTION: Server=127.0.0.1,14333;Database=ZibasheERPCloudDev;User Id=sa;Password=CiOnly!${{ github.run_id }}-${{ github.run_attempt }}aA;Encrypt=True;TrustServerCertificate=True;Connect Timeout=10
 
     steps:
       - name: Checkout
@@ -127,6 +142,15 @@ jobs:
           --configuration Release
           --no-build
           --no-restore
+
+      - name: Initialize isolated API test database
+        run: >-
+          dotnet run
+          --project ZibasheERP.API.Tests/ZibasheERP.API.Tests.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          -- --initialize-test-database
 
       - name: Run API behavior tests
         run: >-
