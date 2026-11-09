@@ -656,7 +656,9 @@ public sealed partial class TelegramWebhookController
         var shippingMessage =
             $"📦 درخواست ارسال دستی\n\nثبت‌کننده: {draft.UserId}\n\n" +
             $"{FormatAddressForDisplay(address)}\n\n📝 توضیحات:\n{notes}";
-        shippingMessage=ZibasheERP.API.AddressLabels.ShippingAddressDisplay.UpdateHeader(shippingMessage,address);
+        var registrar=draft.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture)==_options.OwnerUserId.Trim()
+            ? "@"+LearningManagerUsername:draft.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        shippingMessage=ZibasheERP.API.AddressLabels.ShippingAddressDisplay.UpdateHeader(shippingMessage,address,registrar);
         var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
         {
             new[]

@@ -40,16 +40,23 @@ public static class ShippingAddressDisplay
         var name=RecipientName(address);
         return string.IsNullOrEmpty(name)?identity:NormalizeName(identity)==name?name:identity+" — "+name;
     }
-    public static string UpdateHeader(string message,Address address)
+    public static string UpdateHeader(string message,Address address,string? manualRegistrar=null)
     {
-        var name=RecipientName(address);if(string.IsNullOrEmpty(name))return message;
+        var name=RecipientName(address);
+        var manual=new Regex(@"^ثبت‌کننده:[ \t]*(?<identity>[^\r\n]+)(?<legacy>\r?\nگیرندهٔ پستی:[^\r\n]*)?",RegexOptions.Multiline);
+        if(manual.IsMatch(message))return manual.Replace(message,m=>
+        {
+            var identity=manualRegistrar??m.Groups["identity"].Value.Split(" — ",2,StringSplitOptions.None)[0].Trim();
+            if(string.IsNullOrEmpty(name))return "ثبت‌کننده: "+identity+m.Groups["legacy"].Value;
+            return "ثبت‌کننده: "+identity+" — گیرنده: "+name;
+        },1);
+        if(string.IsNullOrEmpty(name))return message;
         var header=new Regex(@"^(?<label>آیدی|مشتری|گیرندهٔ اصلی):[ \t]*(?<identity>[^\r\n]+)",RegexOptions.Multiline);
         if(header.IsMatch(message))return header.Replace(message,m=>
         {
             var identity=m.Groups["identity"].Value.Split(" — ",2,StringSplitOptions.None)[0].Trim();
             return m.Groups["label"].Value+": "+(NormalizeName(identity)==name?name:identity+" — "+name);
         },1);
-        var manual=new Regex(@"^(?<line>ثبت‌کننده:[^\r\n]+)(?:\r?\nگیرندهٔ پستی:[^\r\n]*)?",RegexOptions.Multiline);
-        return manual.Replace(message,m=>m.Groups["line"].Value+"\nگیرندهٔ پستی: "+name,1);
+        return message;
     }
 }

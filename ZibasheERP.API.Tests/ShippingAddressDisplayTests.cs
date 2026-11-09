@@ -21,8 +21,14 @@ public static class ShippingAddressDisplayTests
         check(ShippingAddressDisplay.UpdateHeader("📦 درخواست ارسال مشترک\nگیرندهٔ اصلی: @recipient\n\n"+raw,address).Contains("گیرندهٔ اصلی: @recipient — نرگس امینی"),
             "shared parcels display the actual primary postal recipient beside its account");
         var manual=ShippingAddressDisplay.UpdateHeader("📦 درخواست ارسال دستی\n\nثبت‌کننده: 741471928\n\n"+raw,address);
-        check(manual.Contains("ثبت‌کننده: 741471928\nگیرندهٔ پستی: نرگس امینی")&&ShippingAddressDisplay.UpdateHeader(manual,address)==manual,
-            "manual addresses label the postal recipient separately from the registering admin");
+        check(manual.Contains("ثبت‌کننده: 741471928 — گیرنده: نرگس امینی")&&ShippingAddressDisplay.UpdateHeader(manual,address)==manual,
+            "manual addresses put the searchable postal recipient beside the registering admin with an explicit role label");
+        var manager=ShippingAddressDisplay.UpdateHeader(manual,address,"@zahraa_frj");
+        check(manager.Contains("ثبت‌کننده: @zahraa_frj — گیرنده: نرگس امینی")&&manager.EndsWith(raw)&&ShippingAddressDisplay.UpdateHeader(manager,address,"@zahraa_frj")==manager,
+            "manual manager username replaces its numeric display without changing postal details or duplicating recipient names");
+        var legacy=ShippingAddressDisplay.UpdateHeader("ثبت‌کننده: 741471928\nگیرندهٔ پستی: نرگس اميني\n\n"+raw,address,"@zahraa_frj");
+        check(legacy=="ثبت‌کننده: @zahraa_frj — گیرنده: نرگس امینی\n\n"+raw,"legacy separate recipient header becomes one searchable line while preserving the full raw address");
+        check(ShippingAddressDisplay.UpdateHeader("ثبت‌کننده: 123456\n\n"+raw,address).Contains("ثبت‌کننده: 123456 — گیرنده: نرگس امینی"),"other registrars retain their real identity instead of being relabelled as the manager");
         check(ShippingAddressDisplay.RecipientName(new(){ReceiverName="اميني",FullAddress="تهران خیابان نمونه"})=="امینی","a declared one-word recipient remains a valid display name");
         check(ShippingAddressDisplay.RecipientName(new(){ReceiverName="@recipient",FullAddress="تهران خیابان امینی پلاک ۷\n09120000000"}) is null,
             "street names and phone numbers are never promoted into postal recipient names");
@@ -32,6 +38,7 @@ public static class ShippingAddressDisplayTests
             "conflicting explicit recipient names are not silently guessed");
         check(ShippingAddressDisplay.NormalizeName("نرگس امیینی")=="نرگس امیینی","real extra letters and spelling differences are not silently changed by display normalization");
         var missing=new Address{ReceiverName="@recipient",FullAddress="09120000000"};
+        check(ShippingAddressDisplay.UpdateHeader("ثبت‌کننده: 741471928\n\n09120000000",missing,"@zahraa_frj")=="ثبت‌کننده: @zahraa_frj\n\n09120000000","registrar username is displayed even if the recipient name is unresolved");
         check(ShippingAddressDisplay.UpdateHeader(original,missing)==original,"an unresolved recipient leaves the existing header intact");
     }
 }
