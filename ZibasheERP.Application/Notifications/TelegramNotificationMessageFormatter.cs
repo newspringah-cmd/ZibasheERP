@@ -10,6 +10,8 @@ public static class TelegramNotificationMessageFormatter
     {
         using var document = JsonDocument.Parse(payload);
         var root = document.RootElement;
+        if(eventType=="InvoiceRevisionCleanupNeedsManualAction")
+            return ReadString(root,"Message")??"نسخهٔ اصلاح‌شدهٔ فاکتور ارسال شد؛ حذف پیام قدیمی نیازمند بررسی حسابداری است.";
         if(eventType=="InventoryPostCleanupNeedsManualAction")
         {
             var withdrawn=root.TryGetProperty("Withdrawn",out var state)&&state.ValueKind==JsonValueKind.True;

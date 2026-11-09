@@ -33,6 +33,8 @@ public sealed class InvoiceTransferService(AppDbContext db)
     private async Task ValidateAsync(Invoice i,CancellationToken ct)
     {
         var o=i.Order??throw new InvalidOperationException("سفارش پیدا نشد.");
+        if(await db.NotificationOutbox.AnyAsync(n=>!n.IsDeleted&&n.OrderId==o.Id&&n.Channel==InvoiceRevisionService.Channel&&n.Status!=NotificationOutboxStatus.Processed,ct))
+            throw new InvalidOperationException("ارسال و پاک‌سازی نسخهٔ اصلاح‌شدهٔ فاکتور هنوز تمام نشده است.");
         if(i.IsDeleted||o.IsDeleted||o.Customer is null||o.Customer.IsDeleted||i.Status is InvoiceStatus.Cancelled or InvoiceStatus.Draft||o.Status==OrderStatus.Cancelled)
             throw new InvalidOperationException("این فاکتور فعال نیست.");
         var items=o.Items.Where(x=>!x.IsDeleted).ToArray();

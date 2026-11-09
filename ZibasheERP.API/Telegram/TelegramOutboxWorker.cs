@@ -80,6 +80,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
                     "InvoiceGiftDeliveryRequiresManualAction" or
                     "InvoiceManualReviewGreeting" or
                     "InvoiceManualReviewPerfumePhoto" or
+                    "InvoiceRevisionCleanupNeedsManualAction" or
                     "TelegramGroupDeliveryFailed"
                     ? (string.IsNullOrWhiteSpace(_options.InvoiceFailureChatId)
                         ? _options.AdminChatId.Trim()
@@ -126,6 +127,7 @@ public sealed class TelegramOutboxWorker : BackgroundService
             notification.NextAttemptAt = null;
             var permanentGroupFailure = !result.IsSuccessful &&
                 notification.EventType != "TelegramGroupDeliveryFailed" && notification.EventType != "InventoryPostCleanupNeedsManualAction" &&
+                notification.EventType != "InvoiceRevisionCleanupNeedsManualAction" &&
                 TelegramDeliveryFailurePolicy.IsPermanentGroupAccessFailure(
                     notification.Recipient,
                     result.Error);

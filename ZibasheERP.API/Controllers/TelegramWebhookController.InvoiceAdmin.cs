@@ -3105,7 +3105,7 @@ public sealed partial class TelegramWebhookController
 
         var sent = await _sender.SendInlineKeyboardAsync(
             _options.NewPaymentsChatId.Trim(),
-            FormatManualPaymentTrackingMessage(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id)),
+            await FormatManualPaymentTrackingWithHistoryAsync(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id),ct),
             BuildManualPaymentTrackingButtons(invoice),
             ct);
         if (!sent.IsSuccessful || !sent.MessageId.HasValue)
@@ -3171,7 +3171,7 @@ public sealed partial class TelegramWebhookController
         var refreshed = await _sender.EditTextWithKeyboardAsync(
             invoice.TelegramPaymentTrackingChatId,
             invoice.TelegramPaymentTrackingMessageId.Value,
-            FormatManualPaymentTrackingMessage(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id)),
+            await FormatManualPaymentTrackingWithHistoryAsync(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id),ct),
             BuildManualPaymentTrackingButtons(invoice),
             ct);
         if (!refreshed.IsSuccessful && !IsTelegramMessageUnchanged(refreshed.Error))

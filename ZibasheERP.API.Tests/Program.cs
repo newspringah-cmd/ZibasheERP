@@ -25,6 +25,11 @@ if(args.Contains("--production-recipient-totals"))
     Console.WriteLine("Production recipient total tests passed.");
     return;
 }
+if(args.Contains("--partial-invoice-cancellation"))
+{
+    await PartialInvoiceCancellationTests.Run(Check);
+    return;
+}
 if(args.Contains("--tracking-address-notices"))
 {
     await ShippingTrackingNoticeTests.Run(Check);
@@ -287,6 +292,7 @@ await AdminMarketingTests.Run(Check);
 await HourlyPromotionTests.Run(Check);
 await ReadyInventoryTests.Run(Check);
 await InvoiceCancellationTests.Run(Check);
+await PartialInvoiceCancellationTests.Run(Check);
 await InvoiceTransferTests.Run(Check);
 await InvoiceBundleTests.Run(Check);
 await InvoicePaymentCopyTests.Run(Check);

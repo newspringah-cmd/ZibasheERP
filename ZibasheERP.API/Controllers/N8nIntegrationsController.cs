@@ -94,10 +94,11 @@ public sealed class N8nIntegrationsController : ControllerBase
         if(deliveryInvoice is null)
             return Conflict(new{Message="فاکتور لغو شده است؛ ارسال PDF متوقف شد."});
         var transferred=data.TryGetProperty("IsTransferredInvoice",out var transferredFlag)&&transferredFlag.ValueKind==JsonValueKind.True;
-        if(transferred)await _context.CustomerTelegramGroups.FromSqlInterpolated($"SELECT * FROM CustomerTelegramGroups WITH(UPDLOCK,HOLDLOCK) WHERE ChatId={chatId}").AsNoTracking().ToArrayAsync(cancellationToken);
-        if(transferred&&(!await _context.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==deliveryInvoice.CustomerId&&g.ChatId==chatId,cancellationToken)||
+        var revised=data.TryGetProperty("InvoiceRevisionOperationId",out var revisionId)&&revisionId.TryGetGuid(out _);
+        if(transferred||revised)await _context.CustomerTelegramGroups.FromSqlInterpolated($"SELECT * FROM CustomerTelegramGroups WITH(UPDLOCK,HOLDLOCK) WHERE ChatId={chatId}").AsNoTracking().ToArrayAsync(cancellationToken);
+        if((transferred||revised)&&(!await _context.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==deliveryInvoice.CustomerId&&g.ChatId==chatId,cancellationToken)||
             await _context.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId!=deliveryInvoice.CustomerId&&g.ChatId==chatId,cancellationToken)))
-            return Conflict(new{Message="گروه گیرندهٔ فاکتور منتقل‌شده دیگر اتصال یکتای معتبری ندارد."});
+            return Conflict(new{Message="گروه گیرندهٔ فاکتور اصلاح‌شده یا منتقل‌شده دیگر اتصال یکتای معتبری ندارد."});
 
         // Historical retry payloads can predate IsInventory. Use the saved order
         // so reconnecting a customer group cannot lose the inventory heading.

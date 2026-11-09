@@ -12,8 +12,10 @@ public sealed class InvoiceCancellationService(AppDbContext db)
 {
     public sealed record Line(Guid ItemId,string Name,decimal Volume,decimal InvoicePrice,decimal CurrentPrice,decimal BottlePrice,string BottleName,
         Guid? ReferenceId,Guid? BottleId,string Photo,string Position,string? Description);
-    public sealed record Preview(Guid InvoiceId,string Number,string Customer,decimal Amount,string Fingerprint,Line[] Lines);
-    public sealed record Result(Guid InvoiceId,decimal ReversedAmount,Guid[] Offers,int[] Codes,bool Returned);
+    public sealed record Preview(Guid InvoiceId,string Number,string Customer,decimal Amount,string Fingerprint,Line[] Lines,
+        Guid[]? SelectedItems=null,decimal RemainingAmount=0,bool Partial=false);
+    public sealed record Result(Guid InvoiceId,decimal ReversedAmount,Guid[] Offers,int[] Codes,bool Returned,
+        Guid? SourceInvoiceId=null,Guid[]? SelectedItems=null,decimal RemainingAmount=0,string? Fingerprint=null);
     private IQueryable<Invoice> Query()=>db.Invoices.Include(i=>i.Order).ThenInclude(o=>o!.Customer)
         .Include(i=>i.Order).ThenInclude(o=>o!.Payments).Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(x=>x.SalesList).ThenInclude(l=>l!.Perfume)
         .Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(x=>x.Bottle)
@@ -21,6 +23,15 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         .Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(x=>x.SourceSalesListRequest);
     public async Task<Preview> ResolveAsync(string caption,bool returned,CancellationToken ct=default)
         =>await BuildAsync(await ResolveInvoiceAsync(caption,ct),returned,ct);
+    public async Task<Preview> ResolveForSelectionAsync(string caption,bool returned,CancellationToken ct=default)
+        =>await BuildAsync(await ResolveInvoiceAsync(caption,ct),returned,ct,validateReturn:false);
+    public async Task<Preview> SelectAsync(Preview original,bool returned,Guid[] selected,CancellationToken ct=default)
+    {
+        var invoice=await Query().AsNoTracking().SingleAsync(i=>i.Id==original.InvoiceId,ct);
+        var fresh=await BuildAsync(invoice,returned,ct,validateReturn:false);
+        if(fresh.Fingerprint!=original.Fingerprint)throw new InvalidOperationException("فاکتور پس از نمایش آیتم‌ها تغییر کرده؛ کپشن تازه را دوباره بفرستید.");
+        return await BuildAsync(invoice,returned,ct,selected);
+    }
     public async Task<Guid> ResolveIdentityAsync(string caption,CancellationToken ct=default)=>(await ResolveInvoiceAsync(caption,ct)).Id;
     private async Task<Invoice> ResolveInvoiceAsync(string caption,CancellationToken ct)
     {
@@ -58,14 +69,19 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         if(o.Status is OrderStatus.Shipped or OrderStatus.Delivered||o.ShippedAt!=null||o.Items.Any(x=>!x.IsDeleted&&(x.ShippedAt!=null||x.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped)))throw new InvalidOperationException("فاکتور دارای آیتم ارسال‌شده قابل لغو یا برگشت مستقیم نیست.");
         if(invoice.TotalAmount<=0||invoice.TotalAmount!=o.FinalAmount||o.Items.Where(x=>!x.IsDeleted).Sum(x=>x.LineTotal)!=invoice.TotalAmount)throw new InvalidOperationException("مبالغ فاکتور و آیتم‌ها تطبیق ندارند؛ بررسی حسابداری لازم است.");
     }
-    private async Task<Preview> BuildAsync(Invoice invoice,bool returned,CancellationToken ct)
+    private async Task<Preview> BuildAsync(Invoice invoice,bool returned,CancellationToken ct,Guid[]? selected=null,bool validateReturn=true)
     {
         Validate(invoice);var order=invoice.Order!;var lines=new List<Line>();
         if(await db.NotificationOutbox.AnyAsync(n=>!n.IsDeleted&&n.OrderId==order.Id&&n.Channel==InvoiceTransferService.WorkChannel&&n.Status!=NotificationOutboxStatus.Processed,ct))
             throw new InvalidOperationException("انتقال این فاکتور هنوز تکمیل نشده؛ ابتدا وضعیت ارسال و پاک‌سازی انتقال را بررسی کنید.");
+        if(await db.NotificationOutbox.AnyAsync(n=>!n.IsDeleted&&n.OrderId==order.Id&&n.Channel==InvoiceRevisionService.Channel&&n.Status!=NotificationOutboxStatus.Processed,ct))
+            throw new InvalidOperationException("اصلاح قبلی فاکتور هنوز در حال ارسال یا پاک‌سازی است؛ ابتدا وضعیت آن را بررسی کنید.");
+        var active=order.Items.Where(x=>!x.IsDeleted).ToArray();
+        if(selected is not null&&(selected.Length==0||selected.Distinct().Count()!=selected.Length||selected.Except(active.Select(x=>x.Id)).Any()))
+            throw new InvalidOperationException("حداقل یک آیتم معتبر از همین فاکتور انتخاب کنید.");
         var requests=order.Items.Where(x=>!x.IsDeleted&&x.ShippingRequestId!=null).Select(x=>x.ShippingRequestId!.Value).ToArray();
         if(await db.TrackingDispatches.AnyAsync(d=>!d.IsDeleted&&d.ShippingRequestId!=null&&requests.Contains(d.ShippingRequestId.Value)&&(d.Status==TrackingDispatchStatus.Sending||d.Status==TrackingDispatchStatus.Sent),ct))throw new InvalidOperationException("ارسال یا کد رهگیری این بسته شروع شده؛ ابتدا وضعیت ارسال باید بررسی شود.");
-        foreach(var x in order.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.Id))
+        foreach(var x in order.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.RowNumber).ThenBy(x=>x.Id))
         {
             var source=x.SalesList;var reference=source?.IsInventoryOffer==true?source.InventoryReferenceListId:source?.Id;
             if(reference is null&&x.PerfumeId!=null)reference=await db.SalesLists.AsNoTracking().Where(l=>!l.IsDeleted&&!l.IsInventoryOffer&&l.PerfumeId==x.PerfumeId&&l.TelegramPhotoFileId!=null).OrderByDescending(l=>l.OpenDate).Select(l=>(Guid?)l.Id).FirstOrDefaultAsync(ct);
@@ -74,14 +90,18 @@ public sealed class InvoiceCancellationService(AppDbContext db)
             var photo=source?.TelegramPhotoFileId;
             if(string.IsNullOrWhiteSpace(photo)&&source!=null)photo=await db.TelegramSalesListImports.AsNoTracking().Where(p=>p.SalesListId==source.Id&&p.TelegramPhotoFileId!=null).OrderByDescending(p=>p.CreatedAt).Select(p=>p.TelegramPhotoFileId).FirstOrDefaultAsync(ct);
             if(string.IsNullOrWhiteSpace(photo)&&reference!=null)photo=await db.SalesLists.AsNoTracking().Where(l=>l.Id==reference).Select(l=>l.TelegramPhotoFileId).FirstOrDefaultAsync(ct);
-            if(returned&&(price is not >0||string.IsNullOrWhiteSpace(photo)||x.Bottle is not {IsDeleted:false,IsActive:true}||x.Bottle.VolumeMl<x.RequestedVolumeMl||x.RequestedVolumeMl is <0.5m or >1000||x.RequestedVolumeMl*2!=decimal.Truncate(x.RequestedVolumeMl*2)))throw new InvalidOperationException("عکس، قیمت روز، حجم نیم‌میل یا شیشهٔ مناسبِ یکی از آیتم‌ها کامل نیست؛ پیش از انتقال به موجودی اصلاح کنید. هنوز فاکتور لغو نشده است.");
-            if(returned&&await db.SalesLists.AnyAsync(l=>l.SourceOrderItemId==x.Id,ct))throw new InvalidOperationException("یکی از آیتم‌ها قبلاً به موجودی منتقل شده است.");
+            var returning=returned&&validateReturn&&(selected is null||selected.Contains(x.Id));
+            if(returning&&(price is not >0||string.IsNullOrWhiteSpace(photo)||x.Bottle is not {IsDeleted:false,IsActive:true}||x.Bottle.VolumeMl<x.RequestedVolumeMl||x.RequestedVolumeMl is <0.5m or >1000||x.RequestedVolumeMl*2!=decimal.Truncate(x.RequestedVolumeMl*2)))throw new InvalidOperationException("عکس، قیمت روز، حجم نیم‌میل یا شیشهٔ مناسبِ یکی از آیتم‌های انتخاب‌شده کامل نیست؛ پیش از انتقال به موجودی اصلاح کنید. هنوز فاکتور لغو نشده است.");
+            if(returning&&await db.SalesLists.AnyAsync(l=>l.SourceOrderItemId==x.Id,ct))throw new InvalidOperationException("یکی از آیتم‌ها قبلاً به موجودی منتقل شده است.");
             lines.Add(new(x.Id,source?.PersianName is {Length:>0}?source.PersianName:x.Perfume?.Name??source?.EnglishName??x.ManualDescription??"عطر",x.RequestedVolumeMl,x.PerfumePricePerMl,price??0,x.BottlePrice,x.Bottle?.Name??"ثبت نشده",reference,x.BottleId,photo??"",source?.StoragePosition??"جایگاه ثبت نشده",source?.InventoryPublicDescription));
         }
         var data=JsonSerializer.Serialize(new{invoice.Id,InvoiceStatus=invoice.Status,invoice.TotalAmount,OrderStatus=order.Status,order.FinalAmount,Lines=lines,
-            Items=order.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.Id).Select(x=>new{x.Id,x.LineTotal,x.FulfillmentStatus,x.ShippedAt,x.ShippingRequestId,x.SourceSalesListRequestId,RequestVersion=x.SourceSalesListRequest?.RowVersion}),Returned=returned});
+            Items=order.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.Id).Select(x=>new{x.Id,x.LineTotal,x.FulfillmentStatus,x.ShippedAt,x.ShippingRequestId,x.SourceSalesListRequestId,RequestVersion=x.SourceSalesListRequest?.RowVersion}),Returned=returned,Selected=selected?.Order().ToArray()});
         var customer=order.Customer!;var identity=string.IsNullOrWhiteSpace(customer.Username)?$"{customer.FullName} ({customer.TelegramId??customer.Id.ToString("N")})":"@"+customer.Username.TrimStart('@');
-        return new(invoice.Id,invoice.InvoiceNumber,identity,invoice.TotalAmount,Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data))),lines.ToArray());
+        var amount=active.Where(x=>selected is null||selected.Contains(x.Id)).Sum(x=>x.LineTotal);
+        if(amount<=0)throw new InvalidOperationException("مبلغ آیتم‌های انتخاب‌شده باید مثبت باشد.");
+        return new(invoice.Id,invoice.InvoiceNumber,identity,amount,Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data))),
+            lines.Where(x=>selected is null||selected.Contains(x.ItemId)).ToArray(),selected,invoice.TotalAmount-amount,selected is not null&&selected.Length<active.Length);
     }
     public async Task<Result> ExecuteAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,CancellationToken ct=default)
     {
@@ -94,7 +114,7 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         {
             if(prior.Channel!="InvoiceCancellationReceipt")throw new InvalidOperationException("شناسهٔ عملیات تکراری نامعتبر است.");
             var saved=JsonSerializer.Deserialize<Result>(prior.Payload)!;
-            if(saved.InvoiceId!=expected.InvoiceId||saved.Returned!=returned)throw new InvalidOperationException("درخواست تکراری نامعتبر است.");
+            if((saved.SourceInvoiceId??saved.InvoiceId)!=expected.InvoiceId||saved.Returned!=returned||saved.Fingerprint is not null&&saved.Fingerprint!=expected.Fingerprint)throw new InvalidOperationException("درخواست تکراری نامعتبر است.");
             await tx.CommitAsync(ct);return saved;
         }
         if(returned)await db.Database.ExecuteSqlRawAsync("DECLARE @r int; EXEC @r=sp_getapplock @Resource='ready-inventory-code',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Inventory code allocation busy',1;",ct);
@@ -108,12 +128,19 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         // This is a standalone financial unit of work. Discard only unchanged cached
         // entities after taking locks so preview/payment changes cannot remain stale.
         db.ChangeTracker.Clear();
-        var invoice=await Query().SingleAsync(i=>i.Id==expected.InvoiceId,ct);var fresh=await BuildAsync(invoice,returned,ct);
+        var invoice=await Query().SingleAsync(i=>i.Id==expected.InvoiceId,ct);var fresh=await BuildAsync(invoice,returned,ct,expected.SelectedItems);
         if(fresh.Fingerprint!=expected.Fingerprint)throw new InvalidOperationException("فاکتور، وضعیت آیتم یا قیمت روز پس از پیش‌نمایش تغییر کرده؛ کپشن را دوباره بررسی کنید.");
         var o=invoice.Order!;if(o.Customer!.CurrentDebt<invoice.TotalAmount)throw new InvalidOperationException("ماندهٔ حساب با مبلغ فاکتور تطبیق ندارد؛ اصلاح خودکار متوقف شد.");
         if(await db.Invoices.AnyAsync(i=>i.OrderId==o.Id&&i.Id!=invoice.Id&&!i.IsDeleted&&i.Status!=InvoiceStatus.Cancelled&&i.Status!=InvoiceStatus.Draft,ct))throw new InvalidOperationException("سفارش بیش از یک فاکتور فعال دارد؛ بررسی حسابداری لازم است.");
         var pending=await db.NotificationOutbox.FromSqlInterpolated($"SELECT * FROM NotificationOutbox WITH(UPDLOCK,HOLDLOCK) WHERE OrderId={o.Id} AND IsDeleted=0 AND Channel IN(N'Telegram',N'N8n') AND Status<>{NotificationOutboxStatus.Processed}").ToArrayAsync(ct);
         var now=DateTime.UtcNow;if(pending.Any(n=>n.Status==NotificationOutboxStatus.Processing&&n.LockedUntil>now))throw new InvalidOperationException("ارسال یکی از پیام‌های فاکتور در حال انجام است؛ کمی بعد دوباره تلاش کنید.");
+        Guid? sourceInvoice=null;
+        if(fresh.Partial)
+        {
+            sourceInvoice=invoice.Id;
+            invoice=await InvoiceRevisionService.SplitAsync(db,invoice,fresh.Lines.Select(l=>l.ItemId).ToArray(),operation,now,ct);
+            o=invoice.Order!;
+        }
         var offers=new List<SalesList>();
         if(returned)
         {
@@ -134,11 +161,12 @@ public sealed class InvoiceCancellationService(AppDbContext db)
             if(x.SalesList?.IsInventoryOffer==true){x.SalesList.Status=SalesListStatus.Cancelled;x.SalesList.UpdatedAt=now;}
         }
         foreach(var p in o.Payments.Where(p=>!p.IsDeleted&&p.Status==PaymentStatus.Pending)){p.Status=PaymentStatus.Cancelled;p.IsSuccessful=false;p.UpdatedAt=now;}
-        foreach(var n in pending){n.Status=NotificationOutboxStatus.Processed;n.ProcessedAt=now;n.LockedUntil=null;n.NextAttemptAt=null;n.LastError="Suppressed: invoice cancelled";}
-        o.Customer.CurrentDebt-=invoice.TotalAmount;o.Customer.UpdatedAt=now;o.Status=OrderStatus.Cancelled;o.CancelledAt=now;o.CancelReason=$"Invoice cancelled by Telegram admin {actor}; return to inventory: {returned}";o.UpdatedAt=now;
+        foreach(var n in pending.Where(n=>sourceInvoice is null||n.IsDeleted)){n.Status=NotificationOutboxStatus.Processed;n.ProcessedAt=now;n.LockedUntil=null;n.NextAttemptAt=null;n.LastError="Suppressed: invoice cancelled";}
+        o.Customer!.CurrentDebt-=invoice.TotalAmount;o.Customer.UpdatedAt=now;o.Status=OrderStatus.Cancelled;o.CancelledAt=now;o.CancelReason=$"Invoice cancelled by Telegram admin {actor}; return to inventory: {returned}";o.UpdatedAt=now;
         invoice.Status=InvoiceStatus.Cancelled;invoice.UpdatedAt=now;invoice.DeliveryStatus=InvoiceDeliveryStatus.Cancelled;invoice.DeliveryStatusChangedAt=now;invoice.DeliveryStatusNote="Cancelled by accounting; financial history retained";
         await InvoiceMessageLifecycle.QueueKnownAsync(db,invoice,ct);
-        var result=new Result(invoice.Id,invoice.TotalAmount,offers.Select(l=>l.Id).ToArray(),offers.Select(l=>l.InventoryCode!.Value).ToArray(),returned);
+        var result=new Result(invoice.Id,invoice.TotalAmount,offers.Select(l=>l.Id).ToArray(),offers.Select(l=>l.InventoryCode!.Value).ToArray(),returned,
+            sourceInvoice,fresh.Lines.Select(l=>l.ItemId).ToArray(),fresh.RemainingAmount,fresh.Fingerprint);
         db.NotificationOutbox.Add(new(){Id=operation,CustomerId=o.CustomerId,OrderId=o.Id,Channel="InvoiceCancellationReceipt",EventType=returned?"InvoiceCancelledAndRestocked":"InvoiceCancelled",Recipient=actor.ToString(),Payload=JsonSerializer.Serialize(result),Status=NotificationOutboxStatus.Processed,CreatedAt=now,ProcessedAt=now});
         db.NotificationOutbox.Add(InvoiceRestockTracking.RefreshJob(invoice,o.CustomerId,now));
         await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return result;

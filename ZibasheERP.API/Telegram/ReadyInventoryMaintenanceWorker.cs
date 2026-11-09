@@ -19,6 +19,20 @@ public sealed class ReadyInventoryMaintenanceWorker(IServiceScopeFactory scopes,
                 await ReadyInventoryRemoval.RecoverAsync(db,ct);
                 await ReadyInventoryRemoval.RecoverManualAlertsAsync(db,options.Value.InvoiceFailureChatId,ct);
                 var repository=scope.ServiceProvider.GetRequiredService<INotificationOutboxRepository>();
+                foreach(var job in await repository.GetPendingAsync(InvoiceRevisionService.Channel,5,ct))
+                {
+                    try
+                    {
+                        using var action=scopes.CreateScope();var controller=ActivatorUtilities.CreateInstance<TelegramWebhookController>(action.ServiceProvider);
+                        var retry=await controller.ProcessInvoiceRevisionAsync(job,ct);
+                        job.Status=retry.HasValue?NotificationOutboxStatus.Pending:NotificationOutboxStatus.Processed;
+                        job.NextAttemptAt=retry.HasValue?DateTime.UtcNow.AddSeconds(retry.Value):null;job.ProcessedAt=retry.HasValue?null:DateTime.UtcNow;
+                        job.LockedUntil=null;job.LastError=null;
+                    }
+                    catch(Exception e)when(!ct.IsCancellationRequested)
+                    {job.Status=NotificationOutboxStatus.Pending;job.LockedUntil=null;job.Attempts++;job.NextAttemptAt=DateTime.UtcNow.AddSeconds(Math.Min(600,15*job.Attempts));job.LastError=e.Message;}
+                    await db.SaveChangesAsync(ct);
+                }
                 var restockReports=await repository.GetPendingAsync(InvoiceRestockTracking.Channel,5,ct);
                 foreach(var job in restockReports)
                 {
