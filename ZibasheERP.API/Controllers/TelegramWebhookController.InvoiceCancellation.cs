@@ -17,8 +17,7 @@ public sealed partial class TelegramWebhookController
             .Include(i=>i.Order).ThenInclude(o=>o!.Items).SingleOrDefaultAsync(i=>i.Id==id&&!i.IsDeleted&&i.OrderId==job.OrderId,ct);
         if(invoice?.Order is null||invoice.Status!=InvoiceStatus.Cancelled||invoice.Order.Status!=OrderStatus.Cancelled)
             throw new InvalidOperationException("Restock report invoice mismatch");
-        if(!(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(id))
-            throw new InvalidOperationException("RestockPublicationPending");
+        var published=(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(id);
         async Task Edit(string? chat,long? message,string text,IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> buttons)
         {
             if(string.IsNullOrWhiteSpace(chat)||message is not >0)return; // A future first report uses the same persisted status.
@@ -33,7 +32,12 @@ public sealed partial class TelegramWebhookController
                 if(lists.Contains(report.SalesListId))await Edit(report.TelegramChatId,report.TelegramMessageId,report.Message,BuildPaymentTrackingButtons(report));
         }
         else await Edit(invoice.TelegramPaymentTrackingChatId,invoice.TelegramPaymentTrackingMessageId,
-            FormatManualPaymentTrackingMessage(invoice,true),BuildManualPaymentTrackingButtons(invoice));
+            FormatManualPaymentTrackingMessage(invoice,published),BuildManualPaymentTrackingButtons(invoice));
+        // First show every cancellation in blue. Keep a restock job retryable
+        // until publication succeeds so the unknown note becomes a verified transfer.
+        if(!published&&await _db.NotificationOutbox.AsNoTracking().AnyAsync(n=>!n.IsDeleted&&n.OrderId==invoice.OrderId&&
+            n.Channel=="InvoiceCancellationReceipt"&&n.EventType=="InvoiceCancelledAndRestocked"&&n.Status==NotificationOutboxStatus.Processed,ct))
+            throw new InvalidOperationException("RestockPublicationPending");
     }
     internal async Task ProcessInvoiceCancellationCleanupAsync(NotificationOutbox job,CancellationToken ct)
     {

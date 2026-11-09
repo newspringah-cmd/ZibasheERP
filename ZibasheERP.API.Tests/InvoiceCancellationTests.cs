@@ -102,8 +102,8 @@ public static class InvoiceCancellationTests
             var transferredAgain=await service.ExecuteAsync(returnOp,returnPreview,true,changedPrices,owner,"@zibasheperfume_mojodi");
             check(transferredAgain.Offers.SequenceEqual(transferred.Offers)&&await db.SalesLists.CountAsync(l=>transferred.Offers.Contains(l.Id))==2,"retrying invoice-to-stock transfer reuses its result and cannot duplicate packages or publication jobs");
             check(await db.NotificationOutbox.CountAsync(n=>n.OrderId==returned.OrderId&&n.Channel==InvoiceRestockTracking.Channel)==1&&
-                !await db.NotificationOutbox.AnyAsync(n=>n.OrderId==plain.OrderId&&n.Channel==InvoiceRestockTracking.Channel),
-                "stock-return cancellation atomically queues exactly one durable payment-report refresh; plain deletion queues none");
+                await db.NotificationOutbox.CountAsync(n=>n.OrderId==plain.OrderId&&n.Channel==InvoiceRestockTracking.Channel)==1,
+                "both stock return and plain deletion atomically queue one durable payment-report refresh");
             check(!(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(db,[returned.OrderId])).Contains(returned.Id),"cancelled invoice is not labelled sent before inventory publication succeeds");
             await db.SalesLists.Where(l=>l.Id==transferred.Offers[0]).ExecuteUpdateAsync(s=>s.SetProperty(l=>l.TelegramMessageId,6001L).SetProperty(l=>l.TelegramChannelId,"@zibasheperfume_mojodi"));
             check(!(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(db,[returned.OrderId])).Contains(returned.Id),"partial multi-item stock publication does not claim the whole invoice was sent");
@@ -131,7 +131,13 @@ public static class InvoiceCancellationTests
                 typeof(TelegramWebhookController).GetField(field,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(reportController,value);
             var reportJob=await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==oldInvoice.OrderId&&n.Channel==InvoiceRestockTracking.Channel);
             Task RefreshStockReport(NotificationOutbox job)=>(Task)typeof(TelegramWebhookController).GetMethod("ProcessInvoiceRestockTrackingAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(reportController,[job,CancellationToken.None])!;
-            check(await Rejected(()=>RefreshStockReport(reportJob))&&reportSent.Edits.Count==0,"report worker waits for publication and does not edit or send a premature blue status");
+            check(await Rejected(()=>RefreshStockReport(reportJob))&&reportSent.Edits.Count==1&&
+                reportSent.Edits.Single().Text.Contains("🔵 1. @"+marker)&&reportSent.Edits.Single().Text.Contains(InvoiceRestockTracking.UnknownCaption)&&
+                !reportSent.Edits.Single().Text.Contains(InvoiceRestockTracking.Caption),
+                "pending inventory publication shows blue with unknown item status and keeps the refresh retryable");
+            check(!(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(db,[oldInvoice.OrderId])).Contains(oldInvoice.Id),
+                "showing the unknown cancellation status never becomes false evidence of inventory publication");
+            reportSent.Edits.Clear();
             check(await publication.Bind(restored.Offers.Single(),new InventoryOffersController.Receipt(6003),default)is NoContentResult,"successful stock publication binds its actual channel message before report refresh");
             var debtBeforeReport=await Debt();
             typeof(TelegramWebhookController).GetField("_options",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(reportController,new TelegramOptions{NewPaymentsChatId="-1007770002"});
@@ -148,6 +154,20 @@ public static class InvoiceCancellationTests
             await db.Invoices.Where(i=>i.Id==returned.Id).ExecuteUpdateAsync(s=>s.SetProperty(i=>i.TelegramPaymentTrackingChatId,"-1007770001").SetProperty(i=>i.TelegramPaymentTrackingMessageId,5556L));
             await RefreshStockReport(await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==returned.OrderId&&n.Channel==InvoiceRestockTracking.Channel));
             check(reportSent.Edits.Last().Message==5556&&reportSent.Edits.Last().Text.Contains("مشتری: 🔵 @"+marker)&&reportSent.Edits.Last().Text.Contains(InvoiceRestockTracking.Caption),"standalone manual invoice payment reports receive the same blue stock-return status");
+            await db.Invoices.Where(i=>i.Id==plain.Id).ExecuteUpdateAsync(s=>s.SetProperty(i=>i.TelegramPaymentTrackingChatId,"-1007770001").SetProperty(i=>i.TelegramPaymentTrackingMessageId,5557L));
+            await RefreshStockReport(await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==plain.OrderId&&n.Channel==InvoiceRestockTracking.Channel));
+            check(reportSent.Edits.Last().Message==5557&&reportSent.Edits.Last().Text.Contains("مشتری: 🔵 @"+marker)&&
+                reportSent.Edits.Last().Text.Contains(InvoiceRestockTracking.UnknownCaption)&&!reportSent.Edits.Last().Text.Contains(InvoiceRestockTracking.Caption)&&
+                reportSent.Edits.Last().Text.Contains("میل"),"plain invoice deletion keeps archived items visible with blue and unknown status in the original manual payments message");
+            var plainBatch=new InvoiceIssuanceBatch{Id=Guid.NewGuid(),CreatedAt=DateTime.UtcNow,CreatedByTelegramUserId=owner.ToString()};
+            db.InvoiceIssuanceBatches.Add(plainBatch);db.InvoiceIssuanceBatchSalesLists.Add(new(){InvoiceIssuanceBatchId=plainBatch.Id,SalesListId=source.Id});await db.SaveChangesAsync();
+            await db.Orders.Where(o=>o.Id==plain.OrderId).ExecuteUpdateAsync(s=>s.SetProperty(o=>o.InvoiceIssuanceBatchId,plainBatch.Id));
+            await reportService.SetPaymentTrackingMessageAsync(plainBatch.Id,source.Id,"-1007770001",5558,default);
+            await RefreshStockReport(await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==plain.OrderId&&n.Channel==InvoiceRestockTracking.Channel));
+            var plainReport=(await reportService.GetPaymentTrackingReportsAsync(plainBatch.Id)).Single();
+            check(reportSent.Edits.Last().Message==5558&&plainReport.Message.Contains("🔵 1. @"+marker)&&
+                plainReport.Message.Contains("\n   "+InvoiceRestockTracking.UnknownCaption)&&plainReport.Actions.Count==0,
+                "plain deletion remains visible with blue and unknown status after batch report regeneration without payment actions");
             check(await Debt()==debtBeforeReport&&await db.Invoices.AsNoTracking().AnyAsync(i=>i.Id==oldInvoice.Id&&i.Status==InvoiceStatus.Cancelled),"blue report updates and retries never change invoice cancellation or the customer's financial balance");
             await db.NotificationOutbox.Where(n=>n.Id==restored.Offers.Single()).ExecuteUpdateAsync(s=>s.SetProperty(n=>n.Status,NotificationOutboxStatus.Processed));
             await db.SalesLists.Where(l=>l.Id==restored.Offers.Single()).ExecuteUpdateAsync(s=>s.SetProperty(l=>l.TelegramMessageId,(long?)null));
@@ -187,10 +207,10 @@ public static class InvoiceCancellationTests
         finally
         {
             db.ChangeTracker.Clear();var items=await db.OrderItems.Where(x=>orders.Contains(x.OrderId)).Select(x=>x.Id).ToArrayAsync();var offers=(await db.SalesLists.Where(l=>l.SourceOrderItemId!=null&&items.Contains(l.SourceOrderItemId.Value)).Select(l=>l.Id).ToArrayAsync()).Concat(extraLists).ToArray();
-            var batches=await db.InvoiceIssuanceBatchSalesLists.Where(l=>offers.Contains(l.SalesListId)).Select(l=>l.InvoiceIssuanceBatchId).ToArrayAsync();
+            var batches=await db.InvoiceIssuanceBatchSalesLists.Where(l=>offers.Contains(l.SalesListId)||l.SalesListId==source.Id).Select(l=>l.InvoiceIssuanceBatchId).ToArrayAsync();
             var offerNames=offers.Select(id=>id.ToString()).ToArray();
             await db.NotificationOutbox.Where(n=>(n.OrderId!=null&&orders.Contains(n.OrderId.Value))||offers.Contains(n.Id)||offerNames.Contains(n.Recipient)||n.Payload.Contains(marker)).ExecuteDeleteAsync();
-            await db.InvoiceIssuanceBatchSalesLists.Where(l=>offers.Contains(l.SalesListId)).ExecuteDeleteAsync();
+            await db.InvoiceIssuanceBatchSalesLists.Where(l=>offers.Contains(l.SalesListId)||l.SalesListId==source.Id).ExecuteDeleteAsync();
             await db.InventoryPositionChanges.Where(p=>offers.Contains(p.SalesListId)).ExecuteDeleteAsync();
             var req=await db.OrderItems.Where(x=>orders.Contains(x.OrderId)&&x.SourceSalesListRequestId!=null).Select(x=>x.SourceSalesListRequestId!.Value).ToArrayAsync();
             await db.Payments.Where(p=>orders.Contains(p.OrderId)).ExecuteDeleteAsync();await db.OrderItems.Where(x=>orders.Contains(x.OrderId)).ExecuteDeleteAsync();await db.Invoices.Where(i=>orders.Contains(i.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(o=>orders.Contains(o.Id)).ExecuteDeleteAsync();

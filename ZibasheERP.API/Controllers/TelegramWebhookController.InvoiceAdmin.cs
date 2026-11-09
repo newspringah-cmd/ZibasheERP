@@ -3209,19 +3209,21 @@ public sealed partial class TelegramWebhookController
         var identity = !string.IsNullOrWhiteSpace(customer?.Username)
             ? $"@{customer.Username.TrimStart('@')}"
             : customer?.TelegramId ?? customer?.FullName ?? "مشتری نامشخص";
-        var status = restocked?"🔵 "+InvoiceRestockTracking.Caption:invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
+        var cancelled=invoice.Status==ZibasheERP.Domain.Enums.InvoiceStatus.Cancelled;
+        var cancellationNote=restocked?InvoiceRestockTracking.Caption:InvoiceRestockTracking.UnknownCaption;
+        var status = cancelled?"🔵 "+cancellationNote:invoice.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid ||
                      order.Status == OrderStatus.Paid
             ? "✅ پرداخت‌شده"
             : "🔴 در انتظار پرداخت";
-        var items = order.Items.Where(item => !item.IsDeleted||restocked)
+        var items = order.Items.Where(item => !item.IsDeleted||cancelled)
             .OrderByDescending(item => item.IsBottleOwner)
             .ThenByDescending(item => item.RequestedVolumeMl)
             .ThenBy(item => item.RowNumber).ThenBy(item => item.Id)
             .Select(item => $"• {item.ManualDescription ?? "آیتم دستی"} — {item.RequestedVolumeMl:0.#} میل")
             .ToArray();
         return $"💳 واریز جدید — فاکتور دستی\n" +
-               $"مشتری: {(restocked?"🔵 ":"")}{identity}\n" +
-               (restocked?InvoiceRestockTracking.Caption+"\n":"")+
+               $"مشتری: {(cancelled?"🔵 ":"")}{identity}\n" +
+               (cancelled?cancellationNote+"\n":"")+
                $"فاکتور: {invoice.InvoiceNumber}\n" +
                $"مبلغ: {invoice.TotalAmount:N0} تومان\n" +
                $"وضعیت: {status}\n\n" +

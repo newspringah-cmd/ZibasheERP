@@ -140,7 +140,7 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         await InvoiceMessageLifecycle.QueueKnownAsync(db,invoice,ct);
         var result=new Result(invoice.Id,invoice.TotalAmount,offers.Select(l=>l.Id).ToArray(),offers.Select(l=>l.InventoryCode!.Value).ToArray(),returned);
         db.NotificationOutbox.Add(new(){Id=operation,CustomerId=o.CustomerId,OrderId=o.Id,Channel="InvoiceCancellationReceipt",EventType=returned?"InvoiceCancelledAndRestocked":"InvoiceCancelled",Recipient=actor.ToString(),Payload=JsonSerializer.Serialize(result),Status=NotificationOutboxStatus.Processed,CreatedAt=now,ProcessedAt=now});
-        if(returned)db.NotificationOutbox.Add(InvoiceRestockTracking.RefreshJob(invoice,o.CustomerId,now));
+        db.NotificationOutbox.Add(InvoiceRestockTracking.RefreshJob(invoice,o.CustomerId,now));
         await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return result;
     }
 }

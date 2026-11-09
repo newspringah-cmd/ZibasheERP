@@ -12,6 +12,7 @@ public static class InvoiceRestockTracking
 {
     public const string Channel="InvoiceRestockTrackingRefresh";
     public const string Caption="ارسال شده به کانال موجودی";
+    public const string UnknownCaption="آیتم وضعیت نامشخص";
     public static NotificationOutbox RefreshJob(Invoice invoice,Guid customerId,DateTime now)=>new()
     {
         Id=new Guid(SHA256.HashData(Encoding.UTF8.GetBytes("invoice-restock-report:"+invoice.Id))[..16]),
