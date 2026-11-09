@@ -18,7 +18,7 @@ public sealed partial class TelegramWebhookController
             var receipt=await _db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==transfer&&n.Channel==InvoiceTransferService.ReceiptChannel&&!n.IsDeleted,ct);
             var result=receipt is null?null:JsonSerializer.Deserialize<InvoiceTransferService.Result>(receipt.Payload);
             if(result?.SourceInvoiceId!=data.InvoiceId)throw new InvalidOperationException("Partial transfer revision linkage mismatch");
-            var follow=await _db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==result.OrderId&&n.Channel==InvoiceTransferService.WorkChannel&&!n.IsDeleted,ct);
+            var follow=await _db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==result.OrderId&&n.Channel==InvoiceTransferService.WorkChannel&&!n.IsDeleted&&n.Payload.Contains(transfer.ToString()),ct);
             if(JsonSerializer.Deserialize<InvoiceTransferService.Progress>(follow.Payload)?.Complete!=true)return 5;
         }
 

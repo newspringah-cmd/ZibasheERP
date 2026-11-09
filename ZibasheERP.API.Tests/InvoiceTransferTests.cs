@@ -208,8 +208,10 @@ public static class InvoiceTransferTests
                 check(await Call("ProcessInvoiceRevisionAsync",revision,CancellationToken.None) is int,"old complete invoice is retained until both recipients have their correct replacement documents ("+mode+")");
                 await Deliver(moved.DeliveryEvent,toChat);await db.NotificationOutbox.Where(n=>moved.TelegramEvents.Contains(n.Id)).ExecuteUpdateAsync(u=>u.SetProperty(n=>n.Status,NotificationOutboxStatus.Processed));
                 check(await Follow(moved)is null&&(await Progress(moved)).Complete,"partial transfer delivers separate PDFs, revises payments report and completes cleanup ("+mode+")");
+                db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),OrderId=moved.OrderId,CustomerId=to.Id,Channel=InvoiceTransferService.WorkChannel,EventType="FinishInvoiceTransfer",Recipient=Owner.ToString(),Status=NotificationOutboxStatus.Processed,CreatedAt=DateTime.UtcNow,
+                    Payload=JsonSerializer.Serialize(new InvoiceTransferService.Progress(Guid.NewGuid(),Complete:true))});await db.SaveChangesAsync();
                 check(await Call("ProcessInvoiceRevisionAsync",revision,CancellationToken.None)is null&&JsonSerializer.Deserialize<InvoiceRevisionService.Progress>((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==revision.Id)).Payload)!.Complete,
-                    "old source bundle is cleaned only after separate retained and transferred PDF delivery ("+mode+")");
+                    "cleanup binds the exact transfer operation even when another completed operation exists for the same invoice ("+mode+")");
                 if(mode=="manual")
                 {
                     var reportId=serial*100;var beforeRefresh=sent.Edits.Last(e=>e.Message==reportId).Text;
