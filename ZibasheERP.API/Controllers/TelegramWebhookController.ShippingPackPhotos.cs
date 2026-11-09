@@ -127,6 +127,16 @@ public sealed partial class TelegramWebhookController
             await RecordShippingPackUiAsync(active.Row.Id,warning,ct);return true;
         }
         var file=message.Photo.OrderByDescending(p=>p.Width*p.Height).First().FileId;
+        if(active.Data.PreviousApprovalId.HasValue)
+        {
+            var prior=await _db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==active.Data.PreviousApprovalId&&n.Channel==ShippingPackApproval.ReceiptChannel&&!n.IsDeleted,ct);
+            if(prior is not null&&JsonSerializer.Deserialize<ShippingPackApprovalData>(prior.Payload)!.PhotoFileIds.Contains(file))
+            {
+                await MutateShippingPayloadAsync<ShippingPackPhotoDraft>(active.Row.Id,ShippingPackDraftChannel,d=>d with{PhotoMessages=(d.PhotoMessages??[]).Append(message.MessageId).Distinct().ToArray()},ct);
+                var warning=await _sender.SendKeyboardDismissAsync(message.Chat.Id.ToString(),"این عکس قبلاً برای همین بسته ارسال شده؛ عکس جدید را بفرستید.",ct);
+                await RecordShippingPackUiAsync(active.Row.Id,warning,ct);return true;
+            }
+        }
         ShippingPackPhotoDraft saved;var added=false;var overLimit=false;
         try
         {

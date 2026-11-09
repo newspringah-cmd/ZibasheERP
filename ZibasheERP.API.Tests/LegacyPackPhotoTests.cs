@@ -101,6 +101,12 @@ public static class LegacyPackPhotoTests
                 var appendDraft=JsonNode.Parse(draft.Payload)!;
                 check(appendDraft["ExistingPhotoCount"]!.GetValue<int>()==number-1&&sent.Calls.Last().Text.Contains($"عکس {number} را"),
                     $"photo {number} resumes the same parcel's persisted sequence after earlier delivery or controller restart");
+                if(number==2)
+                {
+                    await Upload("legacy-append-1",4500);
+                    var rejected=JsonNode.Parse((await Rows("ShippingPackPhotoDraft")).First().Payload)!;
+                    check(rejected["Files"] is null&&sent.Calls.Last().Text.Contains("قبلاً"),"uploading the first photo again is refused without occupying the next photo slot or trapping the form");
+                }
                 before=sent.Photos.Count;await Upload("legacy-append-"+number,4000+number);
                 question=sent.Calls.Last(c=>c.Text.Contains("آیا عکس دیگری دارید؟"));await Handle("send",draft.Id,question.Id);
                 receipt=(await Rows(ShippingPackApproval.ReceiptChannel)).First();job=(await Rows(ShippingPackApproval.SendChannel)).First();
