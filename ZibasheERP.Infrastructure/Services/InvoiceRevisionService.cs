@@ -13,12 +13,12 @@ public static class InvoiceRevisionService
     public const string Channel="InvoiceRevisionFollowup";
     public sealed record Target(string Chat,long Message,Guid? ReceiptId);
     public sealed record Progress(Guid Operation,Guid InvoiceId,Guid OrderId,Guid CustomerId,Guid DeliveryEvent,Guid[] TelegramEvents,
-        Target[] Cleanup,DateTime CreatedAt,int Deleted=0,bool Complete=false,Target[]? ManualCleanup=null);
+        Target[] Cleanup,DateTime CreatedAt,int Deleted=0,bool Complete=false,Target[]? ManualCleanup=null,Guid? AwaitTransferOperation=null);
 
     // The retained invoice keeps its identity. Selected lines move to a linked,
     // cancelled accounting document, so stock-return proof and payment history
     // remain exact without hiding the retained lines or cancelling their requests.
-    public static async Task<Invoice> SplitAsync(AppDbContext db,Invoice invoice,Guid[] selected,Guid operation,DateTime now,CancellationToken ct)
+    public static async Task<Invoice> SplitAsync(AppDbContext db,Invoice invoice,Guid[] selected,Guid operation,DateTime now,CancellationToken ct,bool forTransfer=false,decimal transferredPaid=0)
     {
         var order=invoice.Order!;var removed=order.Items.Where(x=>!x.IsDeleted&&selected.Contains(x.Id)).ToArray();
         var retained=order.Items.Where(x=>!x.IsDeleted&&!selected.Contains(x.Id)).ToArray();
@@ -40,16 +40,18 @@ public static class InvoiceRevisionService
         {payment.Status=PaymentStatus.Cancelled;payment.IsSuccessful=false;payment.UpdatedAt=now;}
 
         var cancelledOrder=new Order{Id=Guid.NewGuid(),CustomerId=order.CustomerId,Customer=order.Customer,
-            DeliveryAddressId=order.DeliveryAddressId,OrderNumber="CNL-"+operation.ToString("N"),
+            DeliveryAddressId=order.DeliveryAddressId,OrderNumber=(forTransfer?"TFR-":"CNL-")+operation.ToString("N"),
             Source=order.Source,IsInventory=order.IsInventory,InvoiceIssuanceBatchId=order.InvoiceIssuanceBatchId,
-            SalesListId=removed.Select(x=>x.SalesListId).Distinct().Count()==1?removed[0].SalesListId:null,Status=order.Status,InvoiceIssuedAt=order.InvoiceIssuedAt,
-            RegisteredAt=order.RegisteredAt,Notes=$"Selected-item cancellation from invoice {invoice.InvoiceNumber} ({invoice.Id:N}); operation {operation:N}",CreatedAt=now};
+            SalesListId=removed.Select(x=>x.SalesListId).Distinct().Count()==1?removed[0].SalesListId:null,Status=forTransfer?(invoice.Status==InvoiceStatus.Paid?OrderStatus.Paid:OrderStatus.Invoiced):order.Status,InvoiceIssuedAt=order.InvoiceIssuedAt,
+            RegisteredAt=order.RegisteredAt,PaidAt=forTransfer?order.PaidAt:null,Notes=$"Selected-item {(forTransfer?"transfer":"cancellation")} from invoice {invoice.InvoiceNumber} ({invoice.Id:N}); operation {operation:N}",CreatedAt=now};
         foreach(var item in removed){order.Items.Remove(item);cancelledOrder.Items.Add(item);item.Order=cancelledOrder;item.OrderId=cancelledOrder.Id;}
         cancelledOrder.PerfumeTotal=removed.Sum(x=>x.PerfumeAmount);cancelledOrder.BottleTotal=removed.Sum(x=>x.BottlePrice);cancelledOrder.FinalAmount=removed.Sum(x=>x.LineTotal);
         var cancelled=new Invoice{Id=Guid.NewGuid(),Order=cancelledOrder,OrderId=cancelledOrder.Id,
-            InvoiceNumber=invoice.InvoiceNumber[..Math.Min(32,invoice.InvoiceNumber.Length)]+"-C"+operation.ToString("N")[..12],
+            InvoiceNumber=invoice.InvoiceNumber[..Math.Min(32,invoice.InvoiceNumber.Length)]+(forTransfer?"-T":"-C")+operation.ToString("N")[..12],
             Status=invoice.Status,IssuedAt=invoice.IssuedAt,PerfumeTotal=cancelledOrder.PerfumeTotal,BottleTotal=cancelledOrder.BottleTotal,TotalAmount=cancelledOrder.FinalAmount,CreatedAt=now};
+        if(forTransfer){cancelled.TelegramPaymentTrackingChatId=invoice.TelegramPaymentTrackingChatId;cancelled.TelegramPaymentTrackingMessageId=invoice.TelegramPaymentTrackingMessageId;}
         db.Orders.Add(cancelledOrder);db.Invoices.Add(cancelled);
+        if(forTransfer)AllocateTransferPayments(db,order,cancelledOrder,transferredPaid,operation,now);
         order.PerfumeTotal=retained.Sum(x=>x.PerfumeAmount);order.BottleTotal=retained.Sum(x=>x.BottlePrice);order.FinalAmount=retained.Sum(x=>x.LineTotal);order.UpdatedAt=now;
         if(!retained.Any(x=>x.SalesListId==order.SalesListId))order.SalesListId=retained[0].SalesListId;
         invoice.PerfumeTotal=order.PerfumeTotal;invoice.BottleTotal=order.BottleTotal;invoice.TotalAmount=order.FinalAmount;invoice.UpdatedAt=now;
@@ -63,7 +65,10 @@ public static class InvoiceRevisionService
         var accounts=await db.InvoicePaymentAccounts.AsNoTracking().Where(a=>!a.IsDeleted&&a.IsActive).OrderBy(a=>a.DisplayOrder).Take(4).ToArrayAsync(ct);
         var payload=new{OrderId=order.Id,order.OrderNumber,InvoiceId=invoice.Id,invoice.InvoiceNumber,invoice.IssuedAt,invoice.PerfumeTotal,invoice.BottleTotal,invoice.TotalAmount,
             Customer=new{customer.Id,customer.FullName,customer.Mobile,customer.TelegramId,customer.Username},
-            order.IsInventory,InvoiceRevisionOperationId=operation,PaymentDeadlineHours=invoice.TotalAmount>0?24:0,
+            order.IsInventory,InvoiceRevisionOperationId=operation,IsPaid=invoice.Status==InvoiceStatus.Paid,
+            PaidAmount=invoice.Status==InvoiceStatus.Paid?invoice.TotalAmount:order.Payments.Where(p=>!p.IsDeleted&&p.Status==PaymentStatus.Confirmed).Sum(p=>p.Amount),
+            OutstandingAmount=invoice.Status==InvoiceStatus.Paid?0:invoice.TotalAmount-order.Payments.Where(p=>!p.IsDeleted&&p.Status==PaymentStatus.Confirmed).Sum(p=>p.Amount),
+            PaymentDeadlineHours=invoice.Status!=InvoiceStatus.Paid&&invoice.TotalAmount>0?24:0,
             PaymentAccounts=accounts.Select(a=>new{a.CardNumber,a.AccountHolder,a.BankName}),
             Items=retained.OrderBy(x=>x.RowNumber).ThenBy(x=>x.Id).Select(x=>new{x.RowNumber,
                 PerfumePersianName=Name(x),PerfumeEnglishName=x.SalesList?.EnglishName??x.Perfume?.EnglishName,PerfumeBrand=x.Perfume?.Brand,
@@ -94,8 +99,31 @@ public static class InvoiceRevisionService
         // Old messages remain until the exact replacement PDF has been delivered.
         db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=order.CustomerId,OrderId=order.Id,Channel=Channel,
             EventType="CompleteSelectedItemCancellation",Recipient=operation.ToString(),CreatedAt=now,
-            Payload=JsonSerializer.Serialize(new Progress(operation,invoice.Id,order.Id,order.CustomerId,delivery.Id,telegramEvents.ToArray(),cleanup.DistinctBy(t=>(t.Chat,t.Message)).ToArray(),now))});
+            Payload=JsonSerializer.Serialize(new Progress(operation,invoice.Id,order.Id,order.CustomerId,delivery.Id,telegramEvents.ToArray(),cleanup.DistinctBy(t=>(t.Chat,t.Message)).ToArray(),now,AwaitTransferOperation:forTransfer?operation:null))});
         return cancelled;
+    }
+    private static void AllocateTransferPayments(AppDbContext db,Order source,Order target,decimal paid,Guid operation,DateTime now)
+    {
+        var remaining=paid;var allocations=new List<object>();
+        foreach(var payment in source.Payments.Where(p=>!p.IsDeleted&&p.Status==PaymentStatus.Confirmed).OrderBy(p=>p.CreatedAt).ThenBy(p=>p.Id).ToArray())
+        {
+            if(remaining<=0)break;var amount=Math.Min(remaining,payment.Amount);var originalAmount=payment.Amount;
+            if(amount==payment.Amount)
+            {source.Payments.Remove(payment);target.Payments.Add(payment);payment.Order=target;payment.OrderId=target.Id;allocations.Add(new{SourcePaymentId=payment.Id,OriginalAmount=originalAmount,TransferredAmount=amount,TargetPaymentId=payment.Id});}
+            else
+            {
+                payment.Amount-=amount;payment.UpdatedAt=now;
+                var copy=new Payment{Id=Guid.NewGuid(),Order=target,OrderId=target.Id,Amount=amount,PaymentMethod=payment.PaymentMethod,
+                    TransactionId="allocation-"+Guid.NewGuid().ToString("N"),Status=payment.Status,IsSuccessful=payment.IsSuccessful,PaidAt=payment.PaidAt,CreatedAt=payment.CreatedAt,
+                    Notes=$"Allocation of payment {payment.Id:N}; transaction {payment.TransactionId}; original amount {originalAmount}; transfer {operation:N}"};
+                target.Payments.Add(copy);db.Payments.Add(copy);allocations.Add(new{SourcePaymentId=payment.Id,OriginalAmount=originalAmount,TransferredAmount=amount,TargetPaymentId=copy.Id});
+            }
+            remaining-=amount;
+        }
+        // Legacy paid invoices can have no payment rows. Their paid invoice status is preserved without inventing a cash receipt.
+        if(remaining>0&&target.Status!=OrderStatus.Paid)throw new InvalidOperationException("تخصیص پرداخت فاکتور سازگار نیست؛ انتقال متوقف شد.");
+        db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=source.CustomerId,OrderId=source.Id,Channel="InvoiceTransferAllocation",EventType="AllocatedExistingPayments",
+            Recipient=operation.ToString(),Payload=JsonSerializer.Serialize(new{Operation=operation,SourceOrderId=source.Id,TargetOrderId=target.Id,PaidAmount=paid,Allocations=allocations}),Status=NotificationOutboxStatus.Processed,CreatedAt=now,ProcessedAt=now});
     }
     public static string Name(OrderItem item)=>new[]{item.SalesList?.PersianName,item.Perfume?.Name,item.ManualDescription,item.SalesList?.EnglishName}
         .FirstOrDefault(s=>!string.IsNullOrWhiteSpace(s))??"عطر";

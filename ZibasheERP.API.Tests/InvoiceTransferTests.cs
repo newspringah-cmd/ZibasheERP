@@ -157,12 +157,77 @@ public static class InvoiceTransferTests
             var unlinked=await Create();var selectionUnlinked=await service.FindAsync(Caption(unlinked));await db.CustomerTelegramGroups.Where(g=>g.Id==groupTo.Id).ExecuteUpdateAsync(s=>s.SetProperty(g=>g.IsActive,false));
             check(await Reject(async()=>{await service.PreviewAsync(selectionUnlinked,"@"+to.Username);}),"recipient without a connected accounting group is rejected before any ownership or balance changes");
             await db.CustomerTelegramGroups.Where(g=>g.Id==groupTo.Id).ExecuteUpdateAsync(s=>s.SetProperty(g=>g.IsActive,true));
+            foreach(var mode in new[]{"unpaid","paid","partial","manual"})
+            {
+                var multi=await Create(paid:mode=="paid",partial:mode=="partial"?10000:0);
+                var first=await db.OrderItems.SingleAsync(x=>x.OrderId==multi.OrderId);
+                first.FulfillmentStatus=OrderItemFulfillmentStatus.Shipped;first.ShippedAt=DateTime.UtcNow;
+                var originalOrder=await db.Orders.SingleAsync(o=>o.Id==multi.OrderId);originalOrder.Status=OrderStatus.Shipped;originalOrder.ShippedAt=DateTime.UtcNow;
+                var second=new OrderItem{Id=Guid.NewGuid(),OrderId=multi.OrderId,RowNumber=2,SalesListId=first.SalesListId,PerfumeId=first.PerfumeId,RequestedVolumeMl=2,
+                    PerfumePricePerMl=10000,PerfumeAmount=20000,LineTotal=20000,FulfillmentStatus=OrderItemFulfillmentStatus.DecantedReadyToShip,CreatedAt=DateTime.UtcNow};db.OrderItems.Add(second);
+                var selectedRequest=new SalesListRequest{Id=Guid.NewGuid(),SalesListId=first.SalesListId!.Value,TelegramUserId=from.TelegramId!,TelegramUsername=from.Username,VolumeMl=2,PerfumePricePerMl=10000,Status=SalesListRequestStatus.Invoiced,CreatedAt=DateTime.UtcNow,ExternalReference=Guid.NewGuid().ToString("N")};db.SalesListRequests.Add(selectedRequest);second.SourceSalesListRequestId=selectedRequest.Id;
+                originalOrder.FinalAmount+=20000;originalOrder.PerfumeTotal+=20000;
+                var invoiceRow=await db.Invoices.SingleAsync(i=>i.Id==multi.Id);invoiceRow.TotalAmount+=20000;invoiceRow.PerfumeTotal+=20000;
+                if(mode=="manual"){originalOrder.InvoiceIssuanceBatchId=null;originalOrder.Source=OrderSource.ManualInvoice;invoiceRow.TelegramPaymentTrackingChatId=PaymentChat;invoiceRow.TelegramPaymentTrackingMessageId=serial*100;}
+                if(mode=="paid")db.Payments.Add(new(){Id=Guid.NewGuid(),OrderId=multi.OrderId,Amount=20000,Status=PaymentStatus.Confirmed,IsSuccessful=true,PaymentMethod="fixture",TransactionId=Guid.NewGuid().ToString("N"),CreatedAt=DateTime.UtcNow,PaidAt=DateTime.UtcNow});
+                else(await db.Customers.SingleAsync(c=>c.Id==from.Id)).CurrentDebt+=20000;
+                await db.SaveChangesAsync();db.ChangeTracker.Clear();var before=await Debts();
+                var caption=$"🧾 فاکتور عطر @{from.Username}\nشماره فاکتور: {multi.InvoiceNumber}\nمبلغ قابل پرداخت: 50500 تومان";
+                var choices=await service.FindItemsAsync(caption);
+                check(choices.Lines.Length==2&&choices.Lines.Single(x=>x.Id==first.Id).Blocked=="ارسال‌شده"&&choices.Lines.Single(x=>x.Id==second.Id).Blocked is null,"mixed shipped invoice lists each item and blocks only the shipped row ("+mode+")");
+                check(await Reject(async()=>{await service.SelectAsync(choices,[first.Id]);}),"a shipped line cannot be selected for partial transfer ("+mode+")");
+                var selected=await service.SelectAsync(choices,[second.Id]);var preview=await service.PreviewAsync(selected,"@"+to.Username);
+                var paid=mode=="paid"?20000:mode=="partial"?3960.40m:0;
+                check(preview.Amount==20000&&preview.Paid==paid&&preview.Outstanding==20000-paid&&preview.Lines.Length==1,"partial preview includes only selected amount and its proportional paid allocation ("+mode+")");
+                if(mode=="unpaid")
+                {
+                    await db.OrderItems.Where(x=>x.Id==second.Id).ExecuteUpdateAsync(u=>u.SetProperty(x=>x.ShippingRequestId,Guid.NewGuid()));
+                    check(await Reject(async()=>{await service.ExecuteAsync(Guid.NewGuid(),preview,Owner);}),"assigning selected item to a parcel after preview prevents partial transfer without changing ownership");
+                    await db.OrderItems.Where(x=>x.Id==second.Id).ExecuteUpdateAsync(u=>u.SetProperty(x=>x.ShippingRequestId,(Guid?)null));
+                    selected=await service.SelectAsync(await service.FindItemsAsync(caption),[second.Id]);preview=await service.PreviewAsync(selected,"@"+to.Username);
+                }
+                var op=Guid.NewGuid();var moved=await service.ExecuteAsync(op,preview,Owner);orders.Add(moved.OrderId);db.ChangeTracker.Clear();
+                var parent=await db.Invoices.AsNoTracking().Include(i=>i.Order).ThenInclude(o=>o!.Items).SingleAsync(i=>i.Id==multi.Id);
+                var child=await db.Invoices.AsNoTracking().Include(i=>i.Order).ThenInclude(o=>o!.Items).SingleAsync(i=>i.Id==moved.InvoiceId);
+                check(moved.SourceInvoiceId==multi.Id&&parent.InvoiceNumber==multi.InvoiceNumber&&parent.TotalAmount==30500&&parent.Order!.CustomerId==from.Id&&parent.Order.Items.Single().Id==first.Id&&parent.Order.Items.Single().FulfillmentStatus==OrderItemFulfillmentStatus.Shipped,
+                    "partial transfer retains original invoice number, shipped line and original owner ("+mode+")");
+                check(child.TotalAmount==20000&&child.Order!.CustomerId==to.Id&&child.Order.Items.Single().Id==second.Id&&child.Order.ShippedAt is null&&child.Order.Status!=OrderStatus.Shipped&&child.Status==(mode=="paid"?InvoiceStatus.Paid:InvoiceStatus.Issued),
+                    "selected unshipped line moves to an independent invoice with preserved payment state ("+mode+")");
+                check(await db.SalesListRequests.AsNoTracking().AnyAsync(r=>r.Id==selectedRequest.Id&&r.TelegramUserId==to.TelegramId)&&await db.SalesListRequests.AsNoTracking().AnyAsync(r=>r.Id==first.SourceSalesListRequestId&&r.TelegramUserId==from.TelegramId),"only selected sales-list identity moves; retained shipped recipient stays unchanged ("+mode+")");
+                var after=await Debts();check(after==(before.From-(20000-paid),before.To+(20000-paid)),"partial transfer moves only selected outstanding balance ("+mode+")");
+                var payments=await db.Payments.AsNoTracking().Where(p=>p.OrderId==multi.OrderId||p.OrderId==moved.OrderId).ToArrayAsync();
+                var fullPaid=mode=="paid"?50500:mode=="partial"?10000:0;
+                check(payments.Sum(p=>p.Amount)==fullPaid&&payments.Where(p=>p.OrderId==moved.OrderId).Sum(p=>p.Amount)==paid&&payments.Select(p=>p.TransactionId).Distinct().Count()==payments.Length,
+                    "payment allocations preserve exact total receipts and unique transaction identifiers ("+mode+")");
+                check((await service.ExecuteAsync(op,preview,Owner)).InvoiceId==moved.InvoiceId&&await Debts()==after,"partial transfer retry is idempotent and cannot split or charge twice ("+mode+")");
+                var revision=await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==multi.OrderId&&n.Channel==InvoiceRevisionService.Channel);
+                var revisionData=JsonSerializer.Deserialize<InvoiceRevisionService.Progress>(revision.Payload)!;
+                check(await Call("ProcessInvoiceRevisionAsync",revision,CancellationToken.None) is int,"old multi-item invoice stays until corrected retained-items PDF is delivered ("+mode+")");
+                await Deliver(revisionData.DeliveryEvent,fromChat);
+                await db.NotificationOutbox.Where(n=>revisionData.TelegramEvents.Contains(n.Id)).ExecuteUpdateAsync(u=>u.SetProperty(n=>n.Status,NotificationOutboxStatus.Processed));
+                check(await Call("ProcessInvoiceRevisionAsync",revision,CancellationToken.None) is int,"old complete invoice is retained until both recipients have their correct replacement documents ("+mode+")");
+                await Deliver(moved.DeliveryEvent,toChat);await db.NotificationOutbox.Where(n=>moved.TelegramEvents.Contains(n.Id)).ExecuteUpdateAsync(u=>u.SetProperty(n=>n.Status,NotificationOutboxStatus.Processed));
+                check(await Follow(moved)is null&&(await Progress(moved)).Complete,"partial transfer delivers separate PDFs, revises payments report and completes cleanup ("+mode+")");
+                check(await Call("ProcessInvoiceRevisionAsync",revision,CancellationToken.None)is null&&JsonSerializer.Deserialize<InvoiceRevisionService.Progress>((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==revision.Id)).Payload)!.Complete,
+                    "old source bundle is cleaned only after separate retained and transferred PDF delivery ("+mode+")");
+                if(mode=="manual")
+                {
+                    var reportId=serial*100;var beforeRefresh=sent.Edits.Last(e=>e.Message==reportId).Text;
+                    await Call("RefreshManualPaymentTrackingReportAsync",moved.InvoiceId,Owner,CancellationToken.None);
+                    check(beforeRefresh.Contains("@"+from.Username)&&beforeRefresh.Contains("@"+to.Username)&&sent.Edits.Last(e=>e.Message==reportId).Text.Contains("@"+from.Username)&&sent.Edits.Last(e=>e.Message==reportId).Text.Contains("@"+to.Username),
+                        "manual invoice report and later refresh retain both source and recipient allocations together");
+                }
+
+            }
             var ui=await Create();const string prefix="invoiceadmin:transfer:";
             Task Select(string action,long actor=Owner,string type="private")=>(Task)typeof(TelegramWebhookController).GetMethod("HandleInvoiceTransferCallbackAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(controller,[new TelegramCallbackQuery("fixture",new(actor,null),new TelegramMessage(null,new(actor,type),new(actor,null),null,MessageId:1),prefix+action),CancellationToken.None])!;
             Task<object?> Input(string caption)=>Call("TryHandleInvoiceTransferMessageAsync",new TelegramMessage(null,new(Owner,"private"),new(Owner,null),null,Caption:caption),CancellationToken.None);
             await Select("start",Owner+1);check(sent.Texts.Last().Contains("ادمین"),"invoice transfer menu rejects customers");
             await Select("start",Owner,"supergroup");check(sent.Texts.Last().Contains("خصوصی"),"invoice transfer cannot be started from a group");
-            await Select("start");await Input(Caption(ui));check(sent.Texts.Last().Contains("آیدی انتقال‌گیرنده"),"transfer wizard accepts forwarded photo/PDF captions and asks for the recipient next");
+            await Select("start");await Input(Caption(ui));check(sent.Texts.Last().Contains("آیتم‌های موردنظر"),"transfer wizard accepts forwarded captions and displays per-item selection before recipient");
+            var all=sent.Buttons.Last(b=>b.CallbackData?.EndsWith(":all")==true);await Select(all.CallbackData![prefix.Length..]);
+            var selectionDone=sent.Buttons.Last(b=>b.CallbackData?.EndsWith(":done")==true);await Select(selectionDone.CallbackData![prefix.Length..]);
+            check(sent.Texts.Last().Contains("آیدی انتقال‌گیرنده"),"selected transfer items advance to recipient entry");
             await Input("@"+to.Username);var confirm=sent.Buttons.Last(b=>b.CallbackData?.StartsWith(prefix+"confirm:")==true);
             check(sent.Texts.Last().Contains("پیش‌نمایش انتقال")&&sent.Texts.Last().Contains("ماندهٔ بدهی")&&Encoding.UTF8.GetByteCount(confirm.CallbackData!)<=64&&await db.Orders.AnyAsync(o=>o.Id==ui.OrderId&&o.CustomerId==from.Id),"administrator sees exact source, recipient, preserved payment and balance preview before any transfer");
             await Select("cancel");await Select(confirm.CallbackData![prefix.Length..]);
@@ -170,7 +235,7 @@ public static class InvoiceTransferTests
         }
         finally
         {
-            db.ChangeTracker.Clear();await db.NotificationOutbox.Where(n=>n.OrderId!=null&&orders.Contains(n.OrderId.Value)||n.CustomerId==from.Id||n.CustomerId==to.Id).ExecuteDeleteAsync();
+            db.ChangeTracker.Clear();orders.AddRange(await db.Orders.Where(o=>o.CustomerId==from.Id||o.CustomerId==to.Id).Select(o=>o.Id).ToArrayAsync());await db.NotificationOutbox.Where(n=>n.OrderId!=null&&orders.Contains(n.OrderId.Value)||n.CustomerId==from.Id||n.CustomerId==to.Id).ExecuteDeleteAsync();
             await db.OrderArtifacts.Where(a=>orders.Contains(a.OrderId)).ExecuteDeleteAsync();await db.Payments.Where(p=>orders.Contains(p.OrderId)).ExecuteDeleteAsync();
             await db.OrderItems.Where(x=>orders.Contains(x.OrderId)).ExecuteDeleteAsync();await db.Invoices.Where(i=>orders.Contains(i.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(o=>orders.Contains(o.Id)).ExecuteDeleteAsync();
             await db.InvoiceIssuanceBatchSalesLists.Where(l=>batches.Contains(l.InvoiceIssuanceBatchId)).ExecuteDeleteAsync();await db.InvoiceIssuanceBatches.Where(b=>batches.Contains(b.Id)).ExecuteDeleteAsync();

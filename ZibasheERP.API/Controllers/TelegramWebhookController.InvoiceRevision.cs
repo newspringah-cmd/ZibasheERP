@@ -13,6 +13,15 @@ public sealed partial class TelegramWebhookController
         var row=await _db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==job.Id&&n.Channel==InvoiceRevisionService.Channel&&!n.IsDeleted,ct);
         var data=JsonSerializer.Deserialize<InvoiceRevisionService.Progress>(row.Payload)!;
         if(data.Complete)return null;
+        if(data.AwaitTransferOperation is Guid transfer)
+        {
+            var receipt=await _db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==transfer&&n.Channel==InvoiceTransferService.ReceiptChannel&&!n.IsDeleted,ct);
+            var result=receipt is null?null:JsonSerializer.Deserialize<InvoiceTransferService.Result>(receipt.Payload);
+            if(result?.SourceInvoiceId!=data.InvoiceId)throw new InvalidOperationException("Partial transfer revision linkage mismatch");
+            var follow=await _db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==result.OrderId&&n.Channel==InvoiceTransferService.WorkChannel&&!n.IsDeleted,ct);
+            if(JsonSerializer.Deserialize<InvoiceTransferService.Progress>(follow.Payload)?.Complete!=true)return 5;
+        }
+
         if(row.CustomerId!=data.CustomerId||row.OrderId!=data.OrderId||row.Recipient!=data.Operation.ToString())throw new InvalidOperationException("Invoice revision job mismatch");
         var invoice=await _db.Invoices.AsNoTracking().SingleAsync(i=>i.Id==data.InvoiceId&&i.OrderId==data.OrderId&&!i.IsDeleted,ct);
         if(invoice.Status==InvoiceStatus.Cancelled||!await _db.Orders.AnyAsync(o=>o.Id==data.OrderId&&o.CustomerId==data.CustomerId&&!o.IsDeleted,ct))

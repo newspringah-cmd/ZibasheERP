@@ -36,9 +36,9 @@ public sealed partial class TelegramWebhookController
             var receipts=await _db.NotificationOutbox.AsNoTracking().Where(n=>n.OrderId==invoice.OrderId&&n.Channel=="InvoiceCancellationReceipt"&&n.Status==NotificationOutboxStatus.Processed&&!n.IsDeleted).ToArrayAsync(ct);
             var parent=receipts.Select(n=>JsonSerializer.Deserialize<InvoiceCancellationService.Result>(n.Payload)!).FirstOrDefault(r=>r.InvoiceId==invoice.Id)?.SourceInvoiceId;
             var reportInvoice=parent.HasValue?await _db.Invoices.AsNoTracking().Include(i=>i.Order).ThenInclude(o=>o!.Customer).Include(i=>i.Order).ThenInclude(o=>o!.Items).SingleAsync(i=>i.Id==parent&&!i.IsDeleted,ct):invoice;
-            var reportPublished=parent.HasValue?(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[reportInvoice.OrderId],ct)).Contains(reportInvoice.Id):published;
+            var report=await ManualPaymentTrackingGroupAsync(reportInvoice,ct);
             await Edit(reportInvoice.TelegramPaymentTrackingChatId,reportInvoice.TelegramPaymentTrackingMessageId,
-                await FormatManualPaymentTrackingWithHistoryAsync(reportInvoice,reportPublished,ct),BuildManualPaymentTrackingButtons(reportInvoice));
+                report.Text,report.Buttons);
         }
         // First show every cancellation in blue. Keep a restock job retryable
         // until publication succeeds so the unknown note becomes a verified transfer.

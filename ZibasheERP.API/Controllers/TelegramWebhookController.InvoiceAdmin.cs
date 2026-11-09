@@ -3168,11 +3168,12 @@ public sealed partial class TelegramWebhookController
             !invoice.TelegramPaymentTrackingMessageId.HasValue)
             return;
 
+        var report=await ManualPaymentTrackingGroupAsync(invoice,ct);
         var refreshed = await _sender.EditTextWithKeyboardAsync(
             invoice.TelegramPaymentTrackingChatId,
             invoice.TelegramPaymentTrackingMessageId.Value,
-            await FormatManualPaymentTrackingWithHistoryAsync(invoice,(await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,[invoice.OrderId],ct)).Contains(invoice.Id),ct),
-            BuildManualPaymentTrackingButtons(invoice),
+            report.Text,
+            report.Buttons,
             ct);
         if (!refreshed.IsSuccessful && !IsTelegramMessageUnchanged(refreshed.Error))
             await ReplyAsync(sourceChatId,

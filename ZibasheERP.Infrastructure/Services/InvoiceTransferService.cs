@@ -13,11 +13,13 @@ namespace ZibasheERP.Infrastructure.Services;
 public sealed class InvoiceTransferService(AppDbContext db)
 {
     public const string ReceiptChannel="InvoiceTransferReceipt",WorkChannel="InvoiceTransferFollowup";
-    public sealed record Selection(Guid InvoiceId,Guid FromId,string Number);
+    public sealed record Selection(Guid InvoiceId,Guid FromId,string Number,Guid[]? ItemIds=null);
+    public sealed record ItemChoice(Guid Id,string Name,decimal Volume,decimal Amount,string? Blocked);
+    public sealed record Items(Selection Source,ItemChoice[] Lines,string Fingerprint);
     public sealed record Preview(Selection Source,Guid ToId,string From,string To,string ChatId,Guid GroupId,decimal Amount,decimal Paid,decimal Outstanding,string Status,string[] Lines,string Fingerprint);
     public sealed record MessageTarget(string Chat,long Message,Guid? ReceiptId);
     public sealed record Result(Guid InvoiceId,Guid OrderId,string Number,Guid FromId,Guid ToId,string From,string To,string ToChat,
-        decimal Amount,decimal Paid,decimal DebtMoved,long Actor,Guid DeliveryEvent,Guid[] TelegramEvents,MessageTarget[] Cleanup,DateTime CreatedAt,bool NeedsManualSourceCleanup=false);
+        decimal Amount,decimal Paid,decimal DebtMoved,long Actor,Guid DeliveryEvent,Guid[] TelegramEvents,MessageTarget[] Cleanup,DateTime CreatedAt,bool NeedsManualSourceCleanup=false,Guid? SourceInvoiceId=null);
     public sealed record Progress(Guid Operation,bool ReportUpdated=false,int Deleted=0,bool Complete=false,string? Error=null,bool ReportMissing=false);
     private IQueryable<Invoice> Query()=>db.Invoices.Include(i=>i.Order).ThenInclude(o=>o!.Customer)
         .Include(i=>i.Order).ThenInclude(o=>o!.Payments).Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(x=>x.SalesList)
@@ -30,21 +32,42 @@ public sealed class InvoiceTransferService(AppDbContext db)
         var invoice=await Query().AsNoTracking().SingleAsync(i=>i.Id==id,ct);await ValidateAsync(invoice,ct);
         return new(id,invoice.Order!.CustomerId,invoice.InvoiceNumber);
     }
-    private async Task ValidateAsync(Invoice i,CancellationToken ct)
+    public async Task<Items> FindItemsAsync(string caption,CancellationToken ct=default)
+    {
+        var id=await new InvoiceCancellationService(db).ResolveIdentityAsync(caption,ct);
+        var i=await Query().AsNoTracking().SingleAsync(i=>i.Id==id,ct);await ValidateAsync(i,ct,choosing:true);
+        return Choices(i);
+    }
+    private static Items Choices(Invoice i)
+    {
+        var o=i.Order!;var items=o.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.RowNumber).ThenBy(x=>x.Id).ToArray();
+        var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{i.Id,i.Status,i.TotalAmount,o.CustomerId,o.RowVersion,Items=items.Select(x=>new{x.Id,x.UpdatedAt,x.FulfillmentStatus,x.ShippingRequestId,x.ShippedAt,x.LineTotal})}))));
+        return new(new(i.Id,o.CustomerId,i.InvoiceNumber),items.Select(x=>new ItemChoice(x.Id,Name(x),x.RequestedVolumeMl,x.LineTotal,
+            x.ShippedAt!=null||x.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped?"ارسال‌شده":x.ShippingRequestId!=null?"داخل بستهٔ آماده‌سازی":x.SourceSalesListRequest?.IsGift==true?"هدیه با گیرندهٔ مستقل":null)).ToArray(),fingerprint);
+    }
+    public async Task<Selection> SelectAsync(Items original,Guid[] selected,CancellationToken ct=default)
+    {
+        var i=await Query().AsNoTracking().SingleAsync(i=>i.Id==original.Source.InvoiceId,ct);
+        if(Choices(i).Fingerprint!=original.Fingerprint)throw new InvalidOperationException("فاکتور یا وضعیت آیتم‌ها تغییر کرده؛ کپشن جدید را دوباره بفرستید.");
+        await ValidateAsync(i,ct,selected);return original.Source with{ItemIds=selected};
+    }
+    private async Task ValidateAsync(Invoice i,CancellationToken ct,Guid[]? selected=null,bool choosing=false)
     {
         var o=i.Order??throw new InvalidOperationException("سفارش پیدا نشد.");
         if(await db.NotificationOutbox.AnyAsync(n=>!n.IsDeleted&&n.OrderId==o.Id&&n.Channel==InvoiceRevisionService.Channel&&n.Status!=NotificationOutboxStatus.Processed,ct))
             throw new InvalidOperationException("ارسال و پاک‌سازی نسخهٔ اصلاح‌شدهٔ فاکتور هنوز تمام نشده است.");
         if(i.IsDeleted||o.IsDeleted||o.Customer is null||o.Customer.IsDeleted||i.Status is InvoiceStatus.Cancelled or InvoiceStatus.Draft||o.Status==OrderStatus.Cancelled)
             throw new InvalidOperationException("این فاکتور فعال نیست.");
-        var items=o.Items.Where(x=>!x.IsDeleted).ToArray();
-        if(items.Length==0||i.TotalAmount<=0||i.TotalAmount!=o.FinalAmount||items.Sum(x=>x.LineTotal)!=i.TotalAmount)
+        var all=o.Items.Where(x=>!x.IsDeleted).ToArray();
+        var items=selected is null?all:all.Where(x=>selected.Contains(x.Id)).ToArray();
+        if(selected is not null&&(selected.Length==0||selected.Distinct().Count()!=selected.Length||items.Length!=selected.Length))throw new InvalidOperationException("حداقل یک آیتم معتبر از همین فاکتور انتخاب کنید.");
+        if(items.Length==0||i.TotalAmount<=0||i.TotalAmount!=o.FinalAmount||all.Sum(x=>x.LineTotal)!=i.TotalAmount)
             throw new InvalidOperationException("مبلغ فاکتور و آیتم‌ها سازگار نیست؛ ابتدا حسابداری بررسی کند.");
-        if(o.Status is OrderStatus.Shipped or OrderStatus.Delivered||o.ShippedAt!=null||items.Any(x=>x.ShippedAt!=null||x.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped))
+        if(!choosing&&((items.Length==all.Length&&(o.Status is OrderStatus.Shipped or OrderStatus.Delivered||o.ShippedAt!=null))||items.Any(x=>x.ShippedAt!=null||x.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped)))
             throw new InvalidOperationException("فاکتور دارای آیتم ارسال‌شده قابل انتقال نیست.");
-        if(items.Any(x=>x.ShippingRequestId!=null))throw new InvalidOperationException("این فاکتور در بستهٔ آماده‌سازی قرار دارد؛ ابتدا اقلامش را از درخواست ارسال قبلی خارج کنید.");
-        if(items.Any(x=>x.SourceSalesListRequest?.IsGift==true)||o.Notes?.Contains(ShippingRecipientPolicy.ManualGiftMarker)==true||
-            await db.NotificationOutbox.AnyAsync(n=>!n.IsDeleted&&n.OrderId==o.Id&&n.Channel=="Telegram"&&(n.EventType=="GiftInvoiceIssued"||n.EventType=="InvoiceGiftDeliveryRequiresManualAction"),ct))
+        if(!choosing&&items.Any(x=>x.ShippingRequestId!=null))throw new InvalidOperationException("این فاکتور در بستهٔ آماده‌سازی قرار دارد؛ ابتدا اقلامش را از درخواست ارسال قبلی خارج کنید.");
+        if(!choosing&&(items.Any(x=>x.SourceSalesListRequest?.IsGift==true)||o.Notes?.Contains(ShippingRecipientPolicy.ManualGiftMarker)==true||
+            await db.NotificationOutbox.AnyAsync(n=>!n.IsDeleted&&n.OrderId==o.Id&&n.Channel=="Telegram"&&(n.EventType=="GiftInvoiceIssued"||n.EventType=="InvoiceGiftDeliveryRequiresManualAction"),ct)))
             throw new InvalidOperationException("این فاکتور شامل هدیه با گیرندهٔ مستقل است؛ برای جلوگیری از تغییر مالکیت هدیه، انتقال یکجای آن مجاز نیست.");
         if(o.Payments.Any(p=>!p.IsDeleted&&p.Status is PaymentStatus.Pending or PaymentStatus.Refunded))
             throw new InvalidOperationException("فیش در انتظار بررسی یا بازپرداخت وجود دارد؛ ابتدا حسابداری تعیین تکلیف کند.");
@@ -79,24 +102,26 @@ public sealed class InvoiceTransferService(AppDbContext db)
     }
     public async Task<Preview> PreviewAsync(Selection source,string identity,CancellationToken ct=default)
     {
-        var i=await Query().AsNoTracking().SingleAsync(i=>i.Id==source.InvoiceId,ct);await ValidateAsync(i,ct);
+        var i=await Query().AsNoTracking().SingleAsync(i=>i.Id==source.InvoiceId,ct);await ValidateAsync(i,ct,source.ItemIds);
         if(i.Order!.CustomerId!=source.FromId)throw new InvalidOperationException("مالک فاکتور پس از ورود کپشن عوض شده؛ دوباره شروع کنید.");
         var to=await RecipientAsync(identity,ct);if(to.Id==source.FromId)throw new InvalidOperationException("گیرنده با مالک فعلی یکی است.");
         var group=await GroupAsync(to.Id,ct);
         if(await db.CustomerTelegramGroups.AnyAsync(g=>g.CustomerId==source.FromId&&g.ChatId==group.ChatId,ct))throw new InvalidOperationException("گروه مبدا و مقصد یکسان است؛ ابتدا اتصال گروه گیرنده اصلاح شود.");
-        return await BuildAsync(i,to,group,ct);
+        return await BuildAsync(i,to,group,ct,source.ItemIds);
     }
-    private Task<Preview> BuildAsync(Invoice i,Customer to,CustomerTelegramGroup group,CancellationToken ct)
+    private Task<Preview> BuildAsync(Invoice i,Customer to,CustomerTelegramGroup group,CancellationToken ct,Guid[]? selected=null)
     {
         var o=i.Order!;var items=o.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.Id).ToArray();
-        var paid=i.Status==InvoiceStatus.Paid?i.TotalAmount:o.Payments.Where(p=>!p.IsDeleted&&p.Status==PaymentStatus.Confirmed).Sum(p=>p.Amount);
-        var data=JsonSerializer.Serialize(new{i.Id,i.Status,i.TotalAmount,i.IssuedAt,i.TelegramInvoiceChatId,i.TelegramInvoiceMessageId,
+        var totalPaid=i.Status==InvoiceStatus.Paid?i.TotalAmount:o.Payments.Where(p=>!p.IsDeleted&&p.Status==PaymentStatus.Confirmed).Sum(p=>p.Amount);
+        var chosen=selected is null?items:items.Where(x=>selected.Contains(x.Id)).ToArray();var amount=chosen.Sum(x=>x.LineTotal);
+        var paid=selected is null||chosen.Length==items.Length?totalPaid:decimal.Round(totalPaid*amount/i.TotalAmount,2,MidpointRounding.AwayFromZero);
+        var data=JsonSerializer.Serialize(new{Selected=selected?.Order().ToArray(),i.Id,i.Status,i.TotalAmount,i.IssuedAt,i.TelegramInvoiceChatId,i.TelegramInvoiceMessageId,
             o.CustomerId,OrderStatus=o.Status,o.RowVersion,From=Label(o.Customer!),To=Label(to),ToId=to.Id,to.TelegramId,Group=group.Id,group.ChatId,
             Payments=o.Payments.Where(p=>!p.IsDeleted).OrderBy(p=>p.Id).Select(p=>new{p.Id,p.Status,p.Amount,p.RowVersion}),
             Items=items.Select(x=>new{x.Id,x.SalesListId,x.RequestedVolumeMl,x.LineTotal,x.FulfillmentStatus,x.ShippingRequestId,x.ShippedAt,x.SourceSalesListRequestId,RequestVersion=x.SourceSalesListRequest?.RowVersion})});
-        return Task.FromResult(new Preview(new(i.Id,o.CustomerId,i.InvoiceNumber),to.Id,Label(o.Customer!),Label(to),group.ChatId,group.Id,i.TotalAmount,paid,i.TotalAmount-paid,
+        return Task.FromResult(new Preview(new(i.Id,o.CustomerId,i.InvoiceNumber,selected),to.Id,Label(o.Customer!),Label(to),group.ChatId,group.Id,amount,paid,amount-paid,
             i.Status==InvoiceStatus.Paid?"✅ پرداخت‌شده":paid>0?"⏳ بخشی پرداخت شده":"🔴 پرداخت‌نشده",
-            items.Select(x=>$"{Name(x)} — {x.RequestedVolumeMl:0.#} میل — {x.LineTotal:N0} تومان").ToArray(),Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data)))));
+            chosen.Select(x=>$"{Name(x)} — {x.RequestedVolumeMl:0.#} میل — {x.LineTotal:N0} تومان").ToArray(),Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data)))));
     }
     private static string Name(OrderItem x)=>x.SalesList?.PersianName is {Length:>0}?x.SalesList.PersianName:x.Perfume?.Name??x.ManualDescription??x.SalesList?.EnglishName??"عطر";
     public async Task<Result> ExecuteAsync(Guid operation,Preview expected,long actor,CancellationToken ct=default)
@@ -108,7 +133,7 @@ public sealed class InvoiceTransferService(AppDbContext db)
         if(prior!=null)
         {
             var saved=prior.Channel==ReceiptChannel?JsonSerializer.Deserialize<Result>(prior.Payload):null;
-            if(saved is null||saved.InvoiceId!=expected.Source.InvoiceId||saved.ToId!=expected.ToId||saved.Actor!=actor)throw new InvalidOperationException("شناسهٔ انتقال تکراری نامعتبر است.");
+            if(saved is null||(saved.SourceInvoiceId??saved.InvoiceId)!=expected.Source.InvoiceId||saved.ToId!=expected.ToId||saved.Actor!=actor)throw new InvalidOperationException("شناسهٔ انتقال تکراری نامعتبر است.");
             await tx.CommitAsync(ct);return saved;
         }
         var initial=await db.Invoices.AsNoTracking().Where(i=>i.Id==expected.Source.InvoiceId).Select(i=>new{i.OrderId}).SingleAsync(ct);
@@ -120,16 +145,20 @@ public sealed class InvoiceTransferService(AppDbContext db)
         await db.Payments.FromSqlInterpolated($"SELECT * FROM Payments WITH(UPDLOCK,HOLDLOCK) WHERE OrderId={initial.OrderId} AND IsDeleted=0").AsNoTracking().ToArrayAsync(ct);
         await db.SalesListRequests.FromSqlInterpolated($"SELECT * FROM SalesListRequests WITH(UPDLOCK,HOLDLOCK) WHERE Id IN(SELECT SourceSalesListRequestId FROM OrderItems WHERE OrderId={initial.OrderId} AND IsDeleted=0)").AsNoTracking().ToArrayAsync(ct);
         await db.CustomerTelegramGroups.FromSqlInterpolated($"SELECT * FROM CustomerTelegramGroups WITH(UPDLOCK,HOLDLOCK) WHERE CustomerId={expected.ToId} OR ChatId={expected.ChatId}").AsNoTracking().ToArrayAsync(ct);
-        db.ChangeTracker.Clear();var invoice=await Query().SingleAsync(i=>i.Id==expected.Source.InvoiceId,ct);await ValidateAsync(invoice,ct);
+        db.ChangeTracker.Clear();var invoice=await Query().SingleAsync(i=>i.Id==expected.Source.InvoiceId,ct);await ValidateAsync(invoice,ct,expected.Source.ItemIds);
         var to=await db.Customers.SingleAsync(c=>c.Id==expected.ToId&&!c.IsDeleted,ct);var group=await GroupAsync(to.Id,ct);
         if(await db.CustomerTelegramGroups.AnyAsync(g=>g.CustomerId==expected.Source.FromId&&g.ChatId==group.ChatId,ct))
             throw new InvalidOperationException("گروه مبدا و مقصد یکسان شده؛ اتصال گیرنده را دوباره بررسی کنید.");
-        var fresh=await BuildAsync(invoice,to,group,ct);
+        var fresh=await BuildAsync(invoice,to,group,ct,expected.Source.ItemIds);
         if(fresh.Fingerprint!=expected.Fingerprint)throw new InvalidOperationException("فاکتور، گیرنده، پرداخت یا اقلام بعد از پیش‌نمایش تغییر کرده؛ دوباره بررسی کنید.");
-        var order=invoice.Order!;var from=order.Customer!;
+        Guid? sourceInvoice=null;
+        var now=DateTime.UtcNow;
+        var original=invoice.Order!;var from=original.Customer!;
+        if(expected.Source.ItemIds is {} chosen&&chosen.Length<original.Items.Count(x=>!x.IsDeleted))
+        {sourceInvoice=invoice.Id;invoice=await InvoiceRevisionService.SplitAsync(db,invoice,chosen,operation,now,ct,forTransfer:true,transferredPaid:fresh.Paid);}
+        var order=invoice.Order!;
         if(from.CurrentDebt<fresh.Outstanding)throw new InvalidOperationException("بدهی مبدا با ماندهٔ فاکتور سازگار نیست؛ حسابداری باید بررسی کند.");
         var events=await db.NotificationOutbox.FromSqlInterpolated($"SELECT * FROM NotificationOutbox WITH(UPDLOCK,HOLDLOCK) WHERE OrderId={order.Id} AND IsDeleted=0 AND Channel IN(N'Telegram',N'N8n')").ToArrayAsync(ct);
-        var now=DateTime.UtcNow;
         if(events.Any(n=>n.Status==NotificationOutboxStatus.Processing&&n.LockedUntil>now))throw new InvalidOperationException("ارسال پیام‌های این فاکتور در حال انجام است؛ کمی بعد دوباره تلاش کنید.");
         var messages=await db.NotificationOutbox.AsNoTracking().Where(n=>n.OrderId==order.Id&&n.Channel=="InvoiceMessageReceipt"&&!n.IsDeleted).ToArrayAsync(ct);
         var cleanup=messages.Select(n=>(Row:n,Value:JsonSerializer.Deserialize<InvoiceMessageLifecycle.Receipt>(n.Payload)!))
@@ -175,7 +204,7 @@ public sealed class InvoiceTransferService(AppDbContext db)
             PaymentAccounts=accounts.Select(a=>new{a.CardNumber,a.AccountHolder,a.BankName}),Items=order.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.RowNumber).Select(x=>new
             {x.RowNumber,PerfumePersianName=Name(x),PerfumeEnglishName=x.SalesList?.EnglishName??x.Perfume?.EnglishName,PerfumeBrand=x.Perfume?.Brand,x.RequestedVolumeMl,x.PerfumePricePerMl,x.PerfumeAmount,x.IsBottleOwner,IsGift=false,BottleName=x.Bottle?.Name,x.BottlePrice,x.LineTotal})};
         db.NotificationOutbox.Add(new(){Id=delivery,CustomerId=to.Id,OrderId=order.Id,Channel="N8n",EventType="InvoiceIssued",Recipient="n8n",Payload=JsonSerializer.Serialize(payload),CreatedAt=now});
-        var result=new Result(invoice.Id,order.Id,invoice.InvoiceNumber,from.Id,to.Id,fresh.From,fresh.To,group.ChatId,fresh.Amount,fresh.Paid,fresh.Outstanding,actor,delivery,notificationIds.ToArray(),cleanup.DistinctBy(x=>(x.Chat,x.Message)).ToArray(),now,untracked);
+        var result=new Result(invoice.Id,order.Id,invoice.InvoiceNumber,from.Id,to.Id,fresh.From,fresh.To,group.ChatId,fresh.Amount,fresh.Paid,fresh.Outstanding,actor,delivery,notificationIds.ToArray(),cleanup.DistinctBy(x=>(x.Chat,x.Message)).ToArray(),now,untracked,sourceInvoice);
         db.NotificationOutbox.Add(new(){Id=operation,CustomerId=to.Id,OrderId=order.Id,Channel=ReceiptChannel,EventType="InvoiceTransferred",Recipient=actor.ToString(),Payload=JsonSerializer.Serialize(result),Status=NotificationOutboxStatus.Processed,CreatedAt=now,ProcessedAt=now});
         db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=to.Id,OrderId=order.Id,Channel=WorkChannel,EventType="FinishInvoiceTransfer",Recipient=actor.ToString(),Payload=JsonSerializer.Serialize(new Progress(operation)),CreatedAt=now});
         await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return result;

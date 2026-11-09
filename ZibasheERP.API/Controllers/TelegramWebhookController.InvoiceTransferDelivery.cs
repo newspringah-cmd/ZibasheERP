@@ -40,7 +40,11 @@ public sealed partial class TelegramWebhookController
                 foreach(var report in await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(batch,ct))
                     if(listIds.Contains(report.SalesListId))await Edit(report.TelegramChatId,report.TelegramMessageId,report.Message,BuildPaymentTrackingButtons(report));
             }
-            else await Edit(invoice.TelegramPaymentTrackingChatId,invoice.TelegramPaymentTrackingMessageId,FormatManualPaymentTrackingMessage(invoice),BuildManualPaymentTrackingButtons(invoice));
+            else
+            {
+                var report=await ManualPaymentTrackingGroupAsync(invoice,ct);
+                await Edit(invoice.TelegramPaymentTrackingChatId,invoice.TelegramPaymentTrackingMessageId,report.Text,report.Buttons);
+            }
             if(reportsEdited==0&&DateTime.UtcNow-data.CreatedAt<TimeSpan.FromMinutes(2))return 5;
             await Save(progress with{ReportUpdated=reportsEdited>0,ReportMissing=reportsEdited==0,Error=reportsEdited==0?"شناسهٔ گزارش واریز قبلی ثبت نشده؛ اصلاح همان گزارش نیازمند بررسی حسابداری است.":null});
         }
@@ -95,4 +99,20 @@ public sealed partial class TelegramWebhookController
         await Save(progress with{Complete=true,Error=issues.Count==0?null:string.Join("\n",issues)});
         return null;
     }
+    private async Task<(string Text,IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Buttons)> ManualPaymentTrackingGroupAsync(Invoice invoice,CancellationToken ct)
+    {
+        var siblings=string.IsNullOrWhiteSpace(invoice.TelegramPaymentTrackingChatId)||invoice.TelegramPaymentTrackingMessageId is not >0
+            ?new[]{invoice}:await _db.Invoices.AsNoTracking().Include(i=>i.Order).ThenInclude(o=>o!.Customer).Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(x=>x.SalesList)
+                .Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(x=>x.Perfume)
+                .Where(i=>!i.IsDeleted&&i.Status!=InvoiceStatus.Draft&&i.TelegramPaymentTrackingChatId==invoice.TelegramPaymentTrackingChatId&&i.TelegramPaymentTrackingMessageId==invoice.TelegramPaymentTrackingMessageId).OrderBy(i=>i.CreatedAt).ToArrayAsync(ct);
+        var published=await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,siblings.Select(i=>i.OrderId).ToArray(),ct);
+        var texts=new List<string>();var buttons=new List<IReadOnlyCollection<TelegramInlineButton>>();
+        foreach(var entry in siblings)
+        {
+            texts.Add(await FormatManualPaymentTrackingWithHistoryAsync(entry,published.Contains(entry.Id),ct));
+            foreach(var row in BuildManualPaymentTrackingButtons(entry))buttons.Add(row.Select(b=>siblings.Length==1?b:b with{Text=InvoiceTransferService.Label(entry.Order!.Customer!)+" "+b.Text}).ToArray());
+        }
+        return(string.Join("\n\n",texts),buttons);
+    }
+
 }
