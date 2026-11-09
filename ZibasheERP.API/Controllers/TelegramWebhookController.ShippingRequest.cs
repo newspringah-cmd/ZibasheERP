@@ -460,7 +460,8 @@ public sealed partial class TelegramWebhookController
                     ChatId = message.Chat.Id,
                     UserId = message.From.Id,
                     CustomerId = linkedCustomerIds[0],
-                    Stage = TelegramShippingPreparationStage.AwaitingNewAddress
+                    Stage = TelegramShippingPreparationStage.AwaitingNewAddress,
+                    InputPromptMessageId = message.ReplyToMessage!.MessageId
                 };
                 _orderFlowDrafts.SetShippingPreparation(draft);
                 hasDraft = true;

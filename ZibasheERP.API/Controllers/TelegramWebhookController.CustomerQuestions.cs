@@ -496,7 +496,8 @@ public sealed partial class TelegramWebhookController
 
         var normalized = NormalizeCustomerQuestion(text);
         var subjectMatches = PerfumeGuidanceSubjects.Count(value =>
-            normalized.Contains(value, StringComparison.Ordinal));
+            Regex.IsMatch(normalized, @"(?<![\p{L}\p{N}])" + Regex.Escape(value) + @"(?![\p{L}\p{N}])",
+                RegexOptions.CultureInvariant));
         var hasCue = text.Contains('؟') ||
                      text.Contains('?') ||
                      PerfumeGuidanceCues.Any(value =>

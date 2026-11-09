@@ -30,6 +30,10 @@ public static class ShippingPromptIsolationTests
         async Task Prompt()=>await (Task)typeof(TelegramWebhookController).GetMethod("SendShippingInputPromptAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(controller,[chat,"آدرس کامل را وارد کنید",CancellationToken.None,owner])!;
         try
         {
+            bool Guidance(string text)=>(bool)typeof(TelegramWebhookController).GetMethod("IsPerfumeGuidanceQuestion",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[text])!;
+            const string postalAddress="گیرنده تست\n09120000000\nتهران_جنت آباد مرکزی _ ۲۰ متری گلستان شرقی _ خیابان شهید معینی _ کوچه دوازدهم _ پلاک ۲۳ _ واحد۳ ( در صورت نبودن به واحد یک تحویل داده شود )";
+            check(!Guidance(postalAddress),"postal address does not mistake نت inside جنت or بو inside نبودن for perfume subjects");
+            check(Guidance("عطر خنک پیشنهاد میدی؟")&&Guidance("نت‌های چوبی و پخش بو"),"whole perfume terms and compound note questions still reach fragrance guidance");
             await Prompt();check(draft.InputPromptMessageId==sent.LastId,"shipping draft records the exact successfully sent non-forcing group prompt ID");
             var correct=draft.InputPromptMessageId!.Value;
             check(!await Handle(Message("زیبا وضعیت عطرا",346))&&!await db.Addresses.AnyAsync(a=>a.CustomerId==customer.Id),"status question replying to an invoice cannot create an address");
@@ -40,11 +44,14 @@ public static class ShippingPromptIsolationTests
             check(!await Handle(Message("تهران خیابان بهار پلاک ۱۰",correct-1)),"old prompt with identical text cannot capture a new address");
             check(!await Handle(Message("تهران خیابان بهار پلاک ۱۰",correct,false)),"human message with matching ID and prompt-like text cannot impersonate the bot address prompt");
             check(!await Handle(Message("تهران خیابان بهار پلاک ۱۰")),"ordinary group messages remain outside the address form");
-            check(await Handle(Message("تهران خیابان بهار پلاک ۱۰",correct)),"authorized reply to the exact current address prompt still registers the real address");
-            check(await db.Addresses.CountAsync(a=>a.CustomerId==customer.Id)==1&&(await db.Addresses.SingleAsync(a=>a.CustomerId==customer.Id)).FullAddress=="تهران خیابان بهار پلاک ۱۰","only the real submitted address is stored; customer questions remain absent");
+            check(await Handle(Message(postalAddress,correct)),"authorized postal address with ambiguous fragrance substrings is accepted on first submission");
+            check(await db.Addresses.CountAsync(a=>a.CustomerId==customer.Id)==1&&(await db.Addresses.SingleAsync(a=>a.CustomerId==customer.Id)).FullAddress==postalAddress,"only the real submitted address is stored verbatim; customer questions remain absent");
             check(!await Handle(Message("زیبا وضعیت عطرها",346)),"ready-to-confirm address stage does not intercept unrelated status questions");
             draft.Stage=TelegramShippingPreparationStage.AwaitingNewAddress;drafts.SetShippingPreparation(draft);sent.FailPrompt=true;await Prompt();
             check(draft.InputPromptMessageId is null&&!await Handle(Message("آدرس جدید",correct)),"failed replacement prompt invalidates the previous prompt instead of accepting stale input");
+            drafts.ClearShippingPreparation(chat,owner);
+            check(await Handle(Message(postalAddress,correct)),"after draft loss an authorized direct bot-prompt reply recovers exact binding and completes address registration");
+            check(drafts.TryGetShippingPreparation(chat,owner,out var recovered)&&recovered.Stage==TelegramShippingPreparationStage.Ready&&recovered.InputPromptMessageId==correct,"recovered address draft retains exact prompt ID and advances to confirmation");
         }
         finally
         {
