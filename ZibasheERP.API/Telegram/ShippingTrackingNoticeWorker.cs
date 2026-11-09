@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using ZibasheERP.API.Controllers;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
@@ -21,13 +22,14 @@ public sealed class ShippingTrackingNoticeWorker(IServiceScopeFactory scopes,IOp
                 {
                     try
                     {
-                        await ShippingTrackingNotices.DeliverAsync(db,sender,options.Value,job,ct);
+                        var controller=ActivatorUtilities.CreateInstance<TelegramWebhookController>(scope.ServiceProvider);
+                        await ShippingTrackingNotices.DeliverAsync(db,sender,options.Value,job,ct,(data,token)=>controller.MarkTrackingAddressButtonAsync(job,data,token));
                         if(job.Status==NotificationOutboxStatus.Pending&&job.NextAttemptAt is DateTime after)
                             delay=TimeSpan.FromSeconds(Math.Max(3.2,(after-DateTime.UtcNow).TotalSeconds));
                     }
                     catch(Exception error)when(!ct.IsCancellationRequested)
                     {
-                        job.Status=NotificationOutboxStatus.Pending;job.Attempts++;job.NextAttemptAt=DateTime.UtcNow.AddSeconds(30);
+                        job.Status=NotificationOutboxStatus.Pending;job.Attempts++;job.NextAttemptAt=DateTime.UtcNow.AddSeconds(error is ShippingTrackingNotices.ButtonRetryException retry?Math.Max(30,retry.RetryAfterSeconds)+1:30);
                         job.LastError=error.GetType().Name;
                         logger.LogWarning("Shipping tracking notice interrupted for job {JobId}: {ErrorType}",job.Id,error.GetType().Name);
                     }

@@ -36,15 +36,43 @@ public static class ShippingTrackingNoticeTests
             foreach(var (name,value) in new(string,object)[]{("_db",db),("_sender",sender),("_options",opts),("_logger",NullLogger<TelegramWebhookController>.Instance)})typeof(TelegramWebhookController).GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(controller,value);
             await (Task)typeof(TelegramWebhookController).GetMethod("ProcessTrackingBatchAsync",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(controller,[1L,d.ImportBatchId,CancellationToken.None,d.Id,true])!;
         }
+        Task Mark(NotificationOutbox job,ShippingTrackingNotices.Data data,CancellationToken ct)
+        {
+            var controller=(TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));
+            foreach(var (name,value) in new(string,object)[]{("_db",db),("_sender",sender),("_options",opts)})typeof(TelegramWebhookController).GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.SetValue(controller,value);
+            return (Task)typeof(TelegramWebhookController).GetMethod("MarkTrackingAddressButtonAsync",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(controller,[job,data,ct])!;
+        }
         try
         {
             var good=await Fixture();await Process(good.D);db.ChangeTracker.Clear();var job=await Notice(good.C.Id);
             check(transport.Photos==1&&job.Status==NotificationOutboxStatus.Pending&&transport.Replies==0,"accepted PDF tracking queues a separate address reply without delaying or resending the customer's code");
-            await ShippingTrackingNotices.DeliverAsync(db,sender,opts,job,default);await db.SaveChangesAsync();
+            await ShippingTrackingNotices.DeliverAsync(db,sender,opts,job,default,(data,ct)=>Mark(job,data,ct));await db.SaveChangesAsync();
+            check(transport.Buttons.SelectMany(r=>r).Any(b=>b.Text==ShippingTrackingNotices.Text&&b.Style=="success"&&b.CallbackData=="shipping:trackingdone")&&transport.Buttons.SelectMany(r=>r).Count(b=>b.CallbackData?.StartsWith("shipping:refs:")==true)==4,"successful tracking marks its original address button green and preserves all four reference actions");
             check(job.Status==NotificationOutboxStatus.Processed&&transport.LastChat==chat&&transport.LastReplyTo==good.Source&&transport.LastText==ShippingTrackingNotices.Text,"successful notice is threaded under the exact preparation address with the requested green text");
             await ShippingTrackingNotices.DeliverAsync(db,sender,opts,job,default);
             await ShippingTrackingNotices.QueueAsync(db,opts,new(good.C.Id,chat,good.Source,null),default);
             check(transport.Replies==1&&await db.NotificationOutbox.CountAsync(n=>n.CustomerId==good.C.Id&&n.Channel==ShippingTrackingNotices.Channel)==1,"replay and repeated completion keep one address notice and never resend tracking");
+            var oldEdits=transport.Edits;var oldReplies=transport.Replies;
+            await ShippingTrackingNotices.DeliverAsync(db,sender,opts,job,default,(data,ct)=>Mark(job,data,ct));
+            check(transport.Edits==oldEdits&&transport.Replies==oldReplies,"a replayed successful notice neither resends tracking or replies nor rewrites an already updated button");
+            job.Payload=JsonSerializer.Serialize(JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(job.Payload)! with{ButtonUpdated=false});await db.SaveChangesAsync();
+            await ShippingTrackingNotices.DeliverAsync(db,sender,opts,job,default,(data,ct)=>Mark(job,data,ct));await db.SaveChangesAsync();
+            check(transport.Edits==oldEdits+1&&transport.Replies==oldReplies,"historical delivered notices can upgrade their button without sending another address reply");
+            var editRetry=await Fixture();await Process(editRetry.D);db.ChangeTracker.Clear();var editJob=await Notice(editRetry.C.Id);transport.EditResult=new(false,"fixture temporary edit error");var beforeEditReply=transport.Replies;var editFailed=false;
+            try{await ShippingTrackingNotices.DeliverAsync(db,sender,opts,editJob,default,(data,ct)=>Mark(editJob,data,ct));}catch(InvalidOperationException){editFailed=true;}
+            check(editFailed&&transport.Replies==beforeEditReply&&JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(editJob.Payload)!.AttemptedAt is null,"a failed idempotent button edit is retryable before any one-shot address reply");
+            transport.EditResult=null;await ShippingTrackingNotices.DeliverAsync(db,sender,opts,editJob,default,(data,ct)=>Mark(editJob,data,ct));await db.SaveChangesAsync();
+            check(transport.Replies==beforeEditReply+1&&JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(editJob.Payload)!.ButtonUpdated,"retrying the failed markup produces one notice and a successful green button");
+            var parcel=await Fixture();var parcelId=Guid.NewGuid();var rootRow=await db.NotificationOutbox.SingleAsync(n=>n.CustomerId==parcel.C.Id&&n.Channel=="ShippingReferenceContext");
+            rootRow.Payload=JsonSerializer.Serialize(new ShippingTrackingNotices.Source(parcel.C.Id,parcelId,[],chat,"root",parcel.Source,true));await db.SaveChangesAsync();
+            await ShippingTrackingNotices.QueueAsync(db,opts,new(parcel.C.Id,chat,parcel.Source,parcelId),default);var parcelJob=await Notice(parcel.C.Id);
+            db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=parcel.C.Id,Channel=ZibasheERP.Infrastructure.Services.ShippingPackApproval.ReceiptChannel,Recipient=parcelId.ToString("N"),CreatedAt=DateTime.UtcNow,Status=NotificationOutboxStatus.Processed,
+                Payload=JsonSerializer.Serialize(new ZibasheERP.Infrastructure.Services.ShippingPackApprovalData{CustomerId=parcel.C.Id,RequestId=parcelId,ShippingChatId=chat,AddressMessageId=parcel.Source,SentAt=DateTime.UtcNow,PhotoFileIds=["fixture-1","fixture-2"],Deliveries=[new("-1009",0,SentAt:DateTime.UtcNow,MessageId:51),new("-1009",1,SentAt:DateTime.UtcNow,MessageId:52)]})});await db.SaveChangesAsync();
+            await ShippingTrackingNotices.DeliverAsync(db,sender,opts,parcelJob,default,(data,ct)=>Mark(parcelJob,data,ct));await db.SaveChangesAsync();
+            check(transport.Buttons.SelectMany(r=>r).Any(b=>b.Text==ShippingTrackingNotices.Text&&b.Style=="success")&&transport.Buttons.SelectMany(r=>r).Any(b=>b.CallbackData=="shipping:select:"+parcelId.ToString("N"))&&transport.Buttons.SelectMany(r=>r).Any(b=>b.Text=="📷 ارسال عکس سوم"),"parcel tracking preserves selection reports and the delivered photo count while replacing its tracking action with a green completion button");
+            var missingButton=await Fixture();await Process(missingButton.D);db.ChangeTracker.Clear();var missingJob=await Notice(missingButton.C.Id);transport.EditResult=new(false,"message to edit not found");var beforeMissing=transport.Replies;
+            await ShippingTrackingNotices.DeliverAsync(db,sender,opts,missingJob,default,(data,ct)=>Mark(missingJob,data,ct));await db.SaveChangesAsync();transport.EditResult=null;
+            check(missingJob.Status==NotificationOutboxStatus.Failed&&transport.Replies==beforeMissing&&!JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(missingJob.Payload)!.ButtonUpdated,"a deleted address is terminal and cannot produce a standalone notice or false button success");
             var failed=await Fixture();transport.RejectPhoto=true;await Process(failed.D);transport.RejectPhoto=false;db.ChangeTracker.Clear();
             check(!await db.NotificationOutbox.AnyAsync(n=>n.CustomerId==failed.C.Id&&n.Channel==ShippingTrackingNotices.Channel),"a rejected tracking photo cannot create a successful-address notice");
             var invalid=await Fixture(false);
@@ -84,10 +112,11 @@ public static class ShippingTrackingNoticeTests
 }
 public class TrackingNoticeSender:DispatchProxy
 {
-    public int Photos,Replies;public bool RejectPhoto;public TelegramSendResult? ReplyResult;public string? LastChat,LastText;public long LastReplyTo;
+    public int Photos,Replies,Edits;public IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> Buttons=[];public bool RejectPhoto;public TelegramSendResult? ReplyResult,EditResult;public string? LastChat,LastText;public long LastReplyTo;
     protected override object? Invoke(MethodInfo? method,object?[]? args)
     {
         if(method!.Name=="SendPhotoBytesWithKeyboardAsync"){Photos++;return Task.FromResult(RejectPhoto?new TelegramSendResult(false,"rejected"):new(true,MessageId:900));}
+        if(method.Name=="EditReplyMarkupAsync"){Edits++;Buttons=(IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args![2]!;return Task.FromResult(EditResult??new TelegramSendResult(true));}
         if(method.Name=="SendReplyOnceAsync"){Replies++;LastChat=(string)args![0]!;LastText=(string)args[1]!;LastReplyTo=(long)args[2]!;return Task.FromResult(ReplyResult??new TelegramSendResult(true,MessageId:1000+Replies));}
         return Task.FromResult(new TelegramSendResult(true,MessageId:999));
     }

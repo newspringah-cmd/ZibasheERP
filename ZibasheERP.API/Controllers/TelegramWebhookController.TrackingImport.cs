@@ -1299,7 +1299,7 @@ public sealed partial class TelegramWebhookController
                 new[]
                 {
                     new TelegramInlineButton("✅ ارسال شد", "shipping:trackingdone"),
-                    new TelegramInlineButton("✅ کد ارسال شد", "shipping:trackingdone")
+                    new TelegramInlineButton(ShippingTrackingNotices.Text, "shipping:trackingdone",Style:"success")
                 }
             };
             var result = await _sender.EditReplyMarkupAsync(

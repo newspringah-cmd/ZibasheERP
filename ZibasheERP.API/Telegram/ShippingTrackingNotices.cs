@@ -10,10 +10,12 @@ namespace ZibasheERP.API.Telegram;
 
 public static class ShippingTrackingNotices
 {
+    public sealed class AddressMessageMissingException:InvalidOperationException {}
+    public sealed class ButtonRetryException(int seconds):InvalidOperationException {public int RetryAfterSeconds{get;}=seconds;}
     public const string Channel="ShippingTrackingAddressNotice";
     public const string Text="✅ کد رهگیری ارسال شد";
     public sealed record Data(Guid CustomerId,string ChatId,long SourceMessageId,Guid? RequestId,
-        DateTime? AttemptedAt=null,DateTime? SentAt=null,long? MessageId=null);
+        DateTime? AttemptedAt=null,DateTime? SentAt=null,long? MessageId=null,bool ButtonUpdated=false);
     public sealed record Source(Guid CustomerId,Guid? RequestId,Guid[] ItemIds,string ChatId,string Kind,long? MessageId,bool Installed);
 
     public static async Task<bool> SourceMatchesAsync(AppDbContext db,Data data,CancellationToken ct)
@@ -54,12 +56,19 @@ public static class ShippingTrackingNotices
         return true;
     }
 
-    public static async Task DeliverAsync(AppDbContext db,ITelegramMessageSender sender,TelegramOptions options,NotificationOutbox job,CancellationToken ct)
+    public static async Task DeliverAsync(AppDbContext db,ITelegramMessageSender sender,TelegramOptions options,NotificationOutbox job,CancellationToken ct,Func<Data,CancellationToken,Task>? updateButton=null)
     {
         var data=JsonSerializer.Deserialize<Data>(job.Payload)??throw new InvalidOperationException("Missing notice data");
         if(job.Channel!=Channel||job.CustomerId!=data.CustomerId||job.Recipient!=data.ChatId||data.ChatId!=options.ShippingChatId.Trim()||
             !await SourceMatchesAsync(db,data,ct))
         {job.Status=NotificationOutboxStatus.Failed;job.LastError="Address notice scope is no longer valid";return;}
+        // Idempotent markup edits retry independently of the one-shot notice reply.
+        if(!data.ButtonUpdated&&updateButton is not null)
+        {
+            try{await updateButton(data,ct);}
+            catch(AddressMessageMissingException){job.Status=NotificationOutboxStatus.Failed;job.LastError="Tracking address message no longer exists";return;}
+            data=data with{ButtonUpdated=true};job.Payload=JsonSerializer.Serialize(data);await db.SaveChangesAsync(ct);
+        }
         if(data.SentAt.HasValue){job.Status=NotificationOutboxStatus.Processed;job.ProcessedAt=data.SentAt;return;}
         if(data.AttemptedAt.HasValue)
         {job.Status=NotificationOutboxStatus.Failed;job.LastError="Address notice outcome unknown; automatic duplicate reply refused";return;}

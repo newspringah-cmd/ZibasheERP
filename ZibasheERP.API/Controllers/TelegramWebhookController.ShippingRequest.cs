@@ -1367,7 +1367,7 @@ public sealed partial class TelegramWebhookController
         updatedButtons.Add(new[]
         {
             new TelegramInlineButton("✅ ارسال شد", "shipping:trackingdone"),
-            new TelegramInlineButton("✅ کد ارسال شد", "shipping:trackingdone")
+            new TelegramInlineButton(ShippingTrackingNotices.Text, "shipping:trackingdone",Style:"success")
         });
         updatedButtons.AddRange(await ExistingShippingReferenceButtonsAsync(message.Chat.Id.ToString(), draft.SourceMessageId, ct));
         var markupResult = await _sender.EditReplyMarkupAsync(
