@@ -7,6 +7,15 @@ using ZibasheERP.Infrastructure.Services;
 namespace ZibasheERP.API.Controllers;
 public sealed partial class TelegramWebhookController
 {
+    private async Task<bool> TryMarkDeliveredTrackingButtonAsync(Guid customer,string chat,long source,CancellationToken ct)
+    {
+        var id=new Guid(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"tracking-address-notice:{chat}:{source}"))[..16]);
+        var notice=await _db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==id&&n.Channel==ShippingTrackingNotices.Channel&&!n.IsDeleted,ct);
+        if(notice is null)return false;
+        var data=JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(notice.Payload)!;
+        if(data.CustomerId!=customer||data.ChatId!=chat||data.SourceMessageId!=source)throw new InvalidOperationException("Tracking button notice identity mismatch");
+        await MarkTrackingAddressButtonAsync(notice,data,ct);return true;
+    }
     internal async Task MarkTrackingAddressButtonAsync(NotificationOutbox notice,ShippingTrackingNotices.Data data,CancellationToken ct)
     {
         if(notice.Channel!=ShippingTrackingNotices.Channel||notice.CustomerId!=data.CustomerId||notice.Recipient!=data.ChatId||

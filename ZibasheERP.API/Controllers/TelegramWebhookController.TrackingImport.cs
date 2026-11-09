@@ -1294,6 +1294,10 @@ public sealed partial class TelegramWebhookController
         var messageId = items.Select(value => value.ShippingTelegramMessageId).FirstOrDefault(value => value.HasValue);
         if (messageId.HasValue && !string.IsNullOrWhiteSpace(_options.ShippingChatId))
         {
+            try
+            {
+                if(!await TryMarkDeliveredTrackingButtonAsync(dispatch.CustomerId!.Value,_options.ShippingChatId.Trim(),messageId.Value,ct))
+                {
             var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[]
@@ -1306,6 +1310,11 @@ public sealed partial class TelegramWebhookController
                 _options.ShippingChatId.Trim(), messageId.Value, buttons.Concat(await ExistingShippingReferenceButtonsAsync(_options.ShippingChatId.Trim(), messageId.Value, ct)).ToArray(), ct);
             if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
                 _logger.LogWarning("Tracking source message update failed: {Error}", result.Error);
+                }
+            }
+            catch(Exception error)when(!ct.IsCancellationRequested)
+            { _logger.LogWarning("Tracking source button update deferred: {ErrorType}",error.GetType().Name); }
+
         }
     }
 

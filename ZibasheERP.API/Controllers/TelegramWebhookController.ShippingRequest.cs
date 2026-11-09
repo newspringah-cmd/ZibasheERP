@@ -1352,6 +1352,10 @@ public sealed partial class TelegramWebhookController
         if(shippedItems.Length==0)
             await ReplyAsync(message.Chat.Id,"⚠️ کد رهگیری ارسال شد؛ بستهٔ یکتای مشخصی برای تغییر وضعیت عطرها پیدا نشد. اقلام آماده به‌صورت کلی ارسال‌شده ثبت نشدند.",ct);
 
+        try
+        {
+            if(!await TryMarkDeliveredTrackingButtonAsync(customer.Id,message.Chat.Id.ToString(),draft.SourceMessageId,ct))
+            {
         var updatedButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
         if (draft.HasBatchControls)
         {
@@ -1375,6 +1379,10 @@ public sealed partial class TelegramWebhookController
         if (!markupResult.IsSuccessful)
             await ReplyAsync(message.Chat.Id,
                 $"⚠️ عکس کد رهگیری ارسال شد اما وضعیت دکمه بروزرسانی نشد: {markupResult.Error}", ct);
+            }
+        }
+        catch(Exception error)when(!ct.IsCancellationRequested)
+        { _logger.LogWarning("Tracking source button update deferred: {ErrorType}",error.GetType().Name); }
         await ReplyAsync(message.Chat.Id,
             $"✅ عکس کد رهگیری برای {OrderCustomerLabel(customer)} ارسال شد و {shippedItems.Length} آیتم به وضعیت ارسال‌شده تغییر کرد.", ct);
         return true;
