@@ -267,6 +267,7 @@ await SmallRemainderReservationTests.RunSqlAsync(Check);
 await FlashSaleTests.RunAsync(Check);
 InvoicedSalesListReportTests.Run(Check);
 AddressReadyItemsTests.Run(Check);
+ShippingAddressDisplayTests.Run(Check);
 ShippingRecipientInvariantTests.Run(Check);
 SharedDecantGroupTests.Run(Check);
 SilentGroupTests.Run(Check);

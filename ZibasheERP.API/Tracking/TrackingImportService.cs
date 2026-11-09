@@ -1159,6 +1159,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             !Regex.IsMatch(value, @"مشتری|ثبت دستی|خیابان|کوچه|پلاک|بلوار|کد\s*پستی|تلفن|شماره|تماس|طبقه|واحد|ساختمان|آدرس|نشانی|محله|روبرو|روبه|میدان|بزرگراه|استان|شهرستان");
     }
 
+    internal static string[] RecipientNameCandidatesForDisplay(string raw)=>RecipientNameLines(raw,true).Distinct(StringComparer.Ordinal).ToArray();
+
     private static IEnumerable<string> RecipientNameLines(string raw, bool allowJoinedName)
     {
         const string label=@"(?:نام\s*و\s*نام\s*خانوادگی|نام\s*گیرنده|نام\s*خانوادگی\s*و\s*نام|تحویل\s*گیرنده|گیرنده|برسد\s*به|به\s*دست|به\s*نام|بنام|نام(?=\s*[:：]))";

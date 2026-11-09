@@ -402,7 +402,7 @@ public sealed partial class TelegramWebhookController
             item.UpdatedAt = now;
         }
         await _db.SaveChangesAsync(ct);
-        var message = $"📦 درخواست ارسال جدید\n\nمشتری: {OrderCustomerLabel(customer)}\n" +
+        var message = $"📦 درخواست ارسال جدید\n\nمشتری: {ZibasheERP.API.AddressLabels.ShippingAddressDisplay.Identity(OrderCustomerLabel(customer),address)}\n" +
             $"گیرنده: {address.ReceiverName}\nموبایل: {address.Mobile}\nکدپستی: {address.PostalCode}\n" +
             $"آدرس: {address.Province}، {address.City}، {address.FullAddress}";
         var sent = await SendAddressWithReadyItemsAsync(_options.ShippingChatId.Trim(), message, customer,
@@ -655,6 +655,7 @@ public sealed partial class TelegramWebhookController
         var shippingMessage =
             $"📦 درخواست ارسال دستی\n\nثبت‌کننده: {draft.UserId}\n\n" +
             $"{FormatAddressForDisplay(address)}\n\n📝 توضیحات:\n{notes}";
+        shippingMessage=ZibasheERP.API.AddressLabels.ShippingAddressDisplay.UpdateHeader(shippingMessage,address);
         var buttons = new IReadOnlyCollection<TelegramInlineButton>[]
         {
             new[]
@@ -1057,7 +1058,7 @@ public sealed partial class TelegramWebhookController
         var customer = await _db.Customers.AsNoTracking().FirstAsync(value => value.Id == draft.CustomerId, ct);
         var address = await _db.Addresses.AsNoTracking().FirstAsync(value => value.Id == draft.AddressId, ct);
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
-            $"📍 آدرس\n\nمشتری: {OrderCustomerLabel(customer)}\n\n{FormatAddressForDisplay(address)}",
+            $"📍 آدرس\n\nمشتری: {ZibasheERP.API.AddressLabels.ShippingAddressDisplay.Identity(OrderCustomerLabel(customer),address)}\n\n{FormatAddressForDisplay(address)}",
             new IReadOnlyCollection<TelegramInlineButton>[]
             {
                 new[] { new TelegramInlineButton("📮 ارسال آدرس به گروه پست", "shipping:preparedispatch") }
@@ -1093,7 +1094,7 @@ public sealed partial class TelegramWebhookController
             item.UpdatedAt = now;
         }
         await _db.SaveChangesAsync(ct);
-        var identity = OrderCustomerLabel(customer);
+        var identity = ZibasheERP.API.AddressLabels.ShippingAddressDisplay.Identity(OrderCustomerLabel(customer),address);
         var shippingMessage = $"📦 درخواست ارسال جدید\n\nآیدی: {identity}\n\n{FormatAddressForDisplay(address)}";
         var shippingButtons = new List<IReadOnlyCollection<TelegramInlineButton>>();
         if (items.Length > 0)
