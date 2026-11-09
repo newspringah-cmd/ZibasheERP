@@ -57,7 +57,8 @@ public sealed partial class TelegramWebhookController
         if(count<3)buttons.Add([new("بله",ShippingReferencePrefix+"add:"+id.ToString("N")),new("خیر",ShippingReferencePrefix+"send:"+id.ToString("N"))]);
         else buttons.Add([new("خیر",ShippingReferencePrefix+"send:"+id.ToString("N"))]);
         buttons.Add([new("❌ انصراف",ShippingReferencePrefix+"cancel:"+id.ToString("N"))]);
-        var text=$"✅ {count} عکس برای این بسته ثبت شد.\nآیا عکس دیگری دارید؟"+
+        var text=$"✅ {count} عکس جدید برای این بسته ثبت شد.\nآیا عکس دیگری دارید؟"+
+            (draft.ExistingPhotoCount>0?$"\nتعداد کل همراه عکس‌های قبلی: {draft.ExistingPhotoCount+count}":"")+
             (count<3?"\nبا «بله» عکس بعدی را اضافه کنید؛ با «خیر» عکس‌ها برای مشتری ارسال می‌شوند.":"\nسقف ۳ عکس تکمیل شده؛ برای ارسال عکس‌ها «خیر» را بزنید.");
         var sent=await _sender.SendInlineKeyboardAsync(draft.Reference.ChatId,text,buttons,ct);
         await RecordShippingPackUiAsync(id,sent,ct,question:true,questionCount:count);
@@ -67,7 +68,7 @@ public sealed partial class TelegramWebhookController
         (data.ConfirmedAt.HasValue?" تأیید مشتری ثبت شده است.":" منتظر تأیید مشتری هستیم.");
     private static bool ShippingPackPhotosDelivered(ShippingPackApprovalData data)
     {
-        if(!data.SentAt.HasValue||data.PhotoFileIds.Length is <1 or >3||data.Deliveries.Length==0)return false;
+        if(!data.SentAt.HasValue||data.PhotoFileIds.Length<1||data.Deliveries.Length==0)return false;
         return data.Deliveries.GroupBy(d=>d.ChatId).All(g=>Enumerable.Range(0,data.PhotoFileIds.Length)
             .All(index=>g.Any(d=>d.Index==index&&d.SentAt.HasValue)));
     }
@@ -95,7 +96,8 @@ public sealed partial class TelegramWebhookController
             ??throw new InvalidOperationException("رسید تحویل عکس‌های این فرم پیدا نشد.");
         var approval=JsonSerializer.Deserialize<ShippingPackApprovalData>(receipt.Payload)!;
         if(receipt.CustomerId!=row.CustomerId||approval.CustomerId!=row.CustomerId||approval.PhotoDraftId!=id||approval.ShippingChatId!=chat||
-            !(draft.Files??[]).SequenceEqual(approval.PhotoFileIds)||!ShippingPackPhotosDelivered(approval))
+            approval.PreviousApprovalId!=draft.PreviousApprovalId||approval.PreviousPhotoCount!=draft.ExistingPhotoCount||
+            !(draft.Files??[]).SequenceEqual(approval.PhotoFileIds.Skip(draft.ExistingPhotoCount))||!ShippingPackPhotosDelivered(approval))
             throw new InvalidOperationException("ابتدا باید تحویل موفق عکس‌ها برای مشتری ثبت شود؛ فعلاً عکس‌های مسئول حفظ می‌شوند.");
         return(draft,approval);
     }

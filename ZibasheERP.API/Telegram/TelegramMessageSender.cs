@@ -84,6 +84,9 @@ public interface ITelegramMessageSender
 
     Task<TelegramSendResult> SendPhotoOnceWithKeyboardAsync(string chatId, string photo, string caption,
         IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows, CancellationToken cancellationToken = default);
+    Task<TelegramSendResult> SendPhotoReplyOnceWithKeyboardAsync(string chatId,string photo,string caption,long replyToMessageId,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,CancellationToken cancellationToken=default)
+        =>SendPhotoOnceWithKeyboardAsync(chatId,photo,caption,rows,cancellationToken);
 
     Task<TelegramSendResult> SendPhotoBytesWithKeyboardAsync(
         string chatId, byte[] photo, string fileName, string caption,
@@ -316,6 +319,10 @@ public sealed class TelegramMessageSender : ITelegramMessageSender, IDisposable
         SendRequestAsync("sendPhoto", new { chat_id=chatId, photo, caption,
             reply_markup=new { inline_keyboard=rows.Select(row=>row.Select(BuildInlineButton).ToArray()).ToArray() } },
             cancellationToken, false, true);
+    public Task<TelegramSendResult> SendPhotoReplyOnceWithKeyboardAsync(string chatId,string photo,string caption,long replyToMessageId,
+        IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>> rows,CancellationToken cancellationToken=default) =>
+        SendRequestAsync("sendPhoto",new{chat_id=chatId,photo,caption,reply_parameters=new{message_id=replyToMessageId},
+            reply_markup=new{inline_keyboard=rows.Select(row=>row.Select(BuildInlineButton).ToArray()).ToArray()}},cancellationToken,false,true);
 
     public async Task<TelegramSendResult> SendHtmlAsync(
         string chatId,

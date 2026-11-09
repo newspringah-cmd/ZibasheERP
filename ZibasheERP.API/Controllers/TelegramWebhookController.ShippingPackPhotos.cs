@@ -12,7 +12,8 @@ public sealed partial class TelegramWebhookController
     private sealed record ShippingPackPhotoDraft(ShippingReferenceContext Reference,long UserId,Guid ApprovalId,
         long? PromptId=null,string PromptText="",string[]? Files=null,long[]? PhotoMessages=null,string? MediaGroup=null,string State="photos",long[]? PromptIds=null,long[]? UiMessageIds=null,long[]? QuestionIds=null,
         long? QuestionId=null,int QuestionPhotoCount=0,bool AwaitingMore=false,long[]? CleanupControlIds=null,long[]? DeletedMessageIds=null,
-        bool CleanupRequested=false,DateTime? CleanupCompletedAt=null,long[]? NavigationMessageIds=null);
+        bool CleanupRequested=false,DateTime? CleanupCompletedAt=null,long[]? NavigationMessageIds=null,
+        Guid? PreviousApprovalId=null,int ExistingPhotoCount=0);
 
     private async Task<T> MutateShippingPayloadAsync<T>(Guid id,string channel,Func<T,T> mutate,CancellationToken ct)
     {
@@ -22,12 +23,14 @@ public sealed partial class TelegramWebhookController
         await _db.NotificationOutbox.Where(n=>n.Id==id).ExecuteUpdateAsync(s=>s.SetProperty(n=>n.Payload,payload).SetProperty(n=>n.UpdatedAt,DateTime.UtcNow),ct);
         if(own is not null)await own.CommitAsync(ct);return data;
     }
-    private async Task StartShippingPackPhotoDraftAsync(TelegramCallbackQuery callback,ShippingReferenceContext context,OrderItem[] items,CancellationToken ct)
+    private async Task StartShippingPackPhotoDraftAsync(TelegramCallbackQuery callback,ShippingReferenceContext context,OrderItem[] items,CancellationToken ct,bool replace=false)
     {
         _orderFlowDrafts.ClearShippingTrackingPhoto(callback.Message!.Chat.Id,callback.From.Id);
         _decantPhotoDrafts.Remove(callback.Message.Chat.Id,callback.From.Id);
         await CancelPendingShippingPackDraftsAsync(callback.Message.Chat.Id,callback.From.Id,ct);
-        var id=Guid.NewGuid();var draft=new ShippingPackPhotoDraft(context with{ItemIds=items.Select(i=>i.Id).ToArray()},callback.From.Id,Guid.NewGuid());
+        var previous=replace?null:await FindShippingPackAppendBaseAsync(context,items,ct);
+        var id=Guid.NewGuid();var draft=new ShippingPackPhotoDraft(context with{ItemIds=items.Select(i=>i.Id).ToArray()},callback.From.Id,Guid.NewGuid(),
+            PreviousApprovalId:previous?.Id,ExistingPhotoCount:previous?.Data.PhotoFileIds.Length??0);
         _db.NotificationOutbox.Add(new(){Id=id,CustomerId=context.CustomerId,Channel=ShippingPackDraftChannel,EventType="AwaitingPhotos",Recipient=context.ChatId,Status=NotificationOutboxStatus.Pending,Payload=JsonSerializer.Serialize(draft),CreatedAt=DateTime.UtcNow});
         await _db.SaveChangesAsync(ct);await SendShippingPackPromptAsync(id,draft,ct);
     }
@@ -62,7 +65,8 @@ public sealed partial class TelegramWebhookController
     {
         var customer=await _db.Customers.AsNoTracking().SingleAsync(c=>c.Id==draft.Reference.CustomerId,ct);
         var scope=draft.Reference.LegacyAddressOnly?"اقلام ثبت‌شدهٔ قبلی":$"{draft.Reference.ItemIds.Length} آیتم";
-        var prompt=$"📷 بستهٔ {OrderCustomerLabel(customer)} — {scope}\nعکس {(draft.Files?.Length??0)+1} را همین‌جا بفرستید؛ نیازی به ریپلای نیست. تا ۳ عکس می‌توانید اضافه کنید؛ بعد از دریافت عکس، به سؤال «آیا عکس دیگری دارید؟» پاسخ دهید.";
+        var prompt=$"📷 بستهٔ {OrderCustomerLabel(customer)} — {scope}\nعکس {draft.ExistingPhotoCount+(draft.Files?.Length??0)+1} را همین‌جا بفرستید؛ نیازی به ریپلای نیست. در هر نوبت تا ۳ عکس می‌توانید اضافه کنید؛ بعد از دریافت عکس، به سؤال «آیا عکس دیگری دارید؟» پاسخ دهید."+
+            (draft.ExistingPhotoCount>0?$"\n{draft.ExistingPhotoCount} عکس قبلی محفوظ است؛ عکس جدید در ادامهٔ همان عکس‌ها ارسال می‌شود.":"");
         await MutateShippingPayloadAsync<ShippingPackPhotoDraft>(id,ShippingPackDraftChannel,d=>d with{PromptIds=(d.PromptIds??[]).Concat(d.PromptId.HasValue?[d.PromptId.Value]:[]).Distinct().ToArray(),PromptId=null,PromptText=prompt,MediaGroup=null},ct);
         var sent=await _sender.SendKeyboardDismissAsync(draft.Reference.ChatId,prompt,ct);
         if(!sent.IsSuccessful||!sent.MessageId.HasValue)throw new InvalidOperationException("پیام دریافت عکس ارسال نشد؛ دوباره از دکمهٔ عکس تأیید استفاده کنید.");
@@ -203,9 +207,19 @@ public sealed partial class TelegramWebhookController
         var locked=await _db.NotificationOutbox.FromSqlInterpolated($"SELECT * FROM NotificationOutbox WITH(UPDLOCK,HOLDLOCK) WHERE Id={id}").AsNoTracking().SingleAsync(ct);
         var fresh=JsonSerializer.Deserialize<ShippingPackPhotoDraft>(locked.Payload)!;
         if(locked.Status!=NotificationOutboxStatus.Pending||fresh.State!="photos"){await tx.RollbackAsync(ct);return;}
+        ShippingPackApprovalData? previous=null;
+        if(fresh.PreviousApprovalId.HasValue)
+        {
+            var candidate=await FindShippingPackAppendBaseAsync(fresh.Reference,await LoadShippingReferenceItemsAsync(fresh.Reference,ct),ct);
+            if(candidate?.Id!=fresh.PreviousApprovalId||candidate.Data.PhotoFileIds.Length!=fresh.ExistingPhotoCount)
+                throw new InvalidOperationException("عکس‌ها یا وضعیت بسته بعد از شروع فرم تغییر کرده؛ از دکمهٔ آدرس دوباره شروع کنید.");
+            previous=candidate.Data;
+            if(fresh.Files!.Any(file=>previous.PhotoFileIds.Contains(file)))throw new InvalidOperationException("این عکس قبلاً برای همین بسته ارسال شده؛ عکس جدیدی بفرستید.");
+        }
         var approval=new ShippingPackApprovalData{CustomerId=fresh.Reference.CustomerId,PhotoDraftId=id,RequestId=fresh.Reference.RequestId,ItemIds=fresh.Reference.ItemIds,
             LegacyAddressOnly=fresh.Reference.LegacyAddressOnly,AddressId=fresh.Reference.AddressId,AddressMessageId=fresh.Reference.MessageId,
-            PhotoFileIds=fresh.Files!,ShippingChatId=fresh.Reference.ChatId,OperatorUserId=fresh.UserId,State=ShippingPackApprovalState.Sending};
+            PhotoFileIds=[..(previous?.PhotoFileIds??[]),..fresh.Files!],Deliveries=previous?.Deliveries??[],PreviousApprovalId=fresh.PreviousApprovalId,PreviousPhotoCount=fresh.ExistingPhotoCount,
+            ShippingChatId=fresh.Reference.ChatId,OperatorUserId=fresh.UserId,State=ShippingPackApprovalState.Sending};
         _db.NotificationOutbox.Add(new(){Id=fresh.ApprovalId,CustomerId=approval.CustomerId,Channel=ShippingPackApproval.ReceiptChannel,EventType="PackApproval",Recipient=ShippingPackApprovalScope(approval),
             Payload=JsonSerializer.Serialize(approval),Status=NotificationOutboxStatus.Processed,CreatedAt=DateTime.UtcNow,ProcessedAt=DateTime.UtcNow});
         _db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=approval.CustomerId,Channel=ShippingPackApproval.SendChannel,EventType="SendPackPhotos",Recipient=fresh.Reference.ChatId,

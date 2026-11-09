@@ -463,6 +463,24 @@ public static class ShippingReferenceTests
                 check(!sent.Deleted.Contains(simpleCleanup.Id)&&compactNavigation.Text=="✅ پیام‌های اضافی این بسته پاک شد."&&
                     compactNavigation.Buttons!.SelectMany(r=>r).Any(b=>b.Url==currentAddressUrl)&&compactNavigation.Buttons!.SelectMany(r=>r).All(b=>b.CallbackData is null),
                     "cleanup leaves one compact address-navigation panel in place without another message or stale cleanup button");
+                if(setSize==1)
+                {
+                    await Item(customer,request:simpleParcel);
+                    await Handle("start",simpleRoot,message:simpleAddress.Id);
+                    var appendDraft=(await Rows("ShippingPackPhotoDraft")).First(n=>n.Status==NotificationOutboxStatus.Pending);
+                    var appendState=JsonDocument.Parse(appendDraft.Payload).RootElement;
+                    check(appendState.GetProperty("ExistingPhotoCount").GetInt32()==1&&appendState.GetProperty("PreviousApprovalId").GetGuid()==simpleApproval,
+                        "adding ready inventory to the same ERP parcel preserves its first photo as the continuation base");
+                    var beforeAppend=sent.Photos.Count;
+                    await Call("TryHandleShippingPackPhotoMessageAsync",new TelegramMessage(null,new(Ship,"supergroup"),new(Operator,null),null,
+                        Photo:[new("erp-parcel-append",100,100)],MessageId:11999,Date:DateTimeOffset.UtcNow.ToUnixTimeSeconds()),CancellationToken.None);
+                    var appendQuestion=sent.Calls.Last(c=>c.Text.Contains("آیا عکس دیگری دارید؟"));await Handle("send",appendDraft.Id,message:appendQuestion.Id);
+                    var appendApproval=appendState.GetProperty("ApprovalId").GetGuid();var appendJob=(await Rows(ShippingPackApproval.SendChannel)).Single(n=>JsonDocument.Parse(n.Payload).RootElement.GetProperty("ApprovalId").GetGuid()==appendApproval);
+                    await Call("ProcessShippingPackApprovalSendAsync",appendJob,CancellationToken.None);
+                    var appended=await Receipt(appendApproval);
+                    check(appended.ItemIds.Length==2&&appended.PhotoFileIds.Length==2&&sent.Photos.Count==beforeAppend+1&&sent.Photos.Last().ReplyTo==simpleReceipt.Deliveries.Single().MessageId,
+                        "a later ERP parcel photo includes newly added ready items without resending or losing the first photo");
+                }
             }
             var streamParcel=Guid.NewGuid();var streamItems=new List<OrderItem>();
             for(var n=0;n<14;n++)
@@ -566,6 +584,10 @@ public static class ShippingReferenceTests
         using var ackBody=JsonDocument.Parse(handler.Payload!);
         check(visibleAck.IsSuccessful&&ackBody.RootElement.GetProperty("reply_parameters").GetProperty("message_id").GetInt64()==777,
             "visible customer confirmation uses Telegram's real reply parameters to stay under the correct photo");
+        var append=await sender.SendPhotoReplyOnceWithKeyboardAsync("-1","next-photo","عکس دوم",888,[]);
+        using var appendBody=JsonDocument.Parse(handler.Payload!);
+        check(append.IsSuccessful&&appendBody.RootElement.GetProperty("reply_parameters").GetProperty("message_id").GetInt64()==888,
+            "additional package photo transport replies to the actual first customer photo");
     }
 }
 public sealed record ShippingReferenceCall(string Method,string Chat,string Text,long Id,IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>? Buttons=null,string? File=null,bool Success=true,long? ReplyTo=null);
@@ -584,8 +606,9 @@ public class ShippingReferenceSender:DispatchProxy
         if(name=="EditTextWithKeyboardAsync"){text=(string)args[2]!;buttons=(IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args[3]!;result=result with{MessageId=(long)args[1]!};}
         if(name=="SendInlineKeyboardAsync")buttons=(IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args[2]!;
         if(name.Contains("Photo")&&!name.Contains("Prompt")){file=(string)args[1]!;text=(string)args[2]!;if(name=="SendPhotoOnceWithKeyboardAsync"){buttons=(IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args[3]!;result=PhotoResult?.Invoke()??result;}}
+        if(name=="SendPhotoReplyOnceWithKeyboardAsync"){buttons=(IReadOnlyCollection<IReadOnlyCollection<TelegramInlineButton>>)args[4]!;result=PhotoResult?.Invoke()??result;}
         if(name is "SendReplyOnceAsync" or "SendKeyboardDismissAsync")result=TextResult?.Invoke(chat,text)??result;
-        Calls.Add(new(name,chat,text,result.MessageId??id,buttons,file,result.IsSuccessful,name=="SendReplyOnceAsync"?(long)args[2]!:null));return Task.FromResult(result);
+        Calls.Add(new(name,chat,text,result.MessageId??id,buttons,file,result.IsSuccessful,name=="SendReplyOnceAsync"?(long)args[2]!:name=="SendPhotoReplyOnceWithKeyboardAsync"?(long)args[3]!:null));return Task.FromResult(result);
     }
 }
 public class ShippingPhotoHttpHandler:HttpMessageHandler

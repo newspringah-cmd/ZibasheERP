@@ -74,7 +74,7 @@ public static class LegacyPackPhotoTests
             var cleanup=sent.Calls.Last(c=>c.Buttons?.SelectMany(r=>r).Any(b=>b.CallbackData=="shipping:refs:packclear:"+draft.Id.ToString("N"))==true);
             await Handle("packclear",draft.Id,cleanup.Id);
             check(sent.Deleted.Contains(2001)&&sent.Deleted.Contains(2002)&&!sent.Deleted.Contains(1000)&&!photos.Any(p=>sent.Deleted.Contains(p.Id)),"legacy cleanup removes operator extras while preserving customer photos and original address");
-            await Handle("start",root,1000);draft=(await Rows("ShippingPackPhotoDraft")).First();await Upload("legacy-revision-photo",2003);question=sent.Calls.Last(c=>c.Text.Contains("آیا عکس دیگری دارید؟"));await Handle("send",draft.Id,question.Id);
+            await Handle("restart",root,1000);draft=(await Rows("ShippingPackPhotoDraft")).First();await Upload("legacy-revision-photo",2003);question=sent.Calls.Last(c=>c.Text.Contains("آیا عکس دیگری دارید؟"));await Handle("send",draft.Id,question.Id);
             receipt=(await Rows(ShippingPackApproval.ReceiptChannel)).First();job=(await Rows(ShippingPackApproval.SendChannel)).First();await Call("ProcessShippingPackApprovalSendAsync",job,CancellationToken.None);
             approval=await Approval(receipt.Id);var delivered=approval.Deliveries.Single();
             await Handle("revise",receipt.Id,delivered.MessageId!.Value,user,client,customer.Username);
@@ -88,6 +88,49 @@ public static class LegacyPackPhotoTests
             await db.NotificationOutbox.Where(n=>n.Id==receipt.Id).ExecuteUpdateAsync(s=>s.SetProperty(n=>n.Payload,JsonSerializer.Serialize(forged,(JsonSerializerOptions?)null)));
             await Call("ProcessShippingPackApprovalSendAsync",job,CancellationToken.None);
             check(sent.Photos.Count==before&&(await Approval(receipt.Id)).State==ShippingPackApprovalState.NeedsReview,"worker independently refuses a forged or deleted legacy address without sending photos");
+            long firstPhoto=0;Guid firstApproval=Guid.Empty;
+            for(var number=1;number<=4;number++)
+            {
+                if(number==2)
+                {
+                    var restarted=(TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));
+                    foreach(var field in typeof(TelegramWebhookController).GetFields(flags))field.SetValue(restarted,field.GetValue(controller));controller=restarted;
+                }
+                await Handle(number==1?"restart":"start",root,1000);
+                draft=(await Rows("ShippingPackPhotoDraft")).First();
+                var appendDraft=JsonNode.Parse(draft.Payload)!;
+                check(appendDraft["ExistingPhotoCount"]!.GetValue<int>()==number-1&&sent.Calls.Last().Text.Contains($"عکس {number} را"),
+                    $"photo {number} resumes the same parcel's persisted sequence after earlier delivery or controller restart");
+                before=sent.Photos.Count;await Upload("legacy-append-"+number,4000+number);
+                question=sent.Calls.Last(c=>c.Text.Contains("آیا عکس دیگری دارید؟"));await Handle("send",draft.Id,question.Id);
+                receipt=(await Rows(ShippingPackApproval.ReceiptChannel)).First();job=(await Rows(ShippingPackApproval.SendChannel)).First();
+                if(number==2)
+                {
+                    await Handle("approve",firstApproval,firstPhoto,user,client,customer.Username);
+                    check(!(await Approval(receipt.Id)).ConfirmedAt.HasValue,"an old photo cannot approve a newly appended photo set");
+                }
+                await Call("ProcessShippingPackApprovalSendAsync",job,CancellationToken.None);
+                var newPhotos=sent.Photos.Skip(before).ToArray();approval=await Approval(receipt.Id);
+                if(number==1){firstPhoto=newPhotos.Single().Id;firstApproval=receipt.Id;}
+                check(newPhotos.Length==1&&approval.PhotoFileIds.Length==number&&approval.Deliveries.Count(d=>d.SentAt.HasValue)==number&&
+                    (number==1||newPhotos.Single().ReplyTo==firstPhoto),
+                    $"photo {number} sends only the new image as a reply to the original customer photo and retains all earlier delivery receipts");
+                var label=number switch{1=>"ارسال عکس دوم",2=>"ارسال عکس سوم",3=>"ارسال عکس چهارم",_=>"ارسال عکس پنجم"};
+                check(sent.Calls.Any(c=>c.Method=="EditReplyMarkupAsync"&&c.Chat==ship.ToString()&&c.Id==1000&&c.Buttons!.SelectMany(r=>r).Any(b=>b.Text.Contains(label))),
+                    $"after photo {number} the exact parcel address offers the next numbered photo");
+                before=sent.Photos.Count;await Call("ProcessShippingPackApprovalSendAsync",job,CancellationToken.None);
+                check(sent.Photos.Count==before,$"delivery retry after photo {number} cannot resend any previous photo");
+                if(number==2)
+                {
+                    await Handle("approve",receipt.Id,newPhotos.Single().Id,user,client,customer.Username);
+                    check((await Approval(receipt.Id)).ConfirmedAt.HasValue,"customer can confirm the complete appended set from its latest photo");
+                }
+                if(number==3)check(!approval.ConfirmedAt.HasValue,"adding another photo requests new confirmation instead of inheriting the earlier approval");
+                cleanup=sent.Calls.Last(c=>c.Buttons?.SelectMany(r=>r).Any(b=>b.CallbackData=="shipping:refs:packclear:"+draft.Id.ToString("N"))==true);
+                await Handle("packclear",draft.Id,cleanup.Id);
+                check(sent.Deleted.Contains(4000+number)&&!sent.Deleted.Contains(firstPhoto)&&!sent.Deleted.Contains(1000),
+                    $"cleanup for appended photo {number} removes only that operator session's extras");
+            }
         }
         finally
         {

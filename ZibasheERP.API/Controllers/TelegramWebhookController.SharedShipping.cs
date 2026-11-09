@@ -164,7 +164,8 @@ public sealed partial class TelegramWebhookController
             new[]{new TelegramInlineButton("☑️ انتخاب برای گزارش کلی","shipping:select:"+context.RequestId.Value.ToString("N"))},
             new[]{new TelegramInlineButton("📊 گزارش کلی انتخاب‌ها","shipping:batchreport")},
             new[]{new TelegramInlineButton("✅ ارسال شد","shipping:sent:"+context.RequestId.Value.ToString("N")),new TelegramInlineButton("📸 ارسال کد رهگیری","shipping:trackingbatch:"+context.RequestId.Value.ToString("N"))} };
-        buttons.AddRange(ShippingReferenceButtons(row.Id));
+        var previous=await FindShippingPackAppendBaseAsync(context,items,ct);
+        buttons.AddRange(previous is null?ShippingReferenceButtons(row.Id):ShippingReferenceButtonsWithPhotoCount(row.Id,previous.Data.PhotoFileIds.Length));
         var result=await _sender.EditTextWithKeyboardAsync(row.Recipient,context.MessageId.Value,text,buttons,ct);
         if(!result.IsSuccessful&&result.Error?.Contains("message is not modified",StringComparison.OrdinalIgnoreCase)!=true)throw new InvalidOperationException("Shared parcel address refresh failed");
         await guard.CommitAsync(ct);

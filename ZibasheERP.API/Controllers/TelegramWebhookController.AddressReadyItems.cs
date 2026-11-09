@@ -212,8 +212,10 @@ public sealed partial class TelegramWebhookController
             .Where(item => item.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && item.ShippedAt == null &&
                 (!requestId.HasValue || item.ShippingRequestId == requestId))
             .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).ToArrayAsync(ct);
-        var reference = await SaveShippingReferenceAsync(new(customer.Id, requestId, items.Select(i => i.Id).ToArray(), chatId, AddressId: addressId), ct);
-        var referenceButtons = buttons.Concat(ShippingReferenceButtons(reference)).ToArray();
+        var context=new ShippingReferenceContext(customer.Id,requestId,items.Select(i=>i.Id).ToArray(),chatId,AddressId:addressId);
+        var reference = await SaveShippingReferenceAsync(context, ct);
+        var previous=requestId.HasValue?await FindShippingPackAppendBaseAsync(context,items,ct):null;
+        var referenceButtons = buttons.Concat(previous is null?ShippingReferenceButtons(reference):ShippingReferenceButtonsWithPhotoCount(reference,previous.Data.PhotoFileIds.Length)).ToArray();
         var selectedFancyModels = await GetSelectedFancyModelsAsync(items, ct);
         var parts = SplitTelegramMessage(addressText + "\n\n" + FormatAddressReadyItems(items, selectedFancyModels)).ToArray();
         var sent = await _sender.SendInlineKeyboardAsync(chatId, parts[0], referenceButtons, ct);

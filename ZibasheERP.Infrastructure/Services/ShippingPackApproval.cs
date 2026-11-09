@@ -12,6 +12,8 @@ public sealed record ShippingPackApprovalData
 {
     public Guid CustomerId { get; init; }
     public Guid? PhotoDraftId { get; init; }
+    public Guid? PreviousApprovalId { get; init; }
+    public int PreviousPhotoCount { get; init; }
     public Guid? RequestId { get; init; }
     public bool LegacyAddressOnly { get; init; }
     public Guid? AddressId { get; init; }

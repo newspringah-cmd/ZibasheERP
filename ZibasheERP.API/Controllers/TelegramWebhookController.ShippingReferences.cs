@@ -93,21 +93,21 @@ public sealed partial class TelegramWebhookController
                 context=context with{ViewId=_shippingReferenceViewId};
             }
             if(action=="last"){await SendPreviousShippingPackPhotosAsync(callback.Message.Chat.Id,context,ct);await FinishShippingReferenceViewAsync(callback.Message.Chat.Id,ct);return true;}
-            if(action=="start"&&items.Length==0&&context.RequestId is null&&context.ItemIds.Length==0)
+            if(action is "start" or "restart"&&items.Length==0&&context.RequestId is null&&context.ItemIds.Length==0)
             {
                 context=context with{LegacyAddressOnly=true};
                 await AssertLegacyPackAddressAsync(context,ct);
-                await StartShippingPackPhotoDraftAsync(callback,context,items,ct);
+                await StartShippingPackPhotoDraftAsync(callback,context,items,ct,action=="restart");
                 return true;
             }
             if(items.Length==0){await ShippingReferenceTextAsync(callback.Message.Chat.Id,"آیتم آمادهٔ ارسالی برای این پیام باقی نمانده است.",ct);await FinishShippingReferenceViewAsync(callback.Message.Chat.Id,ct);return true;}
             if(action=="photos")await SendShippingDecantReferencesAsync(callback.Message.Chat.Id,context,items,callback.From.Id,ct);
             else if(action=="lists")await SendShippingCompletedListMenuAsync(callback.Message.Chat.Id,context,items,ct);
             else if(action=="list")await SendShippingSelectedCompletedListAsync(callback.Message.Chat.Id,context,items,ct);
-            else if(action=="start")
+            else if(action is "start" or "restart")
             {
                 context=await EnsureShippingReferenceParcelAsync(id,context,items,ct);
-                await StartShippingPackPhotoDraftAsync(callback,context,items,ct);
+                await StartShippingPackPhotoDraftAsync(callback,context,items,ct,action=="restart");
             }
             await FinishShippingReferenceViewAsync(callback.Message.Chat.Id,ct);
         }
