@@ -27,6 +27,14 @@ public static class TrackingAddressNameTests
         try{ZibasheERP.Infrastructure.Services.ManualShippingRegistration.TrackingDestination(registration,"741471928");}catch(InvalidOperationException){refused=true;}
         check(refused,"a manual-registration marker belonging to another customer is rejected");
         var id=Guid.NewGuid();
+        check(TrackingMatchingTests.Select("بیکی","",[TrackingMatchingTests.Row(id,"@fixture","نام: بیکی\nآدرس: تهران خیابان نمونه")])?.CustomerId==id,
+            "the exact short labelled name shown beside a shipping username also matches its tracking recipient");
+        check(TrackingMatchingTests.Select("بیکی","تهران",[TrackingMatchingTests.Row(id,"@fixture","نام: بیکی","تهران"),TrackingMatchingTests.Row(Guid.NewGuid(),"@other","نام: بیکی","مشهد")]) is null,
+            "a shared short display name cannot auto-select a recipient even when a destination city would break the tie");
+        check(TrackingMatchingTests.Select("بیکی","",[TrackingMatchingTests.Row(id,"@fixture","نام: بیگی")]) is null,
+            "a similar short displayed surname cannot be accepted through fuzzy matching");
+        check(TrackingMatchingTests.Select("لیلا بابازاده","",[TrackingMatchingTests.Row(id,"@fixture","تهران\nخيابان طالقاني پلاک ۴\nليلا بابازاده\nمرسي عزيزم❤️")])?.CustomerId==id,
+            "the Persian-normalized displayed recipient also participates in tracking matching despite courtesy lines");
         foreach(var raw in new[]{"نام : نرگس بهرامی","نام و نام خانوادگی: نرگس بهرامی","نام گیرنده:\nنرگس بهرامی\nموبایل: 09121111111",
             "تهران خیابان نمونه پلاک ۲ بنام نرگس بهرامی","تهران، کوچه نمونه. برسد به نرگس بهرامی.","نرگس بهرامی/آدرس: خیابان نمونه/کدپستی: 1111111111",
             "تحویل گیرنده: نرگس بهرامی، تهران","نام‌و‌نام‌خانوادگی: نرگس بهرامی","نام: خانم نرگس بهرامی"})

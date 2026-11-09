@@ -21,17 +21,21 @@ public static class ShippingAddressDisplay
         return text.ToString();
     }
     public static string NormalizeName(string value)=>Regex.Replace(Characters(value),@"\s+"," ").Trim();
+    private static bool IsCourtesy(string value)=>Regex.IsMatch(value,@"^(?:مرسی|ممنونم?|سپاسگزارم|سپاس|متشکرم|با تشکر|لطفا)(?:\s|$)");
+    private static bool IsDisplayName(string value)=>value.Length is >=2 and <=100&&Regex.IsMatch(value,@"^[\p{L}\p{M} ]+$")&&
+        !IsCourtesy(value)&&!Regex.IsMatch(value,@"مشتری|نامشخص|ناشناس|ثبت دستی|توسط|خیابان|کوچه|پلاک|بلوار|کد\s*پستی|تلفن|شماره|طبقه|واحد|آدرس|نشانی|استان|شهرستان");
     public static string? RecipientName(Address address)
     {
         string[] Candidates(string value)=>TrackingImportService.RecipientNameCandidatesForDisplay(Characters(value))
-            .Select(NormalizeName).Where(n=>n.Length>0&&n!=NormalizeName(address.City)&&n!=NormalizeName(address.Province)).Distinct().ToArray();
+            .Select(NormalizeName).Where(n=>n.Length>0&&!IsCourtesy(n)&&n!=NormalizeName(address.City)&&n!=NormalizeName(address.Province)).Distinct().ToArray();
         var direct=NormalizeName(address.ReceiverName);
-        if(direct.Length is >=2 and <=100&&Regex.IsMatch(direct,@"^[\p{L}\p{M} ]+$")&&
-            !Regex.IsMatch(direct,@"مشتری|نامشخص|ناشناس|ثبت دستی|توسط|خیابان|کوچه|پلاک|بلوار|کد\s*پستی|تلفن|شماره|طبقه|واحد|آدرس|نشانی|استان|شهرستان"))return direct;
+        if(IsDisplayName(direct))return direct;
         var candidates=Candidates(address.FullAddress);
         const string label=@"(?:نام\s*و\s*نام\s*خانوادگی|نام\s*گیرنده|نام\s*خانوادگی\s*و\s*نام|تحویل\s*گیرنده|گیرنده|برسد\s*به|به\s*دست|به\s*نام|بنام|نام(?=\s*[:：]))";
         var explicitNames=Regex.Matches(Characters(address.FullAddress),label+@"\s*[:：-]?\s*[^\r\n/،,;؛.]+")
-            .SelectMany(m=>Candidates(m.Value)).Distinct().ToArray();
+            .Select(m=>Regex.Replace(m.Value,"^"+label+@"\s*[:：-]?\s*",string.Empty))
+            .Select(value=>Regex.Split(value,@"[\p{N}]|(?:شماره\s*(?:تماس|همراه|موبایل)|کد\s*پستی|تلفن|موبایل|آدرس|ادرس|نشانی)")[0])
+            .Select(NormalizeName).Where(IsDisplayName).Distinct().ToArray();
         if(explicitNames.Length>0)return explicitNames.Length==1?explicitNames[0]:null;
         return candidates.Length==1?candidates[0]:null;
     }

@@ -615,8 +615,10 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             return best;
         }).OrderByDescending(value => value.Score).ThenByDescending(value => value.Candidate.Date).ToArray();
         if (ranked.Length == 0) return null;
-        var threshold = requireExact ? .999 : .87;
+        var shortName=!IsFullRecipientName(target);
+        var threshold = requireExact||shortName ? .999 : .87;
         if (ranked[0].NameScore < threshold) return null;
+        if(shortName&&ranked.Count(value=>value.NameScore>=.999)>1)return null;
         if (ranked.Length > 1 && ranked[0].Score - ranked[1].Score < .08) return null;
         var candidate = ranked[0].Candidate;
         var note = candidate.IsActive
@@ -1123,11 +1125,16 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             .Concat(RecipientNameLines(candidate.ReceiverName,IsFullRecipientName(target)))
             .Concat(RecipientNameLines(candidate.CustomerFullName,IsFullRecipientName(target)));
         var normalizedTarget = NormalizeName(target);
-        return names.Select(name => NameScore(normalizedTarget, NormalizeName(name))).DefaultIfEmpty(0).Max();
+        var score=names.Select(name => NameScore(normalizedTarget, NormalizeName(name))).DefaultIfEmpty(0).Max();
+        var display=ZibasheERP.API.AddressLabels.ShippingAddressDisplay.RecipientName(new(){ReceiverName=candidate.ReceiverName,City=candidate.City,FullAddress=candidate.FullAddress});
+        if(display is null)return score;
+        var displayScore=NormalizeName(display)==normalizedTarget?1d:IsFullRecipientName(target)&&IsFullRecipientName(display)?NameScore(normalizedTarget,NormalizeName(display)):0;
+        return Math.Max(score,displayScore);
     }
 
     internal static string[] PreparedRecipientNames(PreparedTrackingAddress p)=>new[]{p.ReceiverName,p.CustomerName}.Where(IsFullRecipientName)
-        .Concat(RecipientNameLines(p.FullAddress,true)).Concat(RecipientNameLines(p.ReceiverName,true)).Distinct().ToArray();
+        .Concat(RecipientNameLines(p.FullAddress,true)).Concat(RecipientNameLines(p.ReceiverName,true))
+        .Concat(ZibasheERP.API.AddressLabels.ShippingAddressDisplay.RecipientName(new(){ReceiverName=p.ReceiverName,City=p.City,FullAddress=p.FullAddress}) is {} display?[display]:Array.Empty<string>()).Distinct().ToArray();
     internal static string[] PreparedSuggestionNames(PreparedTrackingAddress p)=>PreparedRecipientNames(p).Concat(
         p.FullAddress.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries).Select(n=>n.Trim())
             .Where(n=>Regex.IsMatch(n,@"^[\p{L}\p{M}]+$")&&NormalizeName(n).Length>=3&&NormalizeName(n)!=NormalizeName(p.City)))

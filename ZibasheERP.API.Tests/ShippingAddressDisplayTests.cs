@@ -40,5 +40,12 @@ public static class ShippingAddressDisplayTests
         var missing=new Address{ReceiverName="@recipient",FullAddress="09120000000"};
         check(ShippingAddressDisplay.UpdateHeader("ثبت‌کننده: 741471928\n\n09120000000",missing,"@zahraa_frj")=="ثبت‌کننده: @zahraa_frj\n\n09120000000","registrar username is displayed even if the recipient name is unresolved");
         check(ShippingAddressDisplay.UpdateHeader(original,missing)==original,"an unresolved recipient leaves the existing header intact");
+        var shortName=new Address{ReceiverName="@recipient",FullAddress="نام: بیکی\nشماره تماس: ۰۹۱۲۰۰۰۰۰۰۰\nآدرس: تهران - نارمک - خیابان نمونه - پلاک ۹\nکدپستی: ۱۲۳۴۵۶۷۸۹۰"};
+        check(ShippingAddressDisplay.RecipientName(shortName)=="بیکی"&&ShippingAddressDisplay.Identity("@recipient",shortName)=="@recipient — بیکی","an explicitly labelled short one-word postal name is sufficient for the display header");
+        var courtesy=new Address{ReceiverName="@recipient",FullAddress="تهران\nخيابان طالقاني، بين خيابان وليعصر و حافظ، پلاك ٤٣٦\nكدپستي\n١٢٣٤٥٦٧٨٩٠\n\nليلا بابازاده\n٠٩١٢٠٠٠٠٠٠٠\n\nمرسي عزيزم❤️"};
+        check(ShippingAddressDisplay.RecipientName(courtesy)=="لیلا بابازاده","a courtesy line does not compete with the actual Persian-normalized postal recipient name");
+        check(ShippingAddressDisplay.RecipientName(new(){ReceiverName="@recipient",FullAddress="نام: بیکی\nگیرنده: نرگس امینی"}) is null,"two conflicting explicitly labelled names remain unresolved even when one is short");
+        check(ShippingAddressDisplay.RecipientName(new(){ReceiverName="@recipient",FullAddress="نرگس امینی\nمریم کریمی\nمرسی عزیزم"}) is null,"ignoring a courtesy line does not resolve two genuinely different personal names by guessing");
+        check(ShippingAddressDisplay.RecipientName(new(){ReceiverName="@recipient",FullAddress="نام خیابان: امینی\n09120000000"}) is null,"street-name labels cannot be misread as explicit recipient names");
     }
 }
