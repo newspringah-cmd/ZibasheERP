@@ -15,6 +15,7 @@ public sealed record ShippingPackApprovalData
     public Guid? PreviousApprovalId { get; init; }
     public int PreviousPhotoCount { get; init; }
     public Guid? RequestId { get; init; }
+    public Guid? SharedPhotoRequestId { get; init; }
     public bool LegacyAddressOnly { get; init; }
     public Guid? AddressId { get; init; }
     public long? AddressMessageId { get; init; }
@@ -52,7 +53,7 @@ public static class ShippingPackApproval
             var receipt = JsonSerializer.Deserialize<ShippingPackApprovalData>(row.Payload)!;
             if(receipt.LegacyAddressOnly)continue;
             if (receipt.State == ShippingPackApprovalState.Superseded ||
-                !(requestId.HasValue && receipt.RequestId == requestId || receipt.RequestId == null && receipt.ItemIds.Intersect(shippedItemIds).Any())) continue;
+                !(requestId.HasValue && (receipt.RequestId == requestId || receipt.SharedPhotoRequestId == requestId) || receipt.RequestId == null && receipt.ItemIds.Intersect(shippedItemIds).Any())) continue;
             // Close the actual parcel's photo flow without inventing customer
             // approval. Changed photo contents cannot prevent tracking delivery.
             if (!requestId.HasValue && !receipt.ItemIds.All(shippedItemIds.Contains)) continue;

@@ -11,11 +11,17 @@ public sealed class SharedShippingWorker(IServiceScopeFactory scopes,IOptions<Te
     {
         if(!options.Value.Enabled)return;
         logger.LogInformation("Shared shipping worker started; durable address refresh enabled");
+        var nextPhotoControls=DateTime.MinValue;
         while(!ct.IsCancellationRequested)
         {
             try
             {
                 using var scope=scopes.CreateScope();var repository=scope.ServiceProvider.GetRequiredService<INotificationOutboxRepository>();
+                if(DateTime.UtcNow>=nextPhotoControls)
+                {
+                    using var photos=scopes.CreateScope();var controller=ActivatorUtilities.CreateInstance<TelegramWebhookController>(photos.ServiceProvider);
+                    await controller.RecoverSharedMemberPhotoControlsAsync(ct);nextPhotoControls=DateTime.UtcNow.AddSeconds(15);
+                }
                 foreach(var job in await repository.GetPendingAsync("SharedShippingRefresh",5,ct))
                 {
                     try

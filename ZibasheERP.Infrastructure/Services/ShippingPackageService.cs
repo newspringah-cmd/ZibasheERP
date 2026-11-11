@@ -218,6 +218,9 @@ public static class ShippingPackageService
         }
         await db.SaveChangesAsync(ct);
         await ShippingPackApproval.MarkDispatchedAsync(db, customerId.Value, requestId, items.Where(i => i.FulfillmentStatus == OrderItemFulfillmentStatus.Shipped).Select(i => i.Id).ToArray(), ct);
+        if(shared!=null)
+            foreach(var member in shared.CustomerIds.Where(id=>id!=customerId.Value))
+                await ShippingPackApproval.MarkDispatchedAsync(db,member,requestId,items.Where(i=>i.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped).Select(i=>i.Id).ToArray(),ct);
         if(shared!=null&&(changed.Length>0||items.Length==0))
         {
             var receipt=await db.NotificationOutbox.SingleAsync(n=>n.Id==SharedShippingService.ReceiptId(requestId.Value),ct);

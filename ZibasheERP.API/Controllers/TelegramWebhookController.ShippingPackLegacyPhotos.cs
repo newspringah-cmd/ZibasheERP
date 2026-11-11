@@ -25,6 +25,13 @@ public sealed partial class TelegramWebhookController
 
     private async Task AssertShippingPackApprovalContentsAsync(ShippingPackApprovalData data,CancellationToken ct)
     {
+        if(data.SharedPhotoRequestId.HasValue)
+        {
+            var items=await LoadSharedMemberPhotoItemsAsync(new(data.CustomerId,null,data.ItemIds,data.ShippingChatId,Kind:"shared-photo",
+                MessageId:data.AddressMessageId,Installed:true,AddressId:data.AddressId,SharedPhotoRequestId:data.SharedPhotoRequestId),ct);
+            if(!items.Select(i=>i.Id).ToHashSet().SetEquals(data.ItemIds))throw new InvalidOperationException("اقلام این عضو پست مشترک تغییر کرده؛ عکس جدید ثبت کنید.");
+            return;
+        }
         if(data.LegacyAddressOnly)
         {
             await AssertLegacyPackAddressAsync(new(data.CustomerId,data.RequestId,data.ItemIds,data.ShippingChatId,
@@ -36,6 +43,7 @@ public sealed partial class TelegramWebhookController
             throw new InvalidOperationException("اقلام بسته تغییر کرده؛ مسئول ارسال باید عکس جدید بفرستد.");
     }
 
-    private static string ShippingPackApprovalScope(ShippingPackApprovalData data)=>data.LegacyAddressOnly?
+    private static string ShippingPackApprovalScope(ShippingPackApprovalData data)=>data.SharedPhotoRequestId.HasValue?
+        $"shared-member:{data.SharedPhotoRequestId:N}:{data.CustomerId:N}":data.LegacyAddressOnly?
         $"legacy-address:{data.AddressId:N}:{data.AddressMessageId}":data.RequestId?.ToString("N")??"customer";
 }

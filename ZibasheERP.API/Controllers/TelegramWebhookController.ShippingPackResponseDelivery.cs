@@ -26,6 +26,12 @@ public sealed partial class TelegramWebhookController
             }
             else if(data.Kind!="revision"||approval.RevisionResponseId!=job.Id||approval.State is not (ShippingPackApprovalState.RevisionRequested or ShippingPackApprovalState.Dispatched)||
                 !approval.RevisionSubmittedAt.HasValue||approval.RevisionText!=data.RevisionText)return null;
+            if(approval.SharedPhotoRequestId.HasValue)
+            {
+                try{await LoadSharedMemberPhotoItemsAsync(new(approval.CustomerId,null,approval.ItemIds,approval.ShippingChatId,Kind:"shared-photo",
+                    MessageId:approval.AddressMessageId,Installed:true,AddressId:approval.AddressId,SharedPhotoRequestId:approval.SharedPhotoRequestId),ct,true);}
+                catch(InvalidOperationException){return null;}
+            }
             if(approval.RequestId.HasValue)
             {
                 try{await ShippingPackageService.ValidatePackageAsync(_db,approval.RequestId.Value,approval.CustomerId,ct);}
@@ -68,7 +74,7 @@ public sealed partial class TelegramWebhookController
                 var request=current.Value.Approval.RequestId;
                 var addresses=request.HasValue?await _db.OrderItems.AsNoTracking().Where(i=>!i.IsDeleted&&i.ShippingRequestId==request&&i.ShippingTelegramMessageId.HasValue)
                     .Select(i=>i.ShippingTelegramMessageId!.Value).Distinct().Take(2).ToArrayAsync(ct):[];
-                if(current.Value.Approval.LegacyAddressOnly&&current.Value.Approval.AddressMessageId is long legacyAddress)addresses=[legacyAddress];
+                if((current.Value.Approval.LegacyAddressOnly||current.Value.Approval.SharedPhotoRequestId.HasValue)&&current.Value.Approval.AddressMessageId is long legacyAddress)addresses=[legacyAddress];
                 sent=addresses.Length==1?await _sender.SendReplyOnceAsync(current.Value.Approval.ShippingChatId,text,addresses[0],ct)
                     :await _sender.SendKeyboardDismissAsync(current.Value.Approval.ShippingChatId,text,ct);
             }

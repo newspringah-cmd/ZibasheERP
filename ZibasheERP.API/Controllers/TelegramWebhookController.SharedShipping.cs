@@ -21,6 +21,10 @@ public sealed partial class TelegramWebhookController
     {
         if(callback.Message is null||callback.Data?.StartsWith(SharedShippingPrefix,StringComparison.Ordinal)!=true)return false;
         var chat=callback.Message.Chat.Id;var key=(chat,callback.From.Id);var action=callback.Data[SharedShippingPrefix.Length..];
+        if(action=="photo-unlinked")
+        {
+            await _sender.AnswerCallbackAsync(callback.Id,"برای ارسال عکس این همراه، ابتدا پرونده و گروه حسابداری او را متصل کنید؛ آیدی یادداشتی مقصد قابل تأییدی ندارد.",ct,true);return true;
+        }
         if(action.StartsWith("items:")&&Guid.TryParseExact(action[6..],"N",out var request))
         {
             if(!await IsAuthorizedShippingAdminAsync(chat,callback.From.Id,ct))
@@ -206,6 +210,7 @@ public sealed partial class TelegramWebhookController
             new[]{new TelegramInlineButton("✅ ارسال شد","shipping:sent:"+context.RequestId.Value.ToString("N")),new TelegramInlineButton("📸 ارسال کد رهگیری","shipping:trackingbatch:"+context.RequestId.Value.ToString("N"))} };
         var previous=await FindShippingPackAppendBaseAsync(context,items,ct);
         buttons.AddRange(previous is null?ShippingReferenceButtons(row.Id):ShippingReferenceButtonsWithPhotoCount(row.Id,previous.Data.PhotoFileIds.Length));
+        buttons=(await ExpandSharedMemberPhotoButtonsAsync(row.Id,buttons,ct)).ToList();
         var result=await _sender.EditTextWithKeyboardAsync(row.Recipient,context.MessageId.Value,text,buttons,ct);
         if(!result.IsSuccessful&&result.Error?.Contains("message is not modified",StringComparison.OrdinalIgnoreCase)!=true)throw new InvalidOperationException("Shared parcel address refresh failed");
         await guard.CommitAsync(ct);

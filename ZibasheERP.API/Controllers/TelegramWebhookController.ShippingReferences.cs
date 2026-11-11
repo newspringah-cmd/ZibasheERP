@@ -13,7 +13,7 @@ public sealed partial class TelegramWebhookController
     private const string ShippingReferencePrefix = "shipping:refs:";
     private sealed record ShippingReferenceContext(Guid CustomerId, Guid? RequestId, Guid[] ItemIds,
         string ChatId, string Kind = "root", Guid? SalesListId = null, int Offset = 0,
-        long? MessageId = null, bool Installed = false, Guid? AddressId = null, Guid? ViewId = null,bool LegacyAddressOnly=false);
+        long? MessageId = null, bool Installed = false, Guid? AddressId = null, Guid? ViewId = null,bool LegacyAddressOnly=false,Guid? SharedPhotoRequestId=null);
 
     private async Task<Guid> SaveShippingReferenceAsync(ShippingReferenceContext context, CancellationToken ct)
     {
@@ -50,6 +50,7 @@ public sealed partial class TelegramWebhookController
     }
     private async Task<OrderItem[]> LoadShippingReferenceItemsAsync(ShippingReferenceContext context,CancellationToken ct)
     {
+        if(context.SharedPhotoRequestId.HasValue)return await LoadSharedMemberPhotoItemsAsync(context,ct);
         var customer=await _db.Customers.AsNoTracking().SingleOrDefaultAsync(c=>c.Id==context.CustomerId&&!c.IsDeleted,ct)
             ??throw new InvalidOperationException("حساب گیرنده قابل تأیید نیست.");
         if(context.RequestId.HasValue)
@@ -85,7 +86,7 @@ public sealed partial class TelegramWebhookController
             if(action=="packclear"){await HandleShippingPackCleanupAsync(callback,id,ct);return true;}
             if(action is "add" or "send" or "cancel") {await HandleShippingPackDraftCallbackAsync(callback,id,action,ct);return true;}
             var (context,items)=await LoadShippingReferenceAsync(id,callback,ct);
-            if(context.Kind!="root"&&context.Kind!=action)throw new InvalidOperationException("نوع دکمه با این انتخاب یکسان نیست.");
+            if(context.Kind=="shared-photo"?action is not ("start" or "restart" or "last"):context.Kind!="root"&&context.Kind!=action)throw new InvalidOperationException("نوع دکمه با این انتخاب یکسان نیست.");
             await _sender.AnswerCallbackAsync(callback.Id,cancellationToken:ct);
             if(action is "photos" or "lists" or "list" or "last")
             {
@@ -93,6 +94,10 @@ public sealed partial class TelegramWebhookController
                 context=context with{ViewId=_shippingReferenceViewId};
             }
             if(action=="last"){await SendPreviousShippingPackPhotosAsync(callback.Message.Chat.Id,context,ct);await FinishShippingReferenceViewAsync(callback.Message.Chat.Id,ct);return true;}
+            if(action is "start" or "restart"&&context.SharedPhotoRequestId.HasValue)
+            {
+                await StartShippingPackPhotoDraftAsync(callback,context,items,ct,action=="restart");return true;
+            }
             if(action is "start" or "restart"&&items.Length==0&&context.RequestId is null&&context.ItemIds.Length==0)
             {
                 context=context with{LegacyAddressOnly=true};

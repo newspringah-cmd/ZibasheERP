@@ -12,13 +12,13 @@ public sealed partial class TelegramWebhookController
     private async Task<ShippingPackAppendBase?> FindShippingPackAppendBaseAsync(ShippingReferenceContext context,OrderItem[] items,CancellationToken ct)
     {
         var scope=ShippingPackApprovalScope(new(){CustomerId=context.CustomerId,RequestId=context.RequestId,LegacyAddressOnly=context.LegacyAddressOnly,
-            AddressId=context.AddressId,AddressMessageId=context.MessageId});
+            AddressId=context.AddressId,AddressMessageId=context.MessageId,SharedPhotoRequestId=context.SharedPhotoRequestId});
         var row=await _db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==ShippingPackApproval.ReceiptChannel&&n.CustomerId==context.CustomerId&&n.Recipient==scope)
             .OrderByDescending(n=>n.CreatedAt).ThenByDescending(n=>n.Id).FirstOrDefaultAsync(ct);
         if(row is null)return null;
         var data=JsonSerializer.Deserialize<ShippingPackApprovalData>(row.Payload)!;
         if(data.State is not(ShippingPackApprovalState.AwaitingCustomer or ShippingPackApprovalState.Confirmed)||!ShippingPackPhotosDelivered(data)||
-            data.DispatchedAt.HasValue||data.RequestId!=context.RequestId||data.LegacyAddressOnly!=context.LegacyAddressOnly||
+            data.DispatchedAt.HasValue||data.SharedPhotoRequestId!=context.SharedPhotoRequestId||data.RequestId!=context.RequestId||data.LegacyAddressOnly!=context.LegacyAddressOnly||
             data.ShippingChatId!=context.ChatId||!data.ItemIds.ToHashSet().IsSubsetOf(items.Select(i=>i.Id)))return null;
         var groups=await _db.CustomerTelegramGroups.AsNoTracking().Where(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==context.CustomerId).Select(g=>g.ChatId).Distinct().ToArrayAsync(ct);
         if(!groups.ToHashSet().SetEquals(data.Deliveries.Select(d=>d.ChatId)))return null;
@@ -36,6 +36,7 @@ public sealed partial class TelegramWebhookController
     private async Task RefreshShippingPackAddressButtonsAsync(ShippingPackApprovalData data,CancellationToken ct)
     {
         if(!ShippingPackPhotosDelivered(data)||data.State is not(ShippingPackApprovalState.AwaitingCustomer or ShippingPackApprovalState.Confirmed))return;
+        if(data.SharedPhotoRequestId.HasValue){await RecoverSharedMemberPhotoControlsAsync(ct,data.SharedPhotoRequestId);return;}
         var scope=ShippingPackApprovalScope(data);
         var latest=await _db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==ShippingPackApproval.ReceiptChannel&&n.CustomerId==data.CustomerId&&n.Recipient==scope)
             .OrderByDescending(n=>n.CreatedAt).ThenByDescending(n=>n.Id).Select(n=>n.Payload).FirstAsync(ct);
@@ -67,6 +68,7 @@ public sealed partial class TelegramWebhookController
             }
             else rows.Add([new("📸 ارسال کد رهگیری","shipping:trackingcustomer:"+context.CustomerId.ToString("N"))]);
             rows.AddRange(ShippingReferenceButtonsWithPhotoCount(row.Id,data.PhotoFileIds.Length));
+            rows=(await ExpandSharedMemberPhotoButtonsAsync(row.Id,rows,ct)).ToList();
             var result=await _sender.EditReplyMarkupAsync(context.ChatId,context.MessageId.Value,rows,ct);
             if(!result.IsSuccessful&&!IsTelegramMessageUnchanged(result.Error)&&result.Error?.Contains("message to edit not found",StringComparison.OrdinalIgnoreCase)!=true)
                 throw new InvalidOperationException("به‌روزرسانی دکمهٔ عکس بعدی نیازمند تلاش مجدد است.");

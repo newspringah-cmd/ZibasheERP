@@ -100,6 +100,61 @@ public static class SharedShippingTests
             var context=JsonSerializer.Deserialize((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==root)).Payload,load)!;
             var loaded=(OrderItem[])(await Call("LoadShippingReferenceItemsAsync",context,CancellationToken.None))!;
             check(loaded.Select(i=>i.Id).ToHashSet().SetEquals([primary.Id,second.Id,third.Id,gift.Id]),"address photo and completed-list controls resolve the complete shared parcel");
+            var memberReferences=await db.NotificationOutbox.AsNoTracking().Where(n=>n.EventType=="SharedMemberPhotoReference"&&n.Recipient=="-100555001").ToArrayAsync();
+            check(memberReferences.Length==3&&memberReferences.Select(n=>n.CustomerId).Distinct().Count()==3,
+                "the original shared address has a separate durable photo button reference for every registered account");
+            var memberContexts=memberReferences.ToDictionary(n=>n.CustomerId,n=>JsonSerializer.Deserialize(n.Payload,load)!);
+            var secondItems=(OrderItem[])(await Call("LoadShippingReferenceItemsAsync",memberContexts[customers[1].Id],CancellationToken.None))!;
+            var thirdItems=(OrderItem[])(await Call("LoadShippingReferenceItemsAsync",memberContexts[customers[2].Id],CancellationToken.None))!;
+            check(secondItems.Select(i=>i.Id).ToHashSet().SetEquals([second.Id])&&thirdItems.Select(i=>i.Id).ToHashSet().SetEquals([third.Id,gift.Id]),
+                "each member photo scope includes only that account's physical items and received gifts, never the donor's unrelated items");
+            await db.Addresses.Where(a=>a.Id==address.Id).ExecuteUpdateAsync(s=>s.SetProperty(a=>a.IsDeleted,true));
+            var missingPhotoAddress=false;try{await Call("LoadShippingReferenceItemsAsync",memberContexts[customers[1].Id],CancellationToken.None);}catch(InvalidOperationException){missingPhotoAddress=true;}
+            check(missingPhotoAddress,"member photos cannot use an inactive or deleted primary shipping address");
+            await db.Addresses.Where(a=>a.Id==address.Id).ExecuteUpdateAsync(s=>s.SetProperty(a=>a.IsDeleted,false));
+            await db.CustomerTelegramGroups.Where(g=>g.Id==groups[1].Id).ExecuteUpdateAsync(s=>s.SetProperty(g=>g.IsActive,false));
+            var missingPhotoGroup=false;try{await Call("LoadShippingReferenceItemsAsync",memberContexts[customers[1].Id],CancellationToken.None);}catch(InvalidOperationException){missingPhotoGroup=true;}
+            check(missingPhotoGroup,"a member without a connected accounting group cannot fall back to the primary recipient's photo destination");
+            await db.CustomerTelegramGroups.Where(g=>g.Id==groups[1].Id).ExecuteUpdateAsync(s=>s.SetProperty(g=>g.IsActive,true));
+            var memberApprovalIds=new List<Guid>();
+            async Task<Guid> MemberPhoto(int member,string file,long source=800)
+            {
+                var reference=memberReferences.Single(n=>n.CustomerId==customers[member].Id);
+                await Call("TryHandleShippingReferenceCallbackAsync",new TelegramCallbackQuery("member-photo",new(admin,null),
+                    new TelegramMessage(null,new(-100555001,"supergroup"),new(admin,null),null,MessageId:source),"shipping:refs:start:"+reference.Id.ToString("N")),CancellationToken.None);
+                var draft=await db.NotificationOutbox.AsNoTracking().Where(n=>n.CustomerId==customers[member].Id&&n.Channel=="ShippingPackPhotoDraft"&&n.Status==NotificationOutboxStatus.Pending).SingleAsync();
+                await Call("TryHandleShippingPackPhotoMessageAsync",new TelegramMessage(null,new(-100555001,"supergroup"),new(admin,null),null,Photo:[new(file,100,100)],MessageId:950+member+memberApprovalIds.Count*10),CancellationToken.None);
+                await Call("HandleShippingPackDraftCallbackAsync",new TelegramCallbackQuery("member-send",new(admin,null),
+                    new TelegramMessage(null,new(-100555001,"supergroup"),new(admin,null),null,MessageId:900),null),draft.Id,"send",CancellationToken.None);
+                var json=JsonDocument.Parse((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==draft.Id)).Payload);
+                var approval=json.RootElement.GetProperty("ApprovalId").GetGuid();memberApprovalIds.Add(approval);
+                var job=await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Channel==ShippingPackApproval.SendChannel&&n.Payload.Contains(approval.ToString()));
+                await Call("ProcessShippingPackApprovalSendAsync",job,CancellationToken.None);return approval;
+            }
+            var secondApproval=await MemberPhoto(1,"member-two-photo");var thirdApproval=await MemberPhoto(2,"member-three-photo");
+            check(transport.MemberPhotos.Any(p=>p.Chat==groups[1].ChatId&&p.File=="member-two-photo")&&transport.MemberPhotos.Any(p=>p.Chat==groups[2].ChatId&&p.File=="member-three-photo")&&
+                !transport.MemberPhotos.Any(p=>p.Chat==groups[0].ChatId||p.Chat==groups[1].ChatId&&p.File=="member-three-photo"||p.Chat==groups[2].ChatId&&p.File=="member-two-photo"),
+                "different member photos are delivered separately to their own groups, without broadcasting companion photos to the primary account");
+            await Call("HandleShippingPackCustomerApprovalAsync",new TelegramCallbackQuery("member-confirm",new(long.Parse(customers[1].TelegramId!),customers[1].Username),
+                new TelegramMessage(null,new(long.Parse(groups[1].ChatId),"supergroup"),new(admin,null),null,MessageId:900),null),secondApproval,true,CancellationToken.None);
+            var secondData=JsonSerializer.Deserialize<ShippingPackApprovalData>((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==secondApproval)).Payload)!;
+            var thirdData=JsonSerializer.Deserialize<ShippingPackApprovalData>((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==thirdApproval)).Payload)!;
+            check(secondData.State==ShippingPackApprovalState.Confirmed&&thirdData.State==ShippingPackApprovalState.AwaitingCustomer&&secondData.SharedPhotoRequestId==request&&thirdData.SharedPhotoRequestId==request,
+                "one member's confirmation changes only that member's receipt, while every account retains the same physical shared parcel");
+            await Call("HandleShippingPackCustomerApprovalAsync",new TelegramCallbackQuery("wrong-member-group",new(admin,null),
+                new TelegramMessage(null,new(long.Parse(groups[1].ChatId),"supergroup"),new(admin,null),null,MessageId:900),null),thirdApproval,true,CancellationToken.None);
+            check(JsonSerializer.Deserialize<ShippingPackApprovalData>((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==thirdApproval)).Payload)!.State==ShippingPackApprovalState.AwaitingCustomer,
+                "even a manager cannot confirm a companion's photos from another member's accounting group");
+            var responseJob=await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Channel=="ShippingPackCustomerResponse"&&n.Payload.Contains(secondApproval.ToString()));
+            await Call("ProcessShippingPackResponseAsync",responseJob,CancellationToken.None);
+            check(transport.PhotoResponses.Any(r=>r.Chat==groups[1].ChatId&&r.Text.StartsWith("تایید شد"))&&!transport.PhotoResponses.Any(r=>r.Chat==groups[2].ChatId),
+                "per-member confirmation feedback is sent only to that member, with the operator notice replying to the original shared address");
+            var appendApproval=await MemberPhoto(1,"member-two-extra-photo");
+            var appended=JsonSerializer.Deserialize<ShippingPackApprovalData>((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==appendApproval)).Payload)!;
+            check(appended.PhotoFileIds.SequenceEqual(["member-two-photo","member-two-extra-photo"])&&transport.MemberPhotos.Count(p=>p.Chat==groups[1].ChatId&&p.File=="member-two-photo")==1&&
+                !appended.PhotoFileIds.Contains("member-three-photo"),"appending another photo preserves only that account's earlier photos and does not resend them or mix companion images");
+            check((await Reload(second.Id)).ShippingRequestId==request&&(await Reload(third.Id)).ShippingRequestId==request,
+                "per-member photo controls never create individual shipping requests or detach items from the shared parcel");
             await db.OrderItems.Where(i=>i.Id==unrelated.Id).ExecuteUpdateAsync(s=>s.SetProperty(i=>i.ShippingRequestId,(Guid?)request));
             var rejected=false;try{await ShippingPackageService.ValidatePackageAsync(db,request);}catch(ShippingRecipientValidationException){rejected=true;}
             check(rejected,"an unapproved customer's item cannot bypass strict shared-parcel recipient validation");
@@ -135,6 +190,9 @@ public static class SharedShippingTests
 
             // A second shared parcel verifies the photo-under-address entry point
             // uses the same durable fanout and per-destination delivery receipts.
+            check((await db.NotificationOutbox.AsNoTracking().Where(n=>n.Id==appendApproval||n.Id==thirdApproval).Select(n=>n.Payload).ToArrayAsync())
+                .All(p=>JsonSerializer.Deserialize<ShippingPackApprovalData>(p)!.State==ShippingPackApprovalState.Dispatched),
+                "dispatching a shared parcel closes every member's current photo receipt, including an unconfirmed companion, without blocking tracking");
             var manualRequest=Guid.NewGuid();var manualPrimary=await Item(0,parcel:manualRequest);var manualRoot=await Root(manualRequest,801);
             var manualPreview=await service.PreviewAsync(manualRequest,customers[0].Id,address.Id,[customers[1].Id],admin);
             await service.ConfirmAsync(manualPreview,admin,801,default,manualRoot);db.ChangeTracker.Clear();
@@ -209,6 +267,11 @@ public static class SharedShippingTests
                 "legacy companions are displayed on the original preparation address even with zero ready ERP rows");
             check((await ShippingPackageService.ValidatePackageAsync(db,annotationRequest,customers[0].Id)).Id==customers[0].Id,
                 "an explicit annotation-only shared parcel has one verified physical address owner");
+            var zeroMemberRows=await db.NotificationOutbox.AsNoTracking().Where(n=>n.EventType=="SharedMemberPhotoReference"&&n.Payload.Contains(annotationRequest.ToString())).ToArrayAsync();
+            var zeroContext=JsonSerializer.Deserialize(zeroMemberRows.Single(n=>n.CustomerId==customers[1].Id).Payload,load)!;
+            check(((OrderItem[])(await Call("LoadShippingReferenceItemsAsync",zeroContext,CancellationToken.None))!).Length==0&&
+                zeroMemberRows.Length==2&&transport.Buttons.Contains("shipping:shared:photo-unlinked"),
+                "known zero-item legacy companions have individual photo scopes while unknown usernames get a connection hint instead of a guessed destination");
             var preparedLegacy=await TrackingPreparedAddresses.LoadAsync(db,"-100555001",default);
             check(preparedLegacy.Any(r=>r.RequestId==annotationRequest&&r.CustomerId==customers[0].Id),
                 "annotation-only shared addresses remain eligible for exact tracking matching without invented invoice items");
@@ -269,7 +332,7 @@ public static class SharedShippingTests
 
 public class SharedShippingSender:DispatchProxy
 {
-    public List<string> Texts=new(),Buttons=new(),Accepted=new();public List<(long Message,string Text)> Edits=new();public int AddressesSent;
+    public List<string> Texts=new(),Buttons=new(),Accepted=new();public List<(string Chat,string File)> MemberPhotos=[];public List<(string Chat,string Text)> PhotoResponses=[];public List<(long Message,string Text)> Edits=new();public int AddressesSent;
     public string? RejectOnceChat;
     protected override object? Invoke(MethodInfo? method,object?[]? args)
     {
@@ -282,6 +345,8 @@ public class SharedShippingSender:DispatchProxy
             if(RejectOnceChat==chat){RejectOnceChat=null;return Task.FromResult(new TelegramSendResult(false,"429"){IsRetryable=true,RetryAfterSeconds=1});}
             Accepted.Add(chat);
         }
+        if(name=="SendReplyOnceAsync")PhotoResponses.Add(((string)args![0]!, (string)args[1]!));
+        if(name is "SendPhotoOnceWithKeyboardAsync" or "SendPhotoReplyOnceWithKeyboardAsync")MemberPhotos.Add(((string)args![0]!, (string)args[1]!));
         if(name=="EditTextWithKeyboardAsync")Edits.Add(((long)args![1]!, (string)args[2]!));
         if(name is "SendAsync" or "SendInlineKeyboardAsync" or "SendKeyboardDismissAsync")
         {

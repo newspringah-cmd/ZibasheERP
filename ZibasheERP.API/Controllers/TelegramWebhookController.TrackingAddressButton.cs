@@ -58,6 +58,7 @@ public sealed partial class TelegramWebhookController
                 p.AddressMessageId==data.SourceMessageId&&p.RequestId==request&&ShippingPackPhotosDelivered(p));
             rows.AddRange(last is null?ShippingReferenceButtons(matches[0].Row.Id):ShippingReferenceButtonsWithPhotoCount(matches[0].Row.Id,last.PhotoFileIds.Length));
         }
+        if(matches.Length==1)rows=(await ExpandSharedMemberPhotoButtonsAsync(matches[0].Row.Id,rows,ct)).ToList();
         var sent=await _sender.EditReplyMarkupAsync(data.ChatId,data.SourceMessageId,rows,ct);
         if(!sent.IsSuccessful&&!IsTelegramMessageUnchanged(sent.Error))
         {

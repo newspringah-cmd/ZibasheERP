@@ -207,7 +207,7 @@ public sealed partial class TelegramWebhookController
         else
         {
             var items=await LoadShippingReferenceItemsAsync(draft.Reference,ct);
-            if(items.Length==0&&!await IsOpenLegacySharedAddressAsync(draft.Reference,ct)||!items.Select(i=>i.Id).ToHashSet().SetEquals(draft.Reference.ItemIds))throw new InvalidOperationException("اقلام آمادهٔ بسته تغییر کرده؛ از دکمهٔ آدرس، عکس‌های بستهٔ جدید را ثبت کنید.");
+            if(items.Length==0&&draft.Reference.SharedPhotoRequestId is null&&!await IsOpenLegacySharedAddressAsync(draft.Reference,ct)||!items.Select(i=>i.Id).ToHashSet().SetEquals(draft.Reference.ItemIds))throw new InvalidOperationException("اقلام آمادهٔ بسته تغییر کرده؛ از دکمهٔ آدرس، عکس‌های بستهٔ جدید را ثبت کنید.");
         }
         if(draft.Files is not{Length:>=1 and <=3})throw new InvalidOperationException("ابتدا یک تا سه عکس ثبت کنید.");
         var groups=await _db.CustomerTelegramGroups.AsNoTracking().Where(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==draft.Reference.CustomerId).Select(g=>g.ChatId).Distinct().ToArrayAsync(ct);
@@ -227,7 +227,7 @@ public sealed partial class TelegramWebhookController
             if(fresh.Files!.Any(file=>previous.PhotoFileIds.Contains(file)))throw new InvalidOperationException("این عکس قبلاً برای همین بسته ارسال شده؛ عکس جدیدی بفرستید.");
         }
         var approval=new ShippingPackApprovalData{CustomerId=fresh.Reference.CustomerId,PhotoDraftId=id,RequestId=fresh.Reference.RequestId,ItemIds=fresh.Reference.ItemIds,
-            LegacyAddressOnly=fresh.Reference.LegacyAddressOnly,AddressId=fresh.Reference.AddressId,AddressMessageId=fresh.Reference.MessageId,
+            LegacyAddressOnly=fresh.Reference.LegacyAddressOnly,AddressId=fresh.Reference.AddressId,AddressMessageId=fresh.Reference.MessageId,SharedPhotoRequestId=fresh.Reference.SharedPhotoRequestId,
             PhotoFileIds=[..(previous?.PhotoFileIds??[]),..fresh.Files!],Deliveries=previous?.Deliveries??[],PreviousApprovalId=fresh.PreviousApprovalId,PreviousPhotoCount=fresh.ExistingPhotoCount,
             ShippingChatId=fresh.Reference.ChatId,OperatorUserId=fresh.UserId,State=ShippingPackApprovalState.Sending};
         _db.NotificationOutbox.Add(new(){Id=fresh.ApprovalId,CustomerId=approval.CustomerId,Channel=ShippingPackApproval.ReceiptChannel,EventType="PackApproval",Recipient=ShippingPackApprovalScope(approval),
