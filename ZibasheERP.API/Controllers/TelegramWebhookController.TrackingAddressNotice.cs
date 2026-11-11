@@ -10,6 +10,18 @@ public sealed partial class TelegramWebhookController
     {
         if(dispatch.CustomerId is not Guid customer||string.IsNullOrWhiteSpace(_options.ShippingChatId))return;
         var chat=_options.ShippingChatId.Trim();
+        if(dispatch.ShippingRequestId is null && dispatch.Status==TrackingDispatchStatus.Sent && dispatch.SentAt.HasValue)
+        {
+            var manualSources=await ManualShippingAddresses.SourcesAsync(_db,_options,ct);
+            var manual=manualSources.Where(s=>s.Root.CustomerId==customer).ToArray();
+            if(manual.Select(s=>s.Root.AddressId).Distinct().Count()==1 &&
+                await _db.TrackingDispatchDeliveries.AsNoTracking().AnyAsync(d=>!d.IsDeleted&&d.TrackingDispatchId==dispatch.Id&&d.TelegramChatId==_options.OwnerUserId.Trim()&&d.SentAt.HasValue,ct))
+            {
+                foreach(var source in manual.Where(s=>s.CreatedAt<=dispatch.SentAt.Value))
+                    await ShippingTrackingNotices.QueueAsync(_db,_options,new(customer,chat,source.Root.MessageId!.Value,null),ct);
+                return;
+            }
+        }
         if(dispatch.ShippingRequestId is Guid request)
         {
             var ids=await _db.OrderItems.AsNoTracking().Where(i=>!i.IsDeleted&&i.ShippingRequestId==request&&i.ShippingTelegramMessageId.HasValue)

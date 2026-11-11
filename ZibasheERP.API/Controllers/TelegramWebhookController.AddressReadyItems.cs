@@ -215,6 +215,9 @@ public sealed partial class TelegramWebhookController
         var context=new ShippingReferenceContext(customer.Id,requestId,items.Select(i=>i.Id).ToArray(),chatId,AddressId:addressId);
         var reference = await SaveShippingReferenceAsync(context, ct);
         var previous=requestId.HasValue?await FindShippingPackAppendBaseAsync(context,items,ct):null;
+        if(requestId is null && items.Length==0 && addressId.HasValue &&
+            ZibasheERP.Infrastructure.Services.ManualShippingRegistration.TrackingDestination(customer,_options.OwnerUserId) is not null)
+            buttons=new[]{(IReadOnlyCollection<TelegramInlineButton>)new[]{new TelegramInlineButton("✅ ارسال شد",ManualSentPrefix+reference.ToString("N"))}}.Concat(buttons).ToArray();
         var referenceButtons = buttons.Concat(previous is null?ShippingReferenceButtons(reference):ShippingReferenceButtonsWithPhotoCount(reference,previous.Data.PhotoFileIds.Length)).ToArray();
         var selectedFancyModels = await GetSelectedFancyModelsAsync(items, ct);
         var parts = SplitTelegramMessage(addressText + "\n\n" + FormatAddressReadyItems(items, selectedFancyModels)).ToArray();

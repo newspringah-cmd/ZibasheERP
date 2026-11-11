@@ -49,6 +49,15 @@ public sealed partial class TelegramWebhookController
             if(context.Kind!="root"||!context.Installed||context.MessageId is not >0||context.ChatId!=data.ShippingChatId||context.CustomerId!=data.CustomerId||
                 (data.LegacyAddressOnly?context.AddressId!=data.AddressId||context.MessageId!=data.AddressMessageId:context.RequestId!=data.RequestId))continue;
             if(!data.LegacyAddressOnly&&data.RequestId is null&&!context.ItemIds.ToHashSet().SetEquals(data.ItemIds))continue;
+            var manual=(await ManualShippingAddresses.SourcesAsync(_db,_options,ct)).SingleOrDefault(s=>s.ReferenceId==row.Id);
+            if(manual is not null)
+            {
+                var manualRows=await ManualAddressButtonsAsync(manual,await ManualShippingAddresses.IsSentAsync(_db,manual,ct),ct);
+                var manualResult=await _sender.EditReplyMarkupAsync(context.ChatId,context.MessageId.Value,manualRows,ct);
+                if(!manualResult.IsSuccessful&&!IsTelegramMessageUnchanged(manualResult.Error)&&manualResult.Error?.Contains("message to edit not found",StringComparison.OrdinalIgnoreCase)!=true)
+                    throw new InvalidOperationException("به‌روزرسانی دکمه‌های آدرس دستی نیازمند تلاش مجدد است.");
+                continue;
+            }
             var rows=new List<IReadOnlyCollection<TelegramInlineButton>>();
             if(context.RequestId.HasValue)
             {

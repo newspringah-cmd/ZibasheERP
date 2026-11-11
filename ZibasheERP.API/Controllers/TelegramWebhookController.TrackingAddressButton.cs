@@ -21,6 +21,20 @@ public sealed partial class TelegramWebhookController
         if(notice.Channel!=ShippingTrackingNotices.Channel||notice.CustomerId!=data.CustomerId||notice.Recipient!=data.ChatId||
             data.ChatId!=_options.ShippingChatId.Trim()||!await _db.NotificationOutbox.AsNoTracking().AnyAsync(n=>n.Id==notice.Id&&n.Channel==ShippingTrackingNotices.Channel&&!n.IsDeleted,ct)||
             !await ShippingTrackingNotices.SourceMatchesAsync(_db,data,ct))throw new InvalidOperationException("Tracking button address scope mismatch");
+        var manualSources=await ManualShippingAddresses.SourcesAsync(_db,_options,ct);
+        var manual=manualSources.SingleOrDefault(s=>s.Root.CustomerId==data.CustomerId&&s.Root.MessageId==data.SourceMessageId&&s.Root.ChatId==data.ChatId);
+        if(manual is not null)
+        {
+            await ManualShippingAddresses.CompleteAsync(_db,manual,null,"acknowledged-tracking-delivery",ct);
+            var manualRows=await ManualAddressButtonsAsync(manual,true,ct);
+            var updated=await _sender.EditReplyMarkupAsync(data.ChatId,data.SourceMessageId,manualRows,ct);
+            if(!updated.IsSuccessful&&!IsTelegramMessageUnchanged(updated.Error))
+            {
+                if(updated.Error?.Contains("message to edit not found",StringComparison.OrdinalIgnoreCase)==true)throw new ShippingTrackingNotices.AddressMessageMissingException();
+                throw new ShippingTrackingNotices.ButtonRetryException(Math.Max(30,updated.RetryAfterSeconds??30));
+            }
+            return;
+        }
         var roots=await _db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==ShippingReferenceChannel&&n.EventType=="AddressReferences"&&n.CustomerId==data.CustomerId&&n.Recipient==data.ChatId)
             .OrderByDescending(n=>n.CreatedAt).ToArrayAsync(ct);
         var matches=roots.Select(n=>(Row:n,Root:JsonSerializer.Deserialize<ShippingReferenceContext>(n.Payload)!))

@@ -64,10 +64,22 @@ public static class TrackingPreparedAddresses
                 catch(JsonException){ /* Unknown delivery metadata cannot close a source. */ }
             }
         }
+        var manuallyClosed=new HashSet<long>();
+        var completions=await db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==ZibasheERP.API.Telegram.ManualShippingAddresses.Channel&&n.Recipient==shippingChat&&n.Status==NotificationOutboxStatus.Processed).ToArrayAsync(ct);
+        foreach(var completion in completions)
+        {
+            try
+            {
+                var d=JsonSerializer.Deserialize<ZibasheERP.API.Telegram.ManualShippingAddresses.Completion>(completion.Payload);
+                if(d is not null&&completion.Id==ZibasheERP.API.Telegram.ManualShippingAddresses.Key(d.ReferenceId)&&completion.CustomerId==d.CustomerId&&d.ChatId==shippingChat&&
+                    roots.Any(r=>r.Row.Id==d.ReferenceId&&r.Data.CustomerId==d.CustomerId&&r.Data.AddressId==d.AddressId&&r.Data.MessageId==d.MessageId))manuallyClosed.Add(d.MessageId);
+            }
+            catch(JsonException){ /* Invalid completion metadata cannot close an address. */ }
+        }
         var result=new List<PreparedTrackingAddress>();
         foreach(var (row,r) in roots.OrderByDescending(r=>r.Row.CreatedAt))
         {
-            if(deliveredSources.Contains(r.MessageId!.Value))continue;
+            if(deliveredSources.Contains(r.MessageId!.Value)||manuallyClosed.Contains(r.MessageId.Value))continue;
             if(!addresses.TryGetValue(r.AddressId!.Value,out var address)||address.CustomerId!=r.CustomerId)continue;
             if(r.RequestId.HasValue?!open.Contains(r.RequestId.Value):r.ItemIds.Length>0&&!r.ItemIds.All(ready.Contains))continue;
             if(sent.Any(d=>d.CustomerId==r.CustomerId&&d.SentAt>=row.CreatedAt&&
