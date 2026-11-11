@@ -33,6 +33,7 @@ if(args.Contains("--partial-invoice-cancellation"))
 if(args.Contains("--tracking-address-notices"))
 {
     await ShippingTrackingNoticeTests.Run(Check);
+    await ShippingNameWarningTests.Run(Check);
     await ShippingReferenceTests.Run(Check);
     await TrackingRetryTests.Run(Check);
     Console.WriteLine("Tracking address notice tests passed.");
@@ -279,6 +280,7 @@ await TrackingAddressNameTests.Run(Check);
 await TrackingRetryTests.Run(Check);
 await ShippingPackageTests.Run(Check);
 await ShippingTrackingNoticeTests.Run(Check);
+await ShippingNameWarningTests.Run(Check);
 await GiftParcelMembershipTests.Run(Check);
 await SharedShippingTests.Run(Check);
 await GroupChatReplyTests.Run(Check);

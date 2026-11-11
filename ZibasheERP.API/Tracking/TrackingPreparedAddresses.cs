@@ -14,10 +14,12 @@ public static class TrackingPreparedAddresses
     private sealed record Root(Guid CustomerId,Guid? RequestId,Guid[] ItemIds,string ChatId,string Kind,
         long? MessageId,bool Installed,Guid? AddressId);
 
-    public static async Task<PreparedTrackingAddress[]> LoadAsync(AppDbContext db,string shippingChat,CancellationToken ct,DateTime? sourceAsOf=null)
+    public static Task<PreparedTrackingAddress[]> LoadAsync(AppDbContext db,string shippingChat,CancellationToken ct,DateTime? sourceAsOf=null)=>LoadCoreAsync(db,shippingChat,ct,sourceAsOf,false);
+    public static Task<PreparedTrackingAddress[]> LoadForNameWarningsAsync(AppDbContext db,string shippingChat,CancellationToken ct)=>LoadCoreAsync(db,shippingChat,ct,null,true);
+    private static async Task<PreparedTrackingAddress[]> LoadCoreAsync(AppDbContext db,string shippingChat,CancellationToken ct,DateTime? sourceAsOf,bool forNameWarnings)
     {
         if(string.IsNullOrWhiteSpace(shippingChat)||!shippingChat.StartsWith('-'))return [];
-        var asOf=sourceAsOf??DateTime.UtcNow;var since=asOf.AddDays(-45);
+        var asOf=sourceAsOf??DateTime.UtcNow;var since=forNameWarnings?DateTime.MinValue:asOf.AddDays(-45);
         var rows=await db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel=="ShippingReferenceContext"&&
             n.EventType=="AddressReferences"&&n.Recipient==shippingChat&&n.CreatedAt>=since&&n.CreatedAt<=asOf).ToArrayAsync(ct);
         var roots=new List<(NotificationOutbox Row,Root Data)>();
@@ -29,7 +31,7 @@ public static class TrackingPreparedAddresses
         }
         var addressIds=roots.Select(r=>r.Data.AddressId!.Value).Distinct().ToArray();
         var addresses=await db.Addresses.AsNoTracking().Include(a=>a.Customer).Where(a=>!a.IsDeleted&&(a.UpdatedAt??a.CreatedAt)<=asOf&&addressIds.Contains(a.Id)&&a.Customer!=null&&!a.Customer.IsDeleted&&
-            db.CustomerTelegramGroups.Any(g=>g.CustomerId==a.CustomerId&&!g.IsDeleted&&g.IsActive)).ToDictionaryAsync(a=>a.Id,ct);
+            (forNameWarnings||db.CustomerTelegramGroups.Any(g=>g.CustomerId==a.CustomerId&&!g.IsDeleted&&g.IsActive))).ToDictionaryAsync(a=>a.Id,ct);
         var ids=roots.SelectMany(r=>r.Data.ItemIds).Distinct().ToArray();
         var ready=(await db.OrderItems.AsNoTracking().Where(i=>ids.Contains(i.Id)&&!i.IsDeleted&&i.Order!=null&&!i.Order.IsDeleted&&i.Order.Status!=OrderStatus.Cancelled&&i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null)
             .Select(i=>i.Id).ToArrayAsync(ct)).ToHashSet();
@@ -51,13 +53,26 @@ public static class TrackingPreparedAddresses
         }
         var customers=roots.Select(r=>r.Data.CustomerId).Distinct().ToArray();
         var sent=await db.TrackingDispatches.AsNoTracking().Where(d=>customers.Contains(d.CustomerId!.Value)&&!d.IsDeleted&&d.Status==TrackingDispatchStatus.Sent&&d.SentAt>=since)
-            .Select(d=>new{d.CustomerId,d.ShippingRequestId,d.SentAt}).ToArrayAsync(ct);
+            .Select(d=>new{d.CustomerId,d.ShippingRequestId,d.SentAt,SourceAsOf=d.ImportBatch!.CreatedAt}).ToArrayAsync(ct);
+        var deliveredSources=new HashSet<long>();
+        if(forNameWarnings)
+        {
+            var notices=await db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==ZibasheERP.API.Telegram.ShippingTrackingNotices.Channel&&n.Recipient==shippingChat).Select(n=>new{n.CustomerId,n.Payload}).ToArrayAsync(ct);
+            foreach(var row in notices)
+            {
+                try{var data=JsonSerializer.Deserialize<ZibasheERP.API.Telegram.ShippingTrackingNotices.Data>(row.Payload);if(data is not null&&data.CustomerId==row.CustomerId&&data.ChatId==shippingChat&&data.SourceMessageId>0)deliveredSources.Add(data.SourceMessageId);}
+                catch(JsonException){ /* Unknown delivery metadata cannot close a source. */ }
+            }
+        }
         var result=new List<PreparedTrackingAddress>();
         foreach(var (row,r) in roots.OrderByDescending(r=>r.Row.CreatedAt))
         {
+            if(deliveredSources.Contains(r.MessageId!.Value))continue;
             if(!addresses.TryGetValue(r.AddressId!.Value,out var address)||address.CustomerId!=r.CustomerId)continue;
             if(r.RequestId.HasValue?!open.Contains(r.RequestId.Value):r.ItemIds.Length>0&&!r.ItemIds.All(ready.Contains))continue;
-            if(sent.Any(d=>d.CustomerId==r.CustomerId&&d.SentAt>=row.CreatedAt&&(!r.RequestId.HasValue||d.ShippingRequestId==r.RequestId)))continue;
+            if(sent.Any(d=>d.CustomerId==r.CustomerId&&d.SentAt>=row.CreatedAt&&
+                (r.RequestId.HasValue?d.ShippingRequestId==r.RequestId:!forNameWarnings||d.ShippingRequestId is null&&row.CreatedAt<=d.SourceAsOf&&
+                    roots.Where(x=>x.Data.CustomerId==r.CustomerId&&x.Data.RequestId is null&&x.Row.CreatedAt<=d.SourceAsOf).Select(x=>x.Data.AddressId).Distinct().Count()==1)))continue;
             result.Add(new(row.Id,r.CustomerId,address.Id,r.RequestId,address.ReceiverName,address.City,address.FullAddress,
                 address.Customer!.FullName,address.Customer.Username??"",r.MessageId!.Value,row.CreatedAt));
         }
