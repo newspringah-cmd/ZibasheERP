@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an approved two-hour perfume offer once; refresh its caption every minute.
+"""Publish approved hourly offers, refresh captions, and remind the group every 15 minutes.
 
 The API owns exact-time pricing and the permanent invoice snapshot. This worker
 never changes list prices, orders, invoices, or schedules for other publishers.
@@ -19,12 +19,15 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from zoneinfo import ZoneInfo
 
 REPO = Path('/opt/zibashe/app/ZibasheERP')
 STATE = Path.home() / '.local/state/zibashe-flash-sales'
 GROUP = -1001283018740
 CHANNEL = -1001236168661
 PERSIAN = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
+TEHRAN = ZoneInfo('Asia/Tehran')
+REPOST_INTERVAL = 15 * 60
 
 
 def timestamp(value):
@@ -34,7 +37,11 @@ def timestamp(value):
 
 def caption(offer, now):
     if offer.get('caption'):
-        return offer['caption']
+        text = offer['caption']
+        if offer['isActive'] and now < timestamp(offer['endsAtUtc']):
+            line = remaining_caption(offer) + '\n'
+            return text.replace('⏳', line + '⏳', 1) if '⏳' in text else text + '\n' + line.rstrip()
+        return text
     if not offer['isActive'] or now >= timestamp(offer['endsAtUtc']):
         reason = 'ظرفیت لیست تکمیل شد' if offer['remainingVolume'] <= 0 else 'مهلت دو ساعته به پایان رسید'
         return (f'⏰ <b>{reason}</b>\n\n'
@@ -51,10 +58,18 @@ def caption(offer, now):
             'با حال‌وهوای رزبری، وانیل و شکر 🍓🤍\n\n'
             '🎁 <b>۵۰٪ تخفیف روی مبلغ عطر</b>\n'
             f'💰 <b>قیمت هر میل با تخفیف: {price} تومان</b>\n\n'
+            f'{remaining_caption(offer)}\n'
             f'⏳ <b>زمان باقی‌مانده: {timer}</b>\n'
             'برای استفاده از تخفیف، ثبت نهایی آیتم باید قبل از پایان مهلت انجام بشه.\n\n'
             'اگه رایحه‌های شیرین و میوه‌ای رو دوست داری، این فرصت مخصوص توئه ✨\n\n'
             f'👇 <a href="{offer["listUrl"]}">مشاهدهٔ لیست ۴۵۵۹ و ثبت خرید</a>')
+
+
+def remaining_caption(offer):
+    amount = format(Decimal(str(offer['remainingVolume'])), 'f')
+    if '.' in amount:
+        amount = amount.rstrip('0').rstrip('.')
+    return '📦 <b>باقی‌مانده: ' + amount.replace('.', '٫').translate(PERSIAN) + ' میل</b>'
 
 
 def valid_source(offer):
@@ -94,10 +109,11 @@ def save(path, value):
 
 
 class Rejected(Exception):
-    def __init__(self, code, unchanged=False, missing=False):
+    def __init__(self, code, unchanged=False, missing=False, retry_after=60):
         self.code = code
         self.unchanged = unchanged
         self.missing = missing
+        self.retry_after = max(60, int(retry_after))
         super().__init__(f'Request rejected ({code})')
 
 
@@ -118,13 +134,16 @@ class Transport:
         except urllib.error.HTTPError as error:
             # HTTP rejection is an acknowledged failure, unlike an unknown send timeout.
             unchanged = missing = False
+            retry_after = 60
             try:
-                detail = json.loads(error.read(4096)).get('description', '')
+                body = json.loads(error.read(4096))
+                detail = body.get('description', '')
+                retry_after = body.get('parameters', {}).get('retry_after', 60)
                 unchanged = error.code == 400 and 'message is not modified' in detail.lower()
                 missing = error.code == 400 and any(value in detail.lower() for value in ('message_id_invalid', 'message to edit not found'))
             except Exception:
                 pass
-            raise Rejected(error.code, unchanged, missing) from None
+            raise Rejected(error.code, unchanged, missing, retry_after) from None
         except Exception:
             raise RuntimeError('Remote response unknown') from None
 
@@ -135,7 +154,7 @@ class Transport:
     def telegram(self, method, payload):
         result = self.request('https://api.telegram.org/bot' + self.cfg['Telegram__BotToken'] + '/' + method, payload)
         if not result.get('ok'):
-            raise Rejected(result.get('error_code', 0))
+            raise Rejected(result.get('error_code', 0), retry_after=result.get('parameters', {}).get('retry_after', 60))
         return result['result']
 
 
@@ -192,7 +211,7 @@ def publish(transport, root, campaign_id, now=time.time, destination=GROUP):
     return sent
 
 
-def tick(transport, root, campaign_id, now=time.time, destination=GROUP):
+def tick(transport, root, campaign_id, now=time.time, destination=GROUP, bind_message=True):
     if destination not in (GROUP, CHANNEL):
         raise ValueError('Unapproved destination')
     if (root / 'finished.json').exists():
@@ -205,7 +224,7 @@ def tick(transport, root, campaign_id, now=time.time, destination=GROUP):
         raise ValueError('Saved publication receipt belongs to another destination')
     offer = transport.api(campaign_id)
     validate(offer, campaign_id, require_media=now() < timestamp(offer['endsAtUtc']))
-    if destination == GROUP:
+    if destination == GROUP and bind_message:
         transport.api(campaign_id + '/message', {'messageId': sent['message_id']})
     text = caption(offer, now())
     updated = root / 'last-edit.json'
@@ -226,6 +245,69 @@ def tick(transport, root, campaign_id, now=time.time, destination=GROUP):
         save(updated, {'caption': text, 'at': now()})
     if now() >= timestamp(offer['endsAtUtc']):
         save(root / 'finished.json', {'at': now(), 'message_id': sent['message_id']})
+
+
+def reposts(transport, root, campaign_id, now=time.time):
+    """Called under run.lock. Refresh prior reminders, then send at most one due photo.
+
+    An unknown send outcome blocks later sends for this campaign pending review;
+    durable receipts survive crashes without rebinding the original campaign post.
+    Missed intervals (including quiet hours) are never replayed in a burst.
+    """
+    if not (root / 'send-receipt.json').exists():
+        return
+    current = now()
+    directories = sorted((root / 'reposts').glob('*'))
+    if (root / 'finished.json').exists() and all((p / 'finished.json').exists() for p in directories):
+        return
+    quiet = dt.datetime.fromtimestamp(current, TEHRAN).hour < 6
+    if quiet and not directories:
+        return
+    pending = False
+    last_sent = timestamp(transport.api(campaign_id)['startsAtUtc'])
+    original_intent = root / 'send-intent.json'
+    if original_intent.exists():
+        last_sent = max(last_sent, json.loads(original_intent.read_text())['at'])
+    for directory in directories:
+        receipt = directory / 'send-receipt.json'
+        if receipt.exists():
+            sent = json.loads(receipt.read_text())
+            last_sent = max(last_sent, sent['at'])
+            try:
+                tick(transport, directory, campaign_id, now=now, bind_message=False)
+            except Exception as error:
+                save(directory / 'last-error.json', {'type': type(error).__name__, 'at': current})
+        elif (directory / 'send-intent.json').exists():
+            pending = True
+    if pending:
+        raise RuntimeError('Reminder outcome unknown; manual review required')
+    if quiet or current - last_sent < REPOST_INTERVAL:
+        return
+    cooldown = root / 'repost-cooldown.json'
+    if cooldown.exists() and json.loads(cooldown.read_text())['until'] > current:
+        return
+    offer = transport.api(campaign_id)  # Re-read remaining volume and the rollover source immediately before sending.
+    validate(offer, campaign_id, require_media=offer['isActive'])
+    if not offer['isActive'] or offer['remainingVolume'] <= 0 or not timestamp(offer['startsAtUtc']) <= current < timestamp(offer['endsAtUtc']):
+        return
+    text = caption(offer, current)
+    if len(text.encode('utf-16-le')) // 2 > 1024:
+        raise ValueError('Reminder caption exceeds Telegram limit')
+    directory = root / 'reposts' / str(int(current // REPOST_INTERVAL))
+    intent = directory / 'send-intent.json'
+    save(intent, {'at': current, 'campaign_id': campaign_id, 'destination': GROUP})
+    try:
+        sent = transport.telegram('sendPhoto', {'chat_id': GROUP, 'photo': offer['telegramPhotoFileId'],
+            'caption': text, 'parse_mode': 'HTML', 'reply_markup': markup(offer, current)})
+    except Rejected as error:
+        save(directory / 'send-rejected.json', {'http_status': error.code, 'at': current})
+        save(cooldown, {'until': current + error.retry_after})
+        intent.unlink()
+        raise
+    if sent.get('chat', {}).get('id') != GROUP or type(sent.get('message_id')) is not int:
+        raise RuntimeError('Reminder receipt unavailable; manual review required')
+    save(directory / 'send-receipt.json', {'message_id': sent['message_id'], 'chat': {'id': GROUP}, 'at': now()})
+    save(directory / 'last-edit.json', {'caption': text, 'at': current})
 
 
 class UnknownAnnouncement(RuntimeError):
@@ -315,6 +397,12 @@ def main():
                     # One destination's failure cannot stall the other countdown.
                     save(target / 'last-error.json', {'type': type(error).__name__, 'at': time.time()})
             lifecycle = root / 'automatic-lifecycle.json'
+            if (root / 'send-receipt.json').exists():
+                try:
+                    transport = transport or Transport()
+                    reposts(transport, root, campaign_id)
+                except Exception as error:
+                    save(root / 'repost-error.json', {'type': type(error).__name__, 'at': time.time()})
             if lifecycle.exists() and not (root / 'end-announcements-complete.json').exists():
                 try:
                     transport = transport or Transport()

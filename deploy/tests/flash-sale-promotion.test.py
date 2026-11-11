@@ -157,7 +157,8 @@ class Tests(unittest.TestCase):
         self.t.offer.update(code=9876,caption='Approved different perfume and discount',thankYouText='Thanks for the new offer')
         self.publish()
         sent=next(payload for method,payload in self.t.calls if method=='sendPhoto')
-        self.assertEqual(sent['caption'],'Approved different perfume and discount')
+        self.assertIn('Approved different perfume and discount', sent['caption'])
+        self.assertIn('باقی‌مانده: ۱۳۶ میل', sent['caption'])
 
     def test_natural_end_sends_thanks_to_group_and_channel_exactly_once(self):
         self.publish()
@@ -218,6 +219,121 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'another destination'):
             m.publish(self.t, self.root, OFFER['id'], lambda: START, destination=m.CHANNEL)
         self.assertEqual([name for name, _ in self.t.calls].count('sendPhoto'), 1)
+
+
+class RepostTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / OFFER['id']
+        self.t = Transport()
+        self.start = m.timestamp('2026-10-29T06:30:00Z')  # 10:00 Tehran
+        self.t.offer.update(startsAtUtc='2026-10-29T06:30:00Z', endsAtUtc='2026-10-29T22:00:00Z',
+                            caption='⚡️ پیشنهاد ویژه\n⏳ تایمر')
+        m.publish(self.t, self.root, OFFER['id'], lambda: self.start)
+        self.bound = self.t.bind_calls
+
+    def run_at(self, seconds):
+        m.reposts(self.t, self.root, OFFER['id'], lambda: self.start + seconds)
+
+    def sends(self):
+        return [p for name, p in self.t.calls if name == 'sendPhoto']
+
+    def test_fifteen_minutes_and_restart_deduplication_group_only(self):
+        self.run_at(899)
+        self.assertEqual(len(self.sends()), 1)
+        self.run_at(900)
+        self.run_at(900)
+        self.run_at(1799)
+        self.assertEqual(len(self.sends()), 2)
+        self.run_at(1800)
+        self.assertEqual(len(self.sends()), 3)
+        self.assertTrue(all(p['chat_id'] == m.GROUP for p in self.sends()))
+        self.assertEqual(self.t.bind_calls, self.bound)
+
+    def test_live_remainder_and_rollover_link_and_photo(self):
+        self.t.offer.update(remainingVolume=1.5, listUrl='https://t.me/zibasheperfume/99999',
+                            telegramPhotoFileId='new-cycle-photo')
+        self.run_at(900)
+        sent = self.sends()[-1]
+        self.assertIn('باقی‌مانده: ۱٫۵ میل', sent['caption'])
+        self.assertEqual(sent['photo'], 'new-cycle-photo')
+        self.assertEqual(sent['reply_markup']['inline_keyboard'][0][0]['url'], self.t.offer['listUrl'])
+
+    def test_prior_reminder_countdown_and_remainder_refresh_until_end(self):
+        self.run_at(900)
+        self.t.offer.update(remainingVolume=4, caption='جدید\n⏳ تایمر جدید')
+        self.run_at(960)
+        edits = [p for method, p in self.t.calls if method == 'editMessageCaption']
+        self.assertIn('باقی‌مانده: ۴ میل', edits[-1]['caption'])
+        self.t.offer.update(isActive=False, endsAtUtc='2026-10-29T06:47:00Z', caption='پایان پروموشن')
+        self.run_at(1020)
+        self.assertTrue(next((self.root / 'reposts').glob('*/finished.json')).exists())
+        self.assertEqual(len(self.sends()), 2)
+
+    def test_expired_or_full_or_inactive_does_not_send(self):
+        for updates in [dict(remainingVolume=0), dict(isActive=False),
+                        dict(endsAtUtc='2026-10-29T06:45:00Z'),
+                        dict(startsAtUtc='2026-10-30T06:30:00Z')]:
+            original = copy.deepcopy(self.t.offer)
+            self.t.offer.update(updates)
+            self.run_at(900)
+            self.t.offer = original
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_tehran_midnight_to_six_and_no_catchup_burst(self):
+        self.t.offer['endsAtUtc'] = '2026-10-30T04:00:00Z'
+        for instant in ['2026-10-29T20:30:00Z', '2026-10-30T02:29:59Z']:
+            m.reposts(self.t, self.root, OFFER['id'], lambda: m.timestamp(instant))
+        self.assertEqual(len(self.sends()), 1)
+        wake = m.timestamp('2026-10-30T02:30:00Z')
+        for _ in range(3):
+            m.reposts(self.t, self.root, OFFER['id'], lambda: wake)
+        self.assertEqual(len(self.sends()), 2)
+        m.reposts(self.t, self.root, OFFER['id'], lambda: wake + 899)
+        self.assertEqual(len(self.sends()), 2)
+        m.reposts(self.t, self.root, OFFER['id'], lambda: wake + 900)
+        self.assertEqual(len(self.sends()), 3)
+
+    def test_before_midnight_allowed(self):
+        self.run_at(m.timestamp('2026-10-29T20:29:59Z') - self.start)
+        self.assertEqual(len(self.sends()), 2)
+
+    def test_unknown_delivery_blocks_later_intervals(self):
+        self.t.fail_send = TimeoutError()
+        with self.assertRaises(TimeoutError):
+            self.run_at(900)
+        self.t.fail_send = None
+        with self.assertRaisesRegex(RuntimeError, 'unknown'):
+            self.run_at(1800)
+        self.assertEqual(len(self.sends()), 2)
+
+    def test_acknowledged_rejection_honors_retry_after(self):
+        self.t.fail_send = m.Rejected(429, retry_after=1200)
+        with self.assertRaises(m.Rejected):
+            self.run_at(900)
+        self.t.fail_send = None
+        self.run_at(2099)
+        self.assertEqual(len(self.sends()), 2)
+        self.run_at(2100)
+        self.assertEqual(len(self.sends()), 3)
+
+    def test_unpublished_campaign_never_starts_automatically(self):
+        m.reposts(self.t, self.root / 'unpublished', OFFER['id'], lambda: self.start + 900)
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_receipt_survives_crash_without_double_send(self):
+        self.run_at(900)
+        (next((self.root / 'reposts').glob('*/last-edit.json'))).unlink()
+        self.run_at(901)
+        self.assertEqual(len(self.sends()), 2)
+
+    def test_oversized_caption_rejected_before_send_intent(self):
+        self.t.offer['caption'] = 'x' * 1024
+        with self.assertRaisesRegex(ValueError, 'limit'):
+            self.run_at(900)
+        self.assertEqual(len(self.sends()), 1)
+        self.assertFalse(list((self.root / 'reposts').glob('*/send-intent.json')))
 
 
 if __name__ == '__main__':

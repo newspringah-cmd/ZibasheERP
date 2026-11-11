@@ -79,6 +79,11 @@ jobs:
       - name: Test scheduled perfume promotions
         run: python3 deploy/tests/marketing-publisher.test.py
 
+      - name: Test hourly promotion reminders and admin publication
+        run: |
+          python3 deploy/tests/flash-sale-promotion.test.py
+          python3 deploy/tests/admin-promotions.test.py
+
       - name: Validate Caddy template rendering
         run: |
           bash deploy/render-caddyfile.sh erp.zibashe.ir n8n.zibashe.ir ops@zibashe.ir
