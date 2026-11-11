@@ -11,6 +11,12 @@ if (args.Contains("--initialize-test-database"))
 }
 
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
+if(args.Contains("--hourly-promotions"))
+{
+    await HourlyPromotionTests.Run(Check);
+    await FlashSaleTests.RunAsync(Check);
+    return;
+}
 if(args.Contains("--shared-member-photos"))
 {
     await SharedShippingTests.Run(Check);

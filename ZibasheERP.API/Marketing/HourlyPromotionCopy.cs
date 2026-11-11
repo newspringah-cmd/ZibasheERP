@@ -20,7 +20,13 @@ public static class HourlyPromotionCopy
         var remaining = Math.Max(0, (int)Math.Ceiling((promotion.EndsAtUtc - now).TotalMinutes));
         var timer = Number(remaining / 60, "00") + ":" + Number(remaining % 60, "00");
         var label = Number(promotion.RequestedDurationMinutes / 60m) + " ساعت";
-        return $"⚡️ <b>{label} فرصت خرید عطر با تخفیف ویژه!</b>\n\nزیباشی‌های عزیزم 🌸\n" +
+        var headline=$"{label} فرصت خرید عطر با تخفیف ویژه!";
+        if((promotion.EndsAtUtc-promotion.StartsAtUtc).TotalMinutes>promotion.RequestedDurationMinutes+1)
+        {
+            var localEnd=TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.SpecifyKind(promotion.EndsAtUtc,DateTimeKind.Utc),"Asia/Tehran");
+            headline=$"فرصت خرید عطر با تخفیف ویژه تا ساعت {Number(localEnd.Hour,"00")}:{Number(localEnd.Minute,"00")} روز {ZibasheERP.API.AddressLabels.ShippingAddressDisplay.RegisteredDate(promotion.EndsAtUtc)}";
+        }
+        return $"⚡️ <b>{headline}</b>\n\nزیباشی‌های عزیزم 🌸\n" +
             $"این بار نوبت <b>{Name(list)}</b> شده 🤍\n\n🎁 <b>{Discount(promotion)}</b>\n" +
             $"💰 قیمت عادی هر میل: {Number(promotion.OriginalPricePerMl, "#,0.##")} تومان\n" +
             $"💰 <b>قیمت هر میل با تخفیف: {Number(promotion.DiscountedPricePerMl, "#,0.##")} تومان</b>\n\n" +

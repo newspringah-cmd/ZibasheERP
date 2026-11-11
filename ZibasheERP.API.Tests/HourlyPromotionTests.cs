@@ -20,6 +20,15 @@ public static class HourlyPromotionTests
     {
         var offer=new FlashSalePromotion {OriginalPricePerMl=20000,DiscountPercent=0,DiscountAmountPerMl=3500};
         check(offer.DiscountedPricePerMl==16500,"fixed per-ml discount subtracts the approved amount");
+        var timed=new FlashSalePromotion{StartsAtUtc=new DateTime(2026,11,11,20,20,0),EndsAtUtc=new DateTime(2026,11,12,1,20,0),RequestedDurationMinutes=300,OriginalPricePerMl=764000,DiscountAmountPerMl=200000};
+        var named=new SalesList{PublicCode=5867,EnglishName="Synthetic extension",TotalVolume=100};var clock=new DateTime(2026,11,11,22,0,0);
+        check(HourlyPromotionCopy.Caption(timed,named,clock).Contains("۵ ساعت فرصت"),"unextended promotions retain their original advertised duration");
+        timed.EndsAtUtc=new DateTime(2026,11,12,8,29,0);
+        var extended=HourlyPromotionCopy.Caption(timed,named,clock);
+        check(extended.Contains("ساعت ۱۱:۵۹ روز ۱۴۰۵/۰۸/۲۱")&&extended.Contains("زمان باقی‌مانده: ۱۰:۲۹")&&!extended.Contains("۵ ساعت فرصت"),
+            "an extended promotion displays its exact Tehran deadline and Persian date instead of the obsolete original duration");
+        check(timed.RequestedDurationMinutes==300&&timed.DiscountedPricePerMl==564000&&!HourlyPromotionCopy.Caption(timed,named,timed.EndsAtUtc).Contains("زمان باقی‌مانده"),
+            "deadline display preserves original campaign settings and ends at the same exclusive pricing boundary");
         var connection=Environment.GetEnvironmentVariable("TRACKING_TEST_DB_CONNECTION");
         if(string.IsNullOrWhiteSpace(connection))return;
         var target=new SqlConnectionStringBuilder(connection);
