@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Domain.Enums;
@@ -14,7 +15,8 @@ public sealed class SharedShippingService(AppDbContext db)
 {
     public const string Channel = "SharedShippingParcel";
     public sealed record Parcel(Guid RequestId, Guid PrimaryCustomerId, Guid AddressId,
-        Guid[] CustomerIds, long Actor, DateTime CreatedAt, DateTime? ClosedAt = null);
+        Guid[] CustomerIds, long Actor, DateTime CreatedAt, DateTime? ClosedAt = null,string[]? LegacyUsernames=null,Guid? AddressReferenceId=null);
+    public sealed record Companion(Guid? CustomerId,string? LegacyUsername);
     public sealed record Preview(Parcel Parcel, Guid[] ItemIds, string Fingerprint);
     public static Guid ReceiptId(Guid request) => new(SHA256.HashData(Encoding.UTF8.GetBytes("shared-shipping:" + request))[..16]);
 
@@ -26,7 +28,9 @@ public sealed class SharedShippingService(AppDbContext db)
         try { parcel = JsonSerializer.Deserialize<Parcel>(row.Payload); }
         catch (JsonException) { throw new InvalidOperationException("اطلاعات پست مشترک نیازمند بررسی است."); }
         if (row.Channel != Channel || parcel is null || parcel.RequestId != request || row.CustomerId != parcel.PrimaryCustomerId ||
-            parcel.CustomerIds.Length is < 2 or > 20 || parcel.CustomerIds.Distinct().Count() != parcel.CustomerIds.Length ||
+            parcel.CustomerIds.Length<1 || parcel.CustomerIds.Length+(parcel.LegacyUsernames?.Length??0) is <2 or >20 ||
+            (parcel.LegacyUsernames??[]).Any(n=>n!=NormalizeLegacyUsername(n)) || (parcel.LegacyUsernames??[]).Distinct(StringComparer.OrdinalIgnoreCase).Count()!=(parcel.LegacyUsernames?.Length??0) ||
+            parcel.CustomerIds.Distinct().Count() != parcel.CustomerIds.Length ||
             !parcel.CustomerIds.Contains(parcel.PrimaryCustomerId))
             throw new InvalidOperationException("اطلاعات پست مشترک معتبر نیست؛ ارسال متوقف شد.");
         return parcel;
@@ -37,16 +41,33 @@ public sealed class SharedShippingService(AppDbContext db)
         .Include(i => i.Order).ThenInclude(o => o!.Customer).Include(i => i.SalesList)
         .Include(i => i.Perfume).Include(i => i.Bottle).Include(i => i.SourceSalesListRequest);
 
-    public async Task<Customer> ResolveCustomerAsync(string identity, CancellationToken ct = default)
+    public static string NormalizeLegacyUsername(string identity)
     {
-        var value = InvoiceCaptionIdentity.Digits(identity.Trim());
-        if (value.StartsWith("https://t.me/", StringComparison.OrdinalIgnoreCase)) value = value[13..];
-        var name = value.TrimStart('@').ToLowerInvariant();
-        var numeric = long.TryParse(value, out var id) && id > 0;
-        var customers = await db.Customers.AsNoTracking().Where(c => !c.IsDeleted &&
-            (numeric ? c.TelegramId == value : c.Username != null && c.Username.Replace("@", "").ToLower() == name)).Take(2).ToArrayAsync(ct);
-        if (customers.Length != 1) throw new InvalidOperationException("مشتری یکتا پیدا نشد؛ آیدی ثبت‌شدهٔ مشتری را وارد کنید.");
+        var value=new string(identity.Trim().Where(c=>System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)!=System.Globalization.UnicodeCategory.Format).ToArray());
+        if(value.StartsWith("https://t.me/",StringComparison.OrdinalIgnoreCase))value=value[13..].TrimEnd('/');
+        var name=value.TrimStart('@').ToLowerInvariant();
+        if(!Regex.IsMatch(name,@"^[a-z][a-z0-9_]{4,31}$"))throw new InvalidOperationException("برای همراه بدون پرونده، آیدی تلگرام معتبر به صورت @username وارد کنید.");
+        return name;
+    }
+    private async Task<Customer[]> FindCustomersAsync(string identity,CancellationToken ct)
+    {
+        var value=InvoiceCaptionIdentity.Digits(identity.Trim());
+        if(value.StartsWith("https://t.me/",StringComparison.OrdinalIgnoreCase))value=value[13..].TrimEnd('/');
+        value=new string(value.Where(c=>System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)!=System.Globalization.UnicodeCategory.Format).ToArray());
+        var name=value.TrimStart('@').ToLowerInvariant();var numeric=long.TryParse(value,out var id)&&id>0;
+        return await db.Customers.AsNoTracking().Where(c=>!c.IsDeleted&&(numeric?c.TelegramId!=null&&c.TelegramId.Trim()==value:c.Username!=null&&c.Username.Trim().Replace("@","").ToLower()==name)).Take(2).ToArrayAsync(ct);
+    }
+    public async Task<Customer> ResolveCustomerAsync(string identity,CancellationToken ct=default)
+    {
+        var customers=await FindCustomersAsync(identity,ct);
+        if(customers.Length!=1)throw new InvalidOperationException(customers.Length==0?$"برای {identity} پروندهٔ مشتری پیدا نشد.":$"برای {identity} چند پرونده پیدا شد؛ آیدی عددی مشتری را وارد کنید.");
         return customers[0];
+    }
+    public async Task<Companion> ResolveCompanionAsync(string identity,CancellationToken ct=default)
+    {
+        var customers=await FindCustomersAsync(identity,ct);
+        if(customers.Length>1)throw new InvalidOperationException($"برای {identity} چند پرونده پیدا شد؛ برای جلوگیری از انتقال اقلام فرد اشتباه، آیدی عددی مشتری را وارد کنید.");
+        return customers.Length==1?new(customers[0].Id,null):new(null,NormalizeLegacyUsername(identity));
     }
 
     public async Task<Guid> ResolvePrimaryRequestAsync(Guid primary, Guid? selectedRequest, CancellationToken ct = default)
@@ -68,9 +89,10 @@ public sealed class SharedShippingService(AppDbContext db)
         return requests[0];
     }
 
-    public async Task<Preview> PreviewAsync(Guid request, Guid primary, Guid addressId, Guid[] memberIds, long actor, CancellationToken ct = default)
+    public async Task<Preview> PreviewAsync(Guid request, Guid primary, Guid addressId, Guid[] memberIds, long actor, CancellationToken ct = default,string[]? legacyUsernames=null)
     {
-        if (request == Guid.Empty || actor <= 0 || memberIds.Length is < 1 or > 19 || memberIds.Contains(primary) || memberIds.Distinct().Count() != memberIds.Length)
+        var requestedLegacy=(legacyUsernames??[]).Select(NormalizeLegacyUsername).ToArray();
+        if (request == Guid.Empty || actor <= 0 || memberIds.Length+requestedLegacy.Length is < 1 or > 19 || memberIds.Contains(primary) || memberIds.Distinct().Count() != memberIds.Length || requestedLegacy.Distinct().Count()!=requestedLegacy.Length)
             throw new InvalidOperationException("آیدی نفر اصلی و همراهان باید متفاوت و بدون تکرار باشند.");
         if(await db.TrackingDispatches.AnyAsync(d=>!d.IsDeleted&&d.ShippingRequestId==request&&
             (d.Status==TrackingDispatchStatus.Sending||d.Status==TrackingDispatchStatus.Sent||d.ImportBatch!.ConfirmedAt!=null||d.Deliveries.Any(x=>x.AttemptedAt!=null)),ct))
@@ -79,7 +101,11 @@ public sealed class SharedShippingService(AppDbContext db)
         if (existing is { ClosedAt: not null } || existing != null && (existing.PrimaryCustomerId != primary || existing.AddressId != addressId))
             throw new InvalidOperationException("این بسته بسته شده یا گیرندهٔ اصلی آن تغییر کرده است.");
         var customers = (existing?.CustomerIds ?? [primary]).Concat(memberIds).Distinct().Order().ToArray();
-        if (customers.Length > 20) throw new InvalidOperationException("حداکثر ۲۰ مشتری می‌توانند در یک بسته باشند.");
+        var legacy=(existing?.LegacyUsernames??[]).Concat(requestedLegacy).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray();
+        var knownNames=await db.Customers.AsNoTracking().Where(c=>customers.Contains(c.Id)&&!c.IsDeleted&&c.Username!=null).Select(c=>c.Username!.Replace("@","").ToLower()).ToArrayAsync(ct);
+        if(requestedLegacy.Any(n=>knownNames.Contains(n)))throw new InvalidOperationException("همراه یادداشتی نباید تکرار آیدی نفر اصلی یا اعضای ثبت‌شده باشد.");
+        legacy=legacy.Except(knownNames,StringComparer.OrdinalIgnoreCase).ToArray();
+        if (customers.Length+legacy.Length > 20) throw new InvalidOperationException("حداکثر ۲۰ مشتری می‌توانند در یک بسته باشند.");
         if (!await db.Addresses.AsNoTracking().AnyAsync(a => a.Id == addressId && a.CustomerId == primary && !a.IsDeleted, ct))
             throw new InvalidOperationException("آدرس ثبت‌شده متعلق به گیرندهٔ اصلی نیست.");
         var assigned = await Items(db, request).AsNoTracking().ToArrayAsync(ct);
@@ -95,15 +121,14 @@ public sealed class SharedShippingService(AppDbContext db)
                 i.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip).ToArrayAsync(ct);
             if (ready.Any(i => i.ShippingRequestId != null && i.ShippingRequestId != request))
                 throw new InvalidOperationException($"{InvoiceTransferService.Label(customer)} بستهٔ باز دیگری دارد؛ ابتدا عضویت آن بسته را تعیین تکلیف کنید.");
-            if (customerId != primary && ready.Length == 0) throw new InvalidOperationException($"{InvoiceTransferService.Label(customer)} آیتم آمادهٔ ارسال ندارد.");
             items.AddRange(ready.Where(i => i.ShippingRequestId == null));
         }
         var all = items.DistinctBy(i => i.Id).OrderBy(i => i.Id).ToArray();
-        if (all.Length == 0 || all.Any(i => i.FulfillmentStatus != OrderItemFulfillmentStatus.DecantedReadyToShip || i.ShippedAt != null))
+        if (all.Any(i => i.FulfillmentStatus != OrderItemFulfillmentStatus.DecantedReadyToShip || i.ShippedAt != null))
             throw new InvalidOperationException("این بسته باید فقط شامل آیتم‌های آمادهٔ ارسال باشد.");
-        var parcel = new Parcel(request, primary, addressId, customers, actor, existing?.CreatedAt ?? DateTime.UtcNow);
+        var parcel = new Parcel(request, primary, addressId, customers, actor, existing?.CreatedAt ?? DateTime.UtcNow,LegacyUsernames:legacy,AddressReferenceId:existing?.AddressReferenceId);
         var address = await db.Addresses.AsNoTracking().SingleAsync(a => a.Id == addressId, ct);
-        var signature = JsonSerializer.Serialize(new { request, primary, addressId, address.UpdatedAt, address.ReceiverName, address.FullAddress, address.Mobile, address.PostalCode, address.City, customers,
+        var signature = JsonSerializer.Serialize(new { request, primary, addressId, address.UpdatedAt, address.ReceiverName, address.FullAddress, address.Mobile, address.PostalCode, address.City, customers, LegacyUsernames=legacy,
             Existing = existing, Items = all.Select(i => new { i.Id, i.UpdatedAt, i.OrderId, i.ShippingRequestId, i.RequestedVolumeMl,
                 i.FulfillmentStatus, i.ShippedAt, OrderOwner = i.Order!.CustomerId, RequestVersion = i.SourceSalesListRequest?.RowVersion }) });
         return new(parcel, all.Select(i => i.Id).ToArray(), Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature))));
@@ -125,7 +150,7 @@ public sealed class SharedShippingService(AppDbContext db)
             await db.SalesListRequests.FromSqlInterpolated($"SELECT * FROM SalesListRequests WITH(UPDLOCK,HOLDLOCK) WHERE Id={id}").AsNoTracking().SingleAsync(ct);
         db.ChangeTracker.Clear();
         var fresh = await PreviewAsync(request, preview.Parcel.PrimaryCustomerId, preview.Parcel.AddressId,
-            preview.Parcel.CustomerIds.Where(id => id != preview.Parcel.PrimaryCustomerId).ToArray(), actor, ct);
+            preview.Parcel.CustomerIds.Where(id => id != preview.Parcel.PrimaryCustomerId).ToArray(), actor, ct,preview.Parcel.LegacyUsernames);
         if (fresh.Fingerprint != preview.Fingerprint) throw new InvalidOperationException("اقلام، آدرس یا عضویت بسته تغییر کرده؛ پیش‌نمایش تازه بگیرید.");
         var now = DateTime.UtcNow;
         var since = await db.OrderItems.Where(i => i.ShippingRequestId == request && i.ShippingRequestedAt != null).MinAsync(i => i.ShippingRequestedAt, ct) ?? now;
@@ -136,11 +161,12 @@ public sealed class SharedShippingService(AppDbContext db)
             // The order's financial owner is unchanged; only its dispatch address follows this parcel.
             item.Order!.DeliveryAddressId = fresh.Parcel.AddressId; item.Order.UpdatedAt = now;
         }
+        var confirmedParcel=fresh.Parcel with{AddressReferenceId=addressReferenceId??fresh.Parcel.AddressReferenceId};
         var receipt = await db.NotificationOutbox.SingleOrDefaultAsync(n => n.Id == ReceiptId(request), ct);
         if (receipt is null) db.NotificationOutbox.Add(new() { Id=ReceiptId(request), CustomerId=fresh.Parcel.PrimaryCustomerId,
-            Channel=Channel, EventType="AdminSharedParcel", Recipient=request.ToString("N"), Payload=JsonSerializer.Serialize(fresh.Parcel),
+            Channel=Channel, EventType="AdminSharedParcel", Recipient=request.ToString("N"), Payload=JsonSerializer.Serialize(confirmedParcel),
             Status=NotificationOutboxStatus.Processed, CreatedAt=now, ProcessedAt=now });
-        else { receipt.Payload=JsonSerializer.Serialize(fresh.Parcel); receipt.UpdatedAt=now; }
+        else { receipt.Payload=JsonSerializer.Serialize(confirmedParcel); receipt.UpdatedAt=now; }
         if(addressReferenceId.HasValue)
         {
             var reference=await db.NotificationOutbox.SingleAsync(n=>n.Id==addressReferenceId&&!n.IsDeleted&&n.Channel=="ShippingReferenceContext",ct);
@@ -156,6 +182,6 @@ public sealed class SharedShippingService(AppDbContext db)
         }
         await db.SaveChangesAsync(ct);
         await ShippingPackageService.ValidatePackageAsync(db, request, fresh.Parcel.PrimaryCustomerId, ct);
-        await tx.CommitAsync(ct); return fresh.Parcel;
+        await tx.CommitAsync(ct); return confirmedParcel;
     }
 }

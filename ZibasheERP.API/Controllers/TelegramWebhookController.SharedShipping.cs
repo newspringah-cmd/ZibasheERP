@@ -33,7 +33,8 @@ public sealed partial class TelegramWebhookController
                 _shippingReferenceViewId=await OpenShippingReferenceViewAsync(new(primary.Id,request,items.Select(i=>i.Id).ToArray(),chat.ToString()),ct);
                 try
                 {
-                    foreach(var part in SplitTelegramMessage(await SharedShippingItemsTextAsync(items,ct)))await ShippingReferenceTextAsync(chat,part,ct);
+                    var parcel=await SharedShippingService.ReadAsync(_db,request,ct);
+                    foreach(var part in SplitTelegramMessage((parcel is null?string.Empty:await SharedShippingMembersTextAsync(parcel,items,ct))+await SharedShippingItemsTextAsync(items,ct)))await ShippingReferenceTextAsync(chat,part,ct);
                     await FinishShippingReferenceViewAsync(chat,ct);
                 }
                 finally{_shippingReferenceViewId=null;}
@@ -62,7 +63,7 @@ public sealed partial class TelegramWebhookController
             var context=JsonSerializer.Deserialize<ShippingReferenceContext>(row.Payload)!;
             await new SharedShippingService(_db).ConfirmAsync(draft.Preview,callback.From.Id,context.MessageId??0,ct,row.Id);
             SharedShippingDrafts.TryRemove(key,out _);
-            await _sender.SendInlineKeyboardAsync(chat.ToString(),"✅ پست مشترک ثبت شد.\nاقلام هر مشتری با حفظ مالکیت خودش به بستهٔ گیرندهٔ اصلی متصل شدند. همان پیام آدرس از صف به‌روز می‌شود؛ با ثبت رهگیری برای نفر اصلی، فقط اقلام همین بسته ارسال‌شده می‌شوند.",
+            await _sender.SendInlineKeyboardAsync(chat.ToString(),"✅ پست مشترک ثبت شد.\nهمراهان و یادداشت بسته ثبت شدند؛ فقط اقلام آمادهٔ موجود در سیستم با حفظ مالکیت خودشان به بستهٔ گیرندهٔ اصلی متصل شدند. همان پیام آدرس از صف به‌روز می‌شود؛ با ثبت رهگیری برای نفر اصلی، فقط اقلام همین بسته ارسال‌شده می‌شوند.",
                 [[new("↩️ منوی مدیریت","invoiceadmin:menu:main")]],ct);
         }
         catch(InvalidOperationException e){await SharedPrompt(chat,e.Message,ct);}
@@ -76,7 +77,7 @@ public sealed partial class TelegramWebhookController
         if(context.CustomerId!=draft.Primary||context.Kind!="root"||context.AddressId is null||context.MessageId is null||!context.Installed||row.Recipient!=_options.ShippingChatId.Trim())
             throw new InvalidOperationException("مرجع آدرس معتبر نیست؛ آدرس را دوباره در گروه آماده‌سازی ثبت کنید.");
         SharedShippingDrafts[(chat,user)]=draft with{Step="members",Reference=reference};
-        await SharedPrompt(chat,"آیدی نفرات همراه را بفرستید؛ هر آیدی در یک خط یا با فاصله.\nفقط اقلام آمادهٔ ارسال آن‌ها اضافه می‌شوند. آیدی نفر اصلی را دوباره ننویسید.",ct);
+        await SharedPrompt(chat,"آیدی نفرات همراه را بفرستید؛ هر آیدی در یک خط یا با فاصله.\nفقط اقلام آمادهٔ ارسال آن‌ها اضافه می‌شوند. اگر همراه آیتمی در سیستم جدید نداشته باشد، آیدی او در یادداشت پست مشترک ثبت می‌شود. آیدی نفر اصلی را دوباره ننویسید.",ct);
     }
 
     private async Task<bool> TryHandleSharedShippingMessageAsync(TelegramMessage message,CancellationToken ct)
@@ -103,7 +104,9 @@ public sealed partial class TelegramWebhookController
                     if(context.RequestId.HasValue)
                     {
                         var assigned=await SharedShippingService.Items(_db,context.RequestId.Value).AsNoTracking().ToArrayAsync(ct);
-                        if(assigned.Length==0||assigned.Any(i=>i.ShippedAt!=null||i.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped))continue;
+                        if(assigned.Any(i=>i.ShippedAt!=null||i.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped))continue;
+                        var existing=await SharedShippingService.ReadAsync(_db,context.RequestId.Value,ct);
+                        if(existing?.ClosedAt is not null||assigned.Length==0&&(existing is null||existing.PrimaryCustomerId!=customer.Id||existing.AddressId!=context.AddressId))continue;
                         if((await ShippingPackageService.ValidatePackageAsync(_db,context.RequestId.Value,null,ct)).Id!=customer.Id)continue;
                     }
                     options.Add((row.Id,context));
@@ -117,21 +120,56 @@ public sealed partial class TelegramWebhookController
             if(draft.Step!="members"||draft.Reference is null)throw new InvalidOperationException("از دکمه‌های مرحلهٔ فعلی استفاده کنید.");
             var identities=Regex.Split(text,@"[\s,،;؛]+").Where(s=>s.Length>0).ToArray();
             if(identities.Length is <1 or >19)throw new InvalidOperationException("آیدی ۱ تا ۱۹ نفر همراه را وارد کنید.");
-            var memberIds=new List<Guid>();foreach(var identity in identities)memberIds.Add((await service.ResolveCustomerAsync(identity,ct)).Id);
+            var memberIds=new List<Guid>();var legacy=new List<string>();
+            foreach(var identity in identities)
+            {
+                var companion=await service.ResolveCompanionAsync(identity,ct);
+                if(companion.CustomerId is Guid id)memberIds.Add(id);else legacy.Add(companion.LegacyUsername!);
+            }
             var reference=await _db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==draft.Reference&&!n.IsDeleted,ct);
             var selectedContext=JsonSerializer.Deserialize<ShippingReferenceContext>(reference.Payload)!;
             var request=await service.ResolvePrimaryRequestAsync(draft.Primary!.Value,selectedContext.RequestId,ct);
-            var preview=await service.PreviewAsync(request,draft.Primary.Value,selectedContext.AddressId!.Value,memberIds.ToArray(),message.From.Id,ct);
+            var preview=await service.PreviewAsync(request,draft.Primary.Value,selectedContext.AddressId!.Value,memberIds.ToArray(),message.From.Id,ct,legacy.ToArray());
             var items=await _db.OrderItems.AsNoTracking().Where(i=>preview.ItemIds.Contains(i.Id)).Include(i=>i.Order).ThenInclude(o=>o!.Customer)
                 .Include(i=>i.Perfume).Include(i=>i.SalesList).Include(i=>i.Bottle).Include(i=>i.SourceSalesListRequest).ToArrayAsync(ct);
             var primary=await _db.Customers.AsNoTracking().SingleAsync(c=>c.Id==draft.Primary,ct);
             var token=Guid.NewGuid().ToString("N")[..12];SharedShippingDrafts[key]=draft with{Step="confirm",Preview=preview,Token=token};
-            var caption=$"📦 پیش‌نمایش پست مشترک\nگیرندهٔ اصلی: {OrderCustomerLabel(primary)}\nحساب‌ها و فاکتورها جدا می‌مانند.\n\n"+await SharedShippingItemsTextAsync(items,ct);
+            var caption=$"📦 پیش‌نمایش پست مشترک\nگیرندهٔ اصلی: {OrderCustomerLabel(primary)}\nحساب‌ها و فاکتورها جدا می‌مانند.\n\n"+await SharedShippingMembersTextAsync(preview.Parcel,items,ct)+await SharedShippingItemsTextAsync(items,ct);
             foreach(var part in SplitTelegramMessage(caption))await _sender.SendAsync(chat.ToString(),part,ct);
-            await _sender.SendInlineKeyboardAsync(chat.ToString(),"عضویت اقلام بالا در بستهٔ گیرندهٔ اصلی تأیید شود؟",[[new("✅ ثبت پست مشترک",SharedShippingPrefix+"confirm:"+token)],[new("❌ انصراف",SharedShippingPrefix+"cancel")]],ct);
+            await _sender.SendInlineKeyboardAsync(chat.ToString(),"ثبت همراهان و اقلام موجود در بستهٔ گیرندهٔ اصلی تأیید شود؟",[[new("✅ ثبت پست مشترک",SharedShippingPrefix+"confirm:"+token)],[new("❌ انصراف",SharedShippingPrefix+"cancel")]],ct);
         }
         catch(InvalidOperationException e){await SharedPrompt(chat,e.Message,ct);}
         return true;
+    }
+
+    private async Task<bool> IsOpenLegacySharedAddressAsync(ShippingReferenceContext context,CancellationToken ct)
+    {
+        if(context.Kind!="root"||!context.Installed||context.RequestId is not Guid request||context.ItemIds.Length!=0||context.MessageId is not >0||context.ChatId!=_options.ShippingChatId.Trim())return false;
+        var parcel=await SharedShippingService.ReadAsync(_db,request,ct);
+        return parcel is {ClosedAt:null}&&parcel.PrimaryCustomerId==context.CustomerId&&parcel.AddressId==context.AddressId&&
+            !await SharedShippingService.Items(_db,request).AsNoTracking().AnyAsync(ct)&&
+            await ShippingTrackingNotices.SourceMatchesAsync(_db,new(context.CustomerId,context.ChatId,context.MessageId.Value,request),ct);
+    }
+
+    private async Task<string> SharedShippingMembersTextAsync(SharedShippingService.Parcel parcel,OrderItem[] items,CancellationToken ct)
+    {
+        var members=await _db.Customers.AsNoTracking().Where(c=>parcel.CustomerIds.Contains(c.Id)&&c.Id!=parcel.PrimaryCustomerId&&!c.IsDeleted).OrderBy(c=>c.Id).ToArrayAsync(ct);
+        var labels=members.Select(InvoiceTransferService.Label).Concat((parcel.LegacyUsernames??[]).Select(n=>"@"+n)).ToArray();
+        var withoutItems=new List<string>();var withoutGroups=new List<string>();
+        foreach(var member in members)
+        {
+            if(!await ShippingPackageService.CustomerItems(_db,member).AsNoTracking().AnyAsync(i=>items.Select(x=>x.Id).Contains(i.Id),ct))
+            {
+                withoutItems.Add(InvoiceTransferService.Label(member));
+                if(await _db.CustomerTelegramGroups.AsNoTracking().CountAsync(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==member.Id,ct)!=1)withoutGroups.Add(InvoiceTransferService.Label(member));
+            }
+        }
+        withoutItems.AddRange((parcel.LegacyUsernames??[]).Select(n=>"@"+n));
+        withoutGroups.AddRange((parcel.LegacyUsernames??[]).Select(n=>"@"+n));
+        var text="پست مشترک با: "+string.Join("، ",labels)+"\n";
+        if(withoutItems.Count>0)text+="همراهان بدون آیتم ثبت‌شده در سیستم جدید: "+string.Join("، ",withoutItems)+"\n";
+        if(withoutGroups.Count>0)text+="همراهان یادداشتی بدون مقصد تأییدشده: "+string.Join("، ",withoutGroups)+"؛ ارسال خودکار رهگیری به آن‌ها نیازمند اتصال گروه است.\n";
+        return text+"\n";
     }
 
     private async Task<string> SharedShippingItemsTextAsync(OrderItem[] items,CancellationToken ct,bool compact=false)
@@ -157,8 +195,9 @@ public sealed partial class TelegramWebhookController
         var address=await _db.Addresses.AsNoTracking().SingleAsync(a=>a.Id==parcel.AddressId&&a.CustomerId==customer.Id&&!a.IsDeleted,ct);
         var items=await SharedShippingService.Items(_db,context.RequestId.Value).AsNoTracking().Where(i=>i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null).ToArrayAsync(ct);
         var header=$"📦 درخواست ارسال مشترک\nگیرندهٔ اصلی: {ZibasheERP.API.AddressLabels.ShippingAddressDisplay.Identity(OrderCustomerLabel(customer),address)}\n\n{FormatAddressForDisplay(address)}\n\n";
-        var text=header+await SharedShippingItemsTextAsync(items,ct);
-        if(text.Length>3900)text=header+await SharedShippingItemsTextAsync(items,ct,true)+"\nبرای مشاهدهٔ تمام اقلام، دکمهٔ زیر را بزنید.";
+        var members=await SharedShippingMembersTextAsync(parcel,items,ct);
+        var text=header+members+await SharedShippingItemsTextAsync(items,ct);
+        if(text.Length>3900)text=header+members+await SharedShippingItemsTextAsync(items,ct,true)+"\nبرای مشاهدهٔ تمام اقلام، دکمهٔ زیر را بزنید.";
         var buttons=new List<IReadOnlyCollection<TelegramInlineButton>> {
             new[]{new TelegramInlineButton("📦 اقلام پست مشترک",SharedShippingPrefix+"items:"+context.RequestId.Value.ToString("N"))},
             new[]{new TelegramInlineButton("☑️ انتخاب برای گزارش کلی","shipping:select:"+context.RequestId.Value.ToString("N"))},

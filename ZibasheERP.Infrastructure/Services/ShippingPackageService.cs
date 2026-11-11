@@ -90,7 +90,7 @@ public static class ShippingPackageService
             var parcel=System.Text.Json.JsonSerializer.Deserialize<SharedShippingService.Parcel>(payload);
             if(parcel is null||parcel.ClosedAt!=null||!parcel.CustomerIds.Contains(customerId))continue;
             var states=await SharedShippingService.Items(db,parcel.RequestId).AsNoTracking().Select(i=>new{i.FulfillmentStatus,i.ShippedAt}).ToArrayAsync(ct);
-            if(states.Any(i=>i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip)&&states.All(i=>i.FulfillmentStatus!=OrderItemFulfillmentStatus.Shipped&&i.ShippedAt==null))explicitRequests.Add(parcel.RequestId);
+            if((states.Length==0||states.Any(i=>i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip))&&states.All(i=>i.FulfillmentStatus!=OrderItemFulfillmentStatus.Shipped&&i.ShippedAt==null))explicitRequests.Add(parcel.RequestId);
         }
         var valid = new List<Guid>();
         foreach (var request in candidates.Concat(explicitRequests).Distinct())
@@ -124,9 +124,31 @@ public static class ShippingPackageService
             .Where(i => i.ShippingRequestId == requestId)
             .ToArrayAsync(ct);
         if(anchors.Length==0)anchors=await SharedShippingService.Items(db,requestId).AsNoTracking().ToArrayAsync(ct);
-        if(anchors.Length==0)return;
-        var since = anchors.Where(i => i.ShippingRequestedAt != null).Select(i => i.ShippingRequestedAt!.Value).DefaultIfEmpty(DateTime.MaxValue).Min();
-        var anchor = anchors.FirstOrDefault(i => i.Order!.DeliveryAddressId != null) ?? anchors[0];
+        DateTime since;Guid? deliveryAddress;long? sourceMessage;
+        var shared=await SharedShippingService.ReadAsync(db,requestId,ct);
+        NotificationOutbox? addressReference=null;
+        if(anchors.Length==0)
+        {
+            if(shared is null||shared.ClosedAt!=null||shared.AddressReferenceId is not Guid referenceId||!shared.CustomerIds.Contains(customerId))return;
+            if(!await db.Addresses.AsNoTracking().AnyAsync(a=>!a.IsDeleted&&a.Id==shared.AddressId&&a.CustomerId==shared.PrimaryCustomerId,ct))return;
+            addressReference=await db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==referenceId&&!n.IsDeleted&&n.Channel=="ShippingReferenceContext"&&n.CustomerId==shared.PrimaryCustomerId,ct);
+            if(addressReference is null)return;
+            try
+            {
+                using var source=System.Text.Json.JsonDocument.Parse(addressReference.Payload);var root=source.RootElement;
+                if(root.GetProperty("CustomerId").GetGuid()!=shared.PrimaryCustomerId||root.GetProperty("RequestId").GetGuid()!=requestId||root.GetProperty("AddressId").GetGuid()!=shared.AddressId||
+                    root.GetProperty("Kind").GetString()!="root"||!root.GetProperty("Installed").GetBoolean()||root.GetProperty("ChatId").GetString()!=addressReference.Recipient||root.GetProperty("MessageId").GetInt64()<=0)return;
+                sourceMessage=root.GetProperty("MessageId").GetInt64();
+            }
+            catch(Exception error)when(error is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or FormatException){return;}
+            since=shared.CreatedAt;deliveryAddress=shared.AddressId;
+        }
+        else
+        {
+            since=anchors.Where(i=>i.ShippingRequestedAt!=null).Select(i=>i.ShippingRequestedAt!.Value).DefaultIfEmpty(DateTime.MaxValue).Min();
+            deliveryAddress=(anchors.FirstOrDefault(i=>i.Order!.DeliveryAddressId!=null)??anchors[0]).Order!.DeliveryAddressId;
+            sourceMessage=anchors.Select(i=>i.ShippingTelegramMessageId).FirstOrDefault(v=>v!=null);
+        }
         var additions = await CustomerItems(db, customer).Include(i => i.Order).Where(i => i.ShippingRequestId == null &&
             i.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && 
             i.Order != null && i.Order.IsInventory &&
@@ -136,10 +158,13 @@ public static class ShippingPackageService
         {
             item.ShippingRequestId = requestId;
             item.ShippingRequestedAt = since;
-            item.ShippingTelegramMessageId = anchors.Select(i => i.ShippingTelegramMessageId).FirstOrDefault(v => v != null);
-            item.Order!.DeliveryAddressId = anchor.Order!.DeliveryAddressId;
+            item.ShippingTelegramMessageId = sourceMessage;
+            item.Order!.DeliveryAddressId = deliveryAddress;
             item.UpdatedAt = DateTime.UtcNow;
         }
+        if(addressReference is not null&&additions.Length>0)
+            db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=shared!.PrimaryCustomerId,Channel="SharedShippingRefresh",EventType="RefreshSharedParcelAddress",Recipient=addressReference.Recipient,
+                Payload=System.Text.Json.JsonSerializer.Serialize(new{ReferenceId=addressReference.Id}),CreatedAt=DateTime.UtcNow});
     }
 
     public static async Task<OrderItem[]> CompleteAsync(AppDbContext db, Guid? requestId, Guid? customerId, CancellationToken ct = default)
@@ -193,10 +218,10 @@ public static class ShippingPackageService
         }
         await db.SaveChangesAsync(ct);
         await ShippingPackApproval.MarkDispatchedAsync(db, customerId.Value, requestId, items.Where(i => i.FulfillmentStatus == OrderItemFulfillmentStatus.Shipped).Select(i => i.Id).ToArray(), ct);
-        if(shared!=null&&changed.Length>0)
+        if(shared!=null&&(changed.Length>0||items.Length==0))
         {
             var receipt=await db.NotificationOutbox.SingleAsync(n=>n.Id==SharedShippingService.ReceiptId(requestId.Value),ct);
-            receipt.Payload=System.Text.Json.JsonSerializer.Serialize(shared with{ClosedAt=now});receipt.UpdatedAt=now;
+            receipt.Payload=System.Text.Json.JsonSerializer.Serialize(shared with{ClosedAt=shared.ClosedAt??now});receipt.UpdatedAt=now;
             await db.SaveChangesAsync(ct);
         }
         if (own != null) await own.CommitAsync(ct);

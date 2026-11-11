@@ -22,7 +22,13 @@ public sealed partial class TelegramWebhookController
             var groups=await _db.CustomerTelegramGroups.AsNoTracking().Where(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==customer).Take(2).ToArrayAsync(ct);
             if(groups.Length!=1||!long.TryParse(groups[0].ChatId,out var chat)||chat>=0||
                 await _db.CustomerTelegramGroups.AnyAsync(g=>!g.IsDeleted&&g.IsActive&&g.ChatId==groups[0].ChatId&&g.CustomerId!=customer,ct))
-                throw new ShippingRecipientValidationException(request,[],"یکی از اعضای پست مشترک گروه حسابداری یکتا و متصل ندارد؛ ابتدا اتصال گروه‌ها اصلاح شود.");
+            {
+                var member=await _db.Customers.AsNoTracking().SingleOrDefaultAsync(c=>c.Id==customer&&!c.IsDeleted,ct)
+                    ??throw new ShippingRecipientValidationException(request,[],"یکی از اعضای پست مشترک دیگر فعال نیست.");
+                // Annotation-only legacy companions have no ERP items to dispatch and cannot supply a guessed destination.
+                if(customer!=parcel.PrimaryCustomerId&&!await ShippingPackageService.CustomerItems(_db,member).AsNoTracking().AnyAsync(i=>i.ShippingRequestId==request,ct))continue;
+                throw new ShippingRecipientValidationException(request,[],"یکی از اعضای دارای آیتم پست مشترک گروه حسابداری یکتا و متصل ندارد؛ ابتدا اتصال گروه‌ها اصلاح شود.");
+            }
             targets.Add(new(customer,groups[0].ChatId));
         }
         var id=new Guid(SHA256.HashData(Encoding.UTF8.GetBytes("shared-tracking-targets:"+dispatch.Id))[..16]);
@@ -83,6 +89,7 @@ public sealed partial class TelegramWebhookController
         var storedBatch=await _db.TrackingImportBatches.SingleAsync(b=>b.Id==batchId,ct);storedBatch.ConfirmedAt??=DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);await tx.CommitAsync(ct);
         _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id,message.From!.Id);
-        await _sender.SendKeyboardDismissAsync(message.Chat.Id.ToString(),"✅ عکس رهگیری در صف ارسال به همهٔ اعضای پست مشترک ثبت شد. مقصدهای موفق دوباره ارسال نمی‌شوند؛ نتیجه در گزارش ارسال سری آخر قابل مشاهده است.",ct);
+        var note=parcel.LegacyUsernames is {Length:>0}?"\nهمراهان صرفاً یادداشتی: "+string.Join("، ",parcel.LegacyUsernames.Select(n=>"@"+n))+"؛ برای ارسال خودکار کد، ابتدا گروهشان باید متصل شود.":string.Empty;
+        await _sender.SendKeyboardDismissAsync(message.Chat.Id.ToString(),"✅ عکس رهگیری در صف ارسال به گروه‌های متصل پست مشترک ثبت شد. مقصدهای موفق دوباره ارسال نمی‌شوند؛ نتیجه در گزارش ارسال سری آخر قابل مشاهده است."+note,ct);
     }
 }

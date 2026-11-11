@@ -184,6 +184,70 @@ public static class SharedShippingTests
                 (await Reload(legacyPrimary.Id)).ShippedAt==null&&(await Reload(newCompanion.Id)).ShippedAt==null,
                 "reusing an old primary parcel preserves financial owners and never marks items shipped");
             await ShippingPackageService.CompleteAsync(db,legacyRequest,customers[0].Id);db.ChangeTracker.Clear();
+            // Legacy contents may exist physically without an ERP order or even a customer profile.
+            var unknown="legacy_"+stamp;var countCustomers=await db.Customers.CountAsync();var countInvoices=await db.Invoices.CountAsync();var countItems=await db.OrderItems.CountAsync();
+            var unknownResolved=await service.ResolveCompanionAsync("https://t.me/"+unknown.ToUpperInvariant()+"/");
+            check(unknownResolved.CustomerId is null&&unknownResolved.LegacyUsername==unknown&&await db.Customers.CountAsync()==countCustomers,
+                "an unknown companion becomes a normalized annotation without creating a customer account");
+            var noItemResolved=await service.ResolveCompanionAsync("@"+customers[1].Username);
+            check(noItemResolved.CustomerId==customers[1].Id,"a registered customer without current ready items remains a valid shared companion");
+            var annotationRoot=await Root(Guid.NewGuid(),805);var annotationRow=await db.NotificationOutbox.SingleAsync(n=>n.Id==annotationRoot);
+            var annotationJson=System.Text.Json.Nodes.JsonNode.Parse(annotationRow.Payload)!;annotationJson["RequestId"]=null;annotationRow.Payload=annotationJson.ToJsonString();await db.SaveChangesAsync();db.ChangeTracker.Clear();
+            await Select("start");await Input("@"+customers[0].Username);await Input("@"+customers[1].Username+"\n@"+unknown);
+            check(transport.Texts.Any(t=>t.Contains("پست مشترک با:")&&t.Contains(unknown)&&t.Contains(customers[1].Username!))&&transport.Texts.Last().Contains("تأیید"),
+                "the wizard previews known and unregistered legacy companions even when the whole parcel has zero ERP items");
+            var annotationConfirm=transport.Buttons.Last(b=>b.StartsWith("shipping:shared:confirm:"));await Select(annotationConfirm["shipping:shared:".Length..]);db.ChangeTracker.Clear();
+            var annotationContext=JsonDocument.Parse((await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==annotationRoot)).Payload);
+            var annotationRequest=annotationContext.RootElement.GetProperty("RequestId").GetGuid();requests.Add(annotationRequest);
+            var annotationParcel=(await SharedShippingService.ReadAsync(db,annotationRequest))!;
+            check(annotationParcel.CustomerIds.Order().SequenceEqual(new[]{customers[0].Id,customers[1].Id}.Order())&&annotationParcel.LegacyUsernames!.SequenceEqual([unknown])&&
+                await db.Customers.CountAsync()==countCustomers&&await db.Invoices.CountAsync()==countInvoices&&await db.OrderItems.CountAsync()==countItems,
+                "confirmed annotation-only sharing stores real member IDs and legacy usernames without fake orders, items, invoices or profiles");
+            var annotationRefresh=await db.NotificationOutbox.SingleAsync(n=>n.Channel=="SharedShippingRefresh"&&n.Payload.Contains(annotationRoot.ToString()));
+            await Call("RefreshSharedShippingAddressAsync",annotationRefresh,CancellationToken.None);
+            check(transport.Edits.Last().Message==805&&transport.Edits.Last().Text.Contains("پست مشترک با:")&&transport.Edits.Last().Text.Contains("@"+unknown)&&transport.Edits.Last().Text.Contains("بدون آیتم"),
+                "legacy companions are displayed on the original preparation address even with zero ready ERP rows");
+            check((await ShippingPackageService.ValidatePackageAsync(db,annotationRequest,customers[0].Id)).Id==customers[0].Id,
+                "an explicit annotation-only shared parcel has one verified physical address owner");
+            var preparedLegacy=await TrackingPreparedAddresses.LoadAsync(db,"-100555001",default);
+            check(preparedLegacy.Any(r=>r.RequestId==annotationRequest&&r.CustomerId==customers[0].Id),
+                "annotation-only shared addresses remain eligible for exact tracking matching without invented invoice items");
+            await Call("TryHandleShippingReferenceCallbackAsync",new TelegramCallbackQuery("legacy-shared",new(admin,null),new TelegramMessage(null,new(-100555001,"supergroup"),new(admin,null),null,MessageId:805),"shipping:refs:start:"+annotationRoot.ToString("N")),CancellationToken.None);
+            check(await db.NotificationOutbox.AnyAsync(n=>n.Channel=="ShippingPackPhotoDraft"&&n.CustomerId==customers[0].Id&&n.Payload.Contains(annotationRequest.ToString())),
+                "an empty legacy shared parcel retains the customer photo-confirmation entry point under its address");
+            var legacyDraft=new TelegramShippingTrackingPhotoDraft{ChatId=-100555001,UserId=admin,CustomerId=customers[0].Id,ShippingRequestId=annotationRequest,SourceMessageId=805};
+            await Call("QueueSharedTrackingPhotoAsync",new TelegramMessage(null,new(-100555001,"supergroup"),new(admin,null),null,MessageId:806),legacyDraft,"synthetic-legacy-tracking",CancellationToken.None);
+            var legacyDispatch=await db.TrackingDispatches.AsNoTracking().SingleAsync(d=>d.ShippingRequestId==annotationRequest);batches.Add(legacyDispatch.ImportBatchId);operations.Add(legacyDispatch.Id);
+            transport.Accepted.Clear();await Process(legacyDispatch);db.ChangeTracker.Clear();
+            check(transport.Accepted.Order().SequenceEqual(groups.Take(2).Select(g=>g.ChatId).Order())&&(await SharedShippingService.ReadAsync(db,annotationRequest))!.ClosedAt!=null,
+                "legacy shared tracking reaches every connected registered member and closes the zero-item parcel while annotation-only usernames never become guessed destinations");
+            check(await db.OrderItems.CountAsync()==countItems&&await db.Invoices.CountAsync()==countInvoices,
+                "tracking completion of legacy sharing does not manufacture or mark unrelated ERP items");
+            var later=await Item(1,inventory:true);await ShippingPackageService.AttachInventoryAsync(db,customers[1].Id);db.ChangeTracker.Clear();
+            check((await Reload(later.Id)).ShippingRequestId is null&&(await Reload(later.Id)).ShippedAt is null,
+                "inventory created after a legacy shared parcel is closed cannot join or become shipped by replay");
+            // A profile with no items and no linked group is also an annotation, not a reason to block primary dispatch.
+            var noGroupRequest=Guid.NewGuid();var noGroupRoot=await Root(noGroupRequest,807);
+            var noGroupPreview=await service.PreviewAsync(noGroupRequest,customers[0].Id,address.Id,[customers[2].Id],admin);
+            await service.ConfirmAsync(noGroupPreview,admin,807,default,noGroupRoot);db.ChangeTracker.Clear();
+            await db.CustomerTelegramGroups.Where(g=>g.Id==groups[2].Id).ExecuteUpdateAsync(q=>q.SetProperty(g=>g.IsActive,false));
+            transport.Accepted.Clear();var noGroupDispatch=await Dispatch(noGroupRequest);await Process(noGroupDispatch);db.ChangeTracker.Clear();
+            check(transport.Accepted.SequenceEqual([groups[0].ChatId])&&(await SharedShippingService.ReadAsync(db,noGroupRequest))!.ClosedAt!=null,
+                "a companion with neither ERP items nor a connected group stays annotation-only and does not block the primary tracking delivery");
+            await db.CustomerTelegramGroups.Where(g=>g.Id==groups[2].Id).ExecuteUpdateAsync(q=>q.SetProperty(g=>g.IsActive,true));
+            var onlyLegacyRequest=Guid.NewGuid();var onlyLegacyRoot=await Root(onlyLegacyRequest,808);
+            var onlyLegacyPreview=await service.PreviewAsync(onlyLegacyRequest,customers[0].Id,address.Id,[],admin,default,["only_"+stamp]);
+            await service.ConfirmAsync(onlyLegacyPreview,admin,808,default,onlyLegacyRoot);db.ChangeTracker.Clear();
+            check((await SharedShippingService.ReadAsync(db,onlyLegacyRequest))!.CustomerIds.SequenceEqual([customers[0].Id])&&onlyLegacyPreview.ItemIds.Length==0,
+                "one registered primary plus an unregistered annotation is a valid parcel without any fabricated companion profile");
+            var firstInventory=await Item(0,inventory:true);await ShippingPackageService.AttachInventoryAsync(db,customers[0].Id);db.ChangeTracker.Clear();
+            check((await Reload(firstInventory.Id)).ShippingRequestId==onlyLegacyRequest,
+                "the first genuine ready inventory can join a previously empty shared parcel before dispatch");
+            await ShippingPackageService.CompleteAsync(db,onlyLegacyRequest,customers[0].Id);db.ChangeTracker.Clear();
+            check((await Reload(firstInventory.Id)).ShippedAt!=null&&(await Reload(later.Id)).ShippedAt is null&&(await SharedShippingService.ReadAsync(db,onlyLegacyRequest))!.ClosedAt!=null,
+                "completing legacy sharing updates only its newly added real inventory and never another companion's separate item");
+            var duplicateLegacy=false;try{await service.PreviewAsync(Guid.NewGuid(),customers[0].Id,address.Id,[],admin,default,["missing_"+stamp,"MISSING_"+stamp]);}catch(InvalidOperationException){duplicateLegacy=true;}
+            check(duplicateLegacy&&!db.ChangeTracker.HasChanges(),"case variants of the same annotation cannot create duplicate companions or any pending accounting writes");
             var ambiguousA=Guid.NewGuid();var ambiguousB=Guid.NewGuid();requests.AddRange([ambiguousA,ambiguousB]);
             await Item(0,parcel:ambiguousA);await Item(0,parcel:ambiguousB);
             var ambiguous=false;try{await service.ResolvePrimaryRequestAsync(customers[0].Id,null);}catch(InvalidOperationException){ambiguous=true;}

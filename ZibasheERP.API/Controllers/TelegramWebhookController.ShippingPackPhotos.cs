@@ -64,7 +64,7 @@ public sealed partial class TelegramWebhookController
     private async Task SendShippingPackPromptAsync(Guid id,ShippingPackPhotoDraft draft,CancellationToken ct)
     {
         var customer=await _db.Customers.AsNoTracking().SingleAsync(c=>c.Id==draft.Reference.CustomerId,ct);
-        var scope=draft.Reference.LegacyAddressOnly?"اقلام ثبت‌شدهٔ قبلی":$"{draft.Reference.ItemIds.Length} آیتم";
+        var scope=draft.Reference.LegacyAddressOnly||draft.Reference.ItemIds.Length==0?"اقلام ثبت‌شدهٔ قبلی":$"{draft.Reference.ItemIds.Length} آیتم";
         var prompt=$"📷 بستهٔ {OrderCustomerLabel(customer)} — {scope}\nعکس {draft.ExistingPhotoCount+(draft.Files?.Length??0)+1} را همین‌جا بفرستید؛ نیازی به ریپلای نیست. در هر نوبت تا ۳ عکس می‌توانید اضافه کنید؛ بعد از دریافت عکس، به سؤال «آیا عکس دیگری دارید؟» پاسخ دهید."+
             (draft.ExistingPhotoCount>0?$"\n{draft.ExistingPhotoCount} عکس قبلی محفوظ است؛ عکس جدید در ادامهٔ همان عکس‌ها ارسال می‌شود.":"");
         await MutateShippingPayloadAsync<ShippingPackPhotoDraft>(id,ShippingPackDraftChannel,d=>d with{PromptIds=(d.PromptIds??[]).Concat(d.PromptId.HasValue?[d.PromptId.Value]:[]).Distinct().ToArray(),PromptId=null,PromptText=prompt,MediaGroup=null},ct);
@@ -207,7 +207,7 @@ public sealed partial class TelegramWebhookController
         else
         {
             var items=await LoadShippingReferenceItemsAsync(draft.Reference,ct);
-            if(items.Length==0||!items.Select(i=>i.Id).ToHashSet().SetEquals(draft.Reference.ItemIds))throw new InvalidOperationException("اقلام آمادهٔ بسته تغییر کرده؛ از دکمهٔ آدرس، عکس‌های بستهٔ جدید را ثبت کنید.");
+            if(items.Length==0&&!await IsOpenLegacySharedAddressAsync(draft.Reference,ct)||!items.Select(i=>i.Id).ToHashSet().SetEquals(draft.Reference.ItemIds))throw new InvalidOperationException("اقلام آمادهٔ بسته تغییر کرده؛ از دکمهٔ آدرس، عکس‌های بستهٔ جدید را ثبت کنید.");
         }
         if(draft.Files is not{Length:>=1 and <=3})throw new InvalidOperationException("ابتدا یک تا سه عکس ثبت کنید.");
         var groups=await _db.CustomerTelegramGroups.AsNoTracking().Where(g=>!g.IsDeleted&&g.IsActive&&g.CustomerId==draft.Reference.CustomerId).Select(g=>g.ChatId).Distinct().ToArrayAsync(ct);

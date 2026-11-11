@@ -100,6 +100,10 @@ public sealed partial class TelegramWebhookController
                 await StartShippingPackPhotoDraftAsync(callback,context,items,ct,action=="restart");
                 return true;
             }
+            if(action is "start" or "restart"&&items.Length==0&&await IsOpenLegacySharedAddressAsync(context,ct))
+            {
+                await StartShippingPackPhotoDraftAsync(callback,context,items,ct,action=="restart");return true;
+            }
             if(items.Length==0){await ShippingReferenceTextAsync(callback.Message.Chat.Id,"آیتم آمادهٔ ارسالی برای این پیام باقی نمانده است.",ct);await FinishShippingReferenceViewAsync(callback.Message.Chat.Id,ct);return true;}
             if(action=="photos")await SendShippingDecantReferencesAsync(callback.Message.Chat.Id,context,items,callback.From.Id,ct);
             else if(action=="lists")await SendShippingCompletedListMenuAsync(callback.Message.Chat.Id,context,items,ct);

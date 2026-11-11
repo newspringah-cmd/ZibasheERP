@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
+using ZibasheERP.Infrastructure.Services;
 
 namespace ZibasheERP.API.Tracking;
 
@@ -36,6 +37,18 @@ public static class TrackingPreparedAddresses
         var open=(await db.OrderItems.AsNoTracking().Where(i=>i.ShippingRequestId!=null&&requestIds.Contains(i.ShippingRequestId.Value)&&!i.IsDeleted&&i.Order!=null&&!i.Order.IsDeleted&&i.Order.Status!=OrderStatus.Cancelled&&i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null&&
             !db.OrderItems.Any(other=>other.ShippingRequestId==i.ShippingRequestId&&!other.IsDeleted&&(other.ShippedAt!=null||other.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped)))
             .Select(i=>i.ShippingRequestId!.Value).Distinct().ToArrayAsync(ct)).ToHashSet();
+        // Explicit legacy shared parcels are real address scopes even when their contents predate ERP invoices.
+        var sharedIds=requestIds.Select(SharedShippingService.ReceiptId).ToArray();
+        var sharedRows=await db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==SharedShippingService.Channel&&sharedIds.Contains(n.Id)&&(n.UpdatedAt??n.CreatedAt)<=asOf).ToArrayAsync(ct);
+        foreach(var row in sharedRows)
+        {
+            SharedShippingService.Parcel? parcel;try{parcel=JsonSerializer.Deserialize<SharedShippingService.Parcel>(row.Payload);}catch(JsonException){continue;}
+            if(parcel is null||parcel.ClosedAt!=null||parcel.CreatedAt>asOf||row.Id!=SharedShippingService.ReceiptId(parcel.RequestId)||row.CustomerId!=parcel.PrimaryCustomerId||
+                !roots.Any(r=>r.Data.RequestId==parcel.RequestId&&r.Data.CustomerId==parcel.PrimaryCustomerId&&r.Data.AddressId==parcel.AddressId))continue;
+            if(await SharedShippingService.Items(db,parcel.RequestId).AsNoTracking().AnyAsync(ct))continue;
+            try{if(await SharedShippingService.ReadAsync(db,parcel.RequestId,ct)is not null)open.Add(parcel.RequestId);}
+            catch(InvalidOperationException){ /* Invalid receipt metadata cannot grant a tracking destination. */ }
+        }
         var customers=roots.Select(r=>r.Data.CustomerId).Distinct().ToArray();
         var sent=await db.TrackingDispatches.AsNoTracking().Where(d=>customers.Contains(d.CustomerId!.Value)&&!d.IsDeleted&&d.Status==TrackingDispatchStatus.Sent&&d.SentAt>=since)
             .Select(d=>new{d.CustomerId,d.ShippingRequestId,d.SentAt}).ToArrayAsync(ct);
