@@ -175,6 +175,7 @@ builder.Services.AddHostedService<ShippingPackFeedbackWorker>();
 builder.Services.AddHostedService<ShippingTrackingNoticeWorker>();
 builder.Services.AddHostedService<ShippingNameWarningWorker>();
 builder.Services.AddHostedService<ManualShippingAddressWorker>();
+builder.Services.AddHostedService<FlashSaleMainPriceWorker>();
 builder.Services.AddHostedService<ShippingDecantReferenceWorker>();
 builder.Services.AddHostedService<PerfumePurchaseReportWorker>();
 builder.Services.AddHostedService<InvoiceTransferWorker>();

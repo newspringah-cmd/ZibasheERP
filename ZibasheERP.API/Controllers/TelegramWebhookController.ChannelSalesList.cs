@@ -506,7 +506,8 @@ public sealed partial class TelegramWebhookController
                 var requests = includeCompletedRequests
                     ? await _salesListRequestRepository.GetForLabelAdministrationAsync(salesListId, cancellationToken)
                     : await _salesListRequestRepository.GetConfirmedAsync(salesListId, cancellationToken);
-                var captions = FormatChannelSalesListPages(salesList, requests);
+                var quote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(_db,salesList,DateTime.UtcNow,cancellationToken);
+                var captions = FormatPromotionChannelSalesListPages(salesList, requests, quote);
                 await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
                 await RefreshMainChannelPostAsync(salesList, captions.Main, cancellationToken);
                 await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
@@ -555,7 +556,8 @@ public sealed partial class TelegramWebhookController
         await _salesListRepository.SaveChangesAsync(ct);
         // Update a continuation's return link to the replacement main post.
         var requests = await _salesListRequestRepository.GetConfirmedAsync(list.Id, ct);
-        await SynchronizeContinuationPostAsync(list, FormatChannelSalesListPages(list, requests).Continuation, ct);
+        var quote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(_db,list,DateTime.UtcNow,ct);
+        await SynchronizeContinuationPostAsync(list, FormatPromotionChannelSalesListPages(list, requests,quote).Continuation, ct);
     }
 
     private async Task SendRemainingVolumeAlertsAsync(
@@ -753,7 +755,7 @@ public sealed partial class TelegramWebhookController
         }
         await _salesListRequestRepository.SaveChangesAsync(ct);
         var nextRequests = await _salesListRequestRepository.GetConfirmedAsync(nextList.Id, ct);
-        var pages = FormatChannelSalesListPages(nextList, nextRequests);
+        var pages = FormatPromotionChannelSalesListPages(nextList, nextRequests, await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(_db,nextList,DateTime.UtcNow,ct));
         TelegramSendResult post;
         if (nextList.TelegramMessageId.HasValue)
         {
@@ -836,9 +838,20 @@ public sealed partial class TelegramWebhookController
         bool aggregateProductionGifts = false)
         => FormatSalesListPages(list, requests, aggregateProductionGifts, 1000);
 
+    internal static (string Main, string? Continuation) FormatPromotionChannelSalesListPages(
+        SalesList list, IReadOnlyCollection<SalesListRequest> requests,
+        ZibasheERP.Infrastructure.Services.FlashSalePricing.Quote quote)
+        => FormatSalesListPagesCore(list,requests,false,1000,quote);
+
     private static (string Main, string? Continuation) FormatSalesListPages(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests,
         bool aggregateProductionGifts, int safeCaptionLength)
+        => FormatSalesListPagesCore(list,requests,aggregateProductionGifts,safeCaptionLength,null);
+
+    private static (string Main, string? Continuation) FormatSalesListPagesCore(
+        SalesList list, IReadOnlyCollection<SalesListRequest> requests,
+        bool aggregateProductionGifts, int safeCaptionLength,
+        ZibasheERP.Infrastructure.Services.FlashSalePricing.Quote? quote)
     {
         var currentRequests = requests
             .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
@@ -872,11 +885,13 @@ public sealed partial class TelegramWebhookController
             : $"<a href=\"{HtmlClipped(list.ProductPageUrl, 180)}\">{englishName}</a>";
         var brandTag = "#" + HtmlClipped(ToHashtag(list.DisplayBrand), 45);
         var notesSection = FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, false);
+        var promotionLine=quote?.PromotionId is null?string.Empty:
+            "\n🔴 <b>قیمت پروموشن هر میل: "+quote.PricePerMl.ToString(quote.PricePerMl==decimal.Truncate(quote.PricePerMl)?"N0":"N2",CultureInfo.InvariantCulture)+" تومان</b>";
         var header = $"\u200F<b>{list.DisplayCode}</b>\n{linkedName}\n{brandTag}\n{gender}\nL.{list.ReleaseYear}\n\n" +
             $"{HtmlClipped(list.PersianName, 55)}\n\n" +
             notesSection +
             $"🎼 آکوردها: {HtmlClipped(list.Accords, 40)}\n\n" +
-            $"حجم کل: {FormatSalesListVolume(list.TotalVolume)}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان\n\n" +
+            $"حجم کل: {FormatSalesListVolume(list.TotalVolume)}ml\n\nقیمت هر میل: {list.PricePerMl:N0} تومان{promotionLine}\n\n" +
             $"حداقل درخواست: {FormatSalesListVolume(decimal.Ceiling(list.EffectiveMinimumRequestVolumeMl))} میل\n\n" +
             $"باقی‌مانده: {FormatSalesListVolume(list.RemainingVolume)} میل";
         var nextUsers = next.Select(item =>
@@ -886,12 +901,15 @@ public sealed partial class TelegramWebhookController
         var nextSection = nextUsers.Length == 0
             ? "Next Bottle:\n\nاولین نفر صف باتل باشید 😘😘"
             : BuildStackedUserLines("Next Bottle", nextUsers);
+        var compactNotes=quote?.PromotionId is null?FormatChannelNotes(list.TopNotes,list.MiddleNotes,list.BaseNotes,true):
+            string.Join(" | ",new[]{("🍊",list.TopNotes),("🌸",list.MiddleNotes),("🌳",list.BaseNotes)}
+                .Where(n=>!string.IsNullOrWhiteSpace(n.Item2)).Select(n=>n.Item1+" "+HtmlClipped(n.Item2,45)))+"\n\n";
         if (header.Length > 760)
             header = $"\u200F<b>{list.DisplayCode}</b>\n{linkedName}\n\n{brandTag} | {gender} | L.{list.ReleaseYear}\n\n" +
                 $"{HtmlClipped(list.PersianName, 35)}\n\n" +
-                FormatChannelNotes(list.TopNotes, list.MiddleNotes, list.BaseNotes, true) +
+                compactNotes +
                 $"🎼 {HtmlClipped(list.Accords, 22)}\n\n" +
-                $"حجم: {FormatSalesListVolume(list.TotalVolume)}ml | هر میل: {list.PricePerMl:N0} تومان\n\n" +
+                $"حجم: {FormatSalesListVolume(list.TotalVolume)}ml | هر میل: {list.PricePerMl:N0} تومان{promotionLine}\n\n" +
                 $"حداقل: {FormatSalesListVolume(decimal.Ceiling(list.EffectiveMinimumRequestVolumeMl))} میل\n\n" +
                 $"باقی‌مانده: {FormatSalesListVolume(list.RemainingVolume)} میل";
         var availableForRoster = Math.Max(0, safeCaptionLength - header.Length - nextSection.Length - 4);

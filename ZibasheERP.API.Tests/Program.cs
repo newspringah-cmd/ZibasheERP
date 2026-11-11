@@ -11,6 +11,13 @@ if (args.Contains("--initialize-test-database"))
 }
 
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
+if(args.Contains("--flash-main-price"))
+{
+    await FlashSaleTests.RunAsync(Check);
+    await FlashSaleMainPriceTests.Run(Check);
+    return;
+}
+
 var priceController=typeof(ZibasheERP.API.Controllers.TelegramWebhookController);
 var pricingInput=new object?[]{"۳۳۹۷۶۸\n۱۰۰\n۵",null,null,null,null};
 Check((bool)priceController.GetMethod("TryParseSalesListPricing",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,pricingInput)!&&
@@ -266,6 +273,7 @@ await ProductionCopyDeliveryTests.Run(Check);
 SmallRemainderReservationTests.Run(Check);
 await SmallRemainderReservationTests.RunSqlAsync(Check);
 await FlashSaleTests.RunAsync(Check);
+await FlashSaleMainPriceTests.Run(Check);
 InvoicedSalesListReportTests.Run(Check);
 AddressReadyItemsTests.Run(Check);
 ShippingAddressDisplayTests.Run(Check);

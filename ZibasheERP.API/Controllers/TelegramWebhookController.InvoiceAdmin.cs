@@ -6037,7 +6037,7 @@ public sealed partial class TelegramWebhookController
             {
                 if (draft.EditField == "photo")
                     await _sender.EditPhotoAsync(list.TelegramChannelId, list.TelegramMessageId.Value, draft.EditValue,
-                        FormatChannelSalesList(list, requests), BuildChannelVolumeButtons(list), ct);
+                        FormatPromotionChannelSalesListPages(list, requests, await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(_db,list,DateTime.UtcNow,ct)).Main, BuildChannelVolumeButtons(list), ct);
                 else
                     await RefreshChannelSalesListAsync(list.Id, ct);
             }

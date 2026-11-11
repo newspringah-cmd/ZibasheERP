@@ -93,7 +93,9 @@ public sealed class TelegramSalesListRebuildWorker : BackgroundService
                     continue;
 
                 var activeRequests = await requests.GetConfirmedAsync(list.Id, cancellationToken);
-                var captions = TelegramWebhookController.FormatChannelSalesListPages(list, activeRequests);
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var quote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(db,list,DateTime.UtcNow,cancellationToken);
+                var captions = TelegramWebhookController.FormatPromotionChannelSalesListPages(list, activeRequests,quote);
                 await SynchronizeContinuationAsync(list, captions.Continuation, lists, cancellationToken);
                 var result = await EditMainPostWithRetryAsync(
                     list,
