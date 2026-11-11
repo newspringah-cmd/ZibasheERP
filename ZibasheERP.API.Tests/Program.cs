@@ -281,6 +281,7 @@ await TrackingRetryTests.Run(Check);
 await ShippingPackageTests.Run(Check);
 await ShippingTrackingNoticeTests.Run(Check);
 await ShippingNameWarningTests.Run(Check);
+await PreparedAddressReportTests.Run(Check);
 await GiftParcelMembershipTests.Run(Check);
 await SharedShippingTests.Run(Check);
 await GroupChatReplyTests.Run(Check);

@@ -14,6 +14,7 @@ public sealed partial class TelegramWebhookController
         if (callback.Message is null || callback.Data is null ||
             !callback.Data.StartsWith("shipping:", StringComparison.Ordinal))
             return false;
+        if (await TryHandlePreparedAddressReportAsync(callback, ct)) return true;
         if (await TryHandleSharedShippingCallbackAsync(callback, ct)) return true;
         if (await TryHandleShippingReferenceCallbackAsync(callback, ct)) return true;
         await UpgradeShippingAddressReferencesAsync(callback, ct);

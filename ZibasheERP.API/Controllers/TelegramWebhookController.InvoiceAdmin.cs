@@ -1745,6 +1745,7 @@ public sealed partial class TelegramWebhookController
                 new TelegramInlineButton("🔎 گزارش وضعیت عطر مشتری", "invoiceadmin:customer-perfume-status")
             }
         };
+        buttons.Add(new[]{new TelegramInlineButton("📮 آدرس‌های باقی‌مانده آمادهٔ ارسال", PreparedAddressReportPrefix + "open")});
         buttons.Add(new[]{new TelegramInlineButton("💬 پاسخگویی گروه چت","groupchatreply:start")});
         buttons.Add(new[]{new TelegramInlineButton("🛍 ثبت خرید موجودی",InvAction("buy")),
             new TelegramInlineButton("📦 موجودی آماده",InvAction("menu"))});
