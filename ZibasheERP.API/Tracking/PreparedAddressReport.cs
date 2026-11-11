@@ -5,9 +5,26 @@ namespace ZibasheERP.API.Tracking;
 
 public static class PreparedAddressReport
 {
-    public const int PageSize = 8;
+    public const int PageSize = 50;
     public sealed record Entry(long MessageId, string Name, string Username, DateTime? RegisteredAt = null);
-    public sealed record Page(string Text, int Index, int Pages);
+    public sealed record Page(string Text, int Index, int Pages)
+    {
+        public string[] Messages
+        {
+            get
+            {
+                var chunks=new List<string>();var current=new StringBuilder();
+                // Keep each complete entry (name, date and address link) together.
+                foreach(var block in Text.Split("\n\n",StringSplitOptions.None))
+                {
+                    if(current.Length>0&&current.Length+block.Length+2>3700){chunks.Add(current.ToString());current.Clear();}
+                    if(current.Length>0)current.Append("\n\n");current.Append(block);
+                }
+                if(current.Length>0)chunks.Add(current.ToString());
+                return chunks.Select((chunk,i)=>chunks.Count==1?chunk+"\n":$"📄 صفحهٔ {Index+1} از {Pages} — بخش {i+1} از {chunks.Count}\n\n"+chunk+"\n").ToArray();
+            }
+        }
+    }
 
     public static Page Build(string chat, IReadOnlyCollection<Entry> entries, int requestedPage)
     {

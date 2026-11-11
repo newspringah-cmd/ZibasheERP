@@ -48,13 +48,20 @@ public sealed partial class TelegramWebhookController
         if (navigation.Count > 0) buttons.Add(navigation);
         buttons.Add([new("🔄 به‌روزرسانی گزارش", PreparedAddressReportPrefix + page.Index)]);
         buttons.Add([new("↩️ منوی مدیریت", "invoiceadmin:menu:main")]);
-        if (first) await _sender.SendInlineKeyboardAsync(actor.ToString(), page.Text, buttons, ct);
-        else
+        var messages=page.Messages;
+        var sentAll=true;
+        for(var i=0;i<messages.Length;i++)
         {
-            var result = await _sender.EditTextWithKeyboardAsync(actor.ToString(), callback.Message.MessageId, page.Text, buttons, ct);
-            if (!result.IsSuccessful && !IsTelegramMessageUnchanged(result.Error))
-                await _sender.SendAsync(actor.ToString(), "به‌روزرسانی انجام نشد؛ گزارش را دوباره از منو باز کنید.", ct);
+            var result=await _sender.SendInlineKeyboardAsync(actor.ToString(),messages[i],i==messages.Length-1?buttons:[],ct);
+            if(!result.IsSuccessful)
+            {
+                sentAll=false;
+                await _sender.SendAsync(actor.ToString(),"ارسال این صفحه کامل نشد؛ گزارش را دوباره از منو باز کنید.",ct);
+                break;
+            }
         }
+        // Leave a readable history of each 50-address page; navigation belongs to the newest complete page.
+        if(!first&&sentAll)await _sender.EditReplyMarkupAsync(actor.ToString(),callback.Message.MessageId,[],ct);
         return true;
     }
 }
