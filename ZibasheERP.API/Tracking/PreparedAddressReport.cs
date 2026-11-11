@@ -6,7 +6,7 @@ namespace ZibasheERP.API.Tracking;
 public static class PreparedAddressReport
 {
     public const int PageSize = 8;
-    public sealed record Entry(long MessageId, string Name, string Username);
+    public sealed record Entry(long MessageId, string Name, string Username, DateTime? RegisteredAt = null);
     public sealed record Page(string Text, int Index, int Pages);
 
     public static Page Build(string chat, IReadOnlyCollection<Entry> entries, int requestedPage)
@@ -23,6 +23,7 @@ public static class PreparedAddressReport
             var username = Limit(row.Username.Trim().TrimStart('@'), 64);
             text.Append($"\n{index * PageSize + offset + 1}. {name}");
             if (username.Length > 0) text.Append(" — @" + username);
+            if(row.RegisteredAt is DateTime registered) text.Append("\n📅 تاریخ ثبت: "+ShippingAddressDisplay.RegisteredDate(registered));
             text.Append('\n').Append(chat.StartsWith("-100", StringComparison.Ordinal)
                 ? $"https://t.me/c/{chat[4..]}/{row.MessageId}" : $"پیام آدرس: {row.MessageId}").Append('\n');
         }

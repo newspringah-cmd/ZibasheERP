@@ -1,4 +1,5 @@
 using System.Reflection;
+using ZibasheERP.API.AddressLabels;
 using System.Runtime.CompilerServices;
 using ZibasheERP.API.Controllers;
 using ZibasheERP.API.Telegram;
@@ -8,7 +9,7 @@ public static class PreparedAddressReportTests
 {
     public static async Task Run(Action<bool, string> check)
     {
-        var rows = Enumerable.Range(1, 25).Select(i => new PreparedAddressReport.Entry(1000 + i, "ليلا بابا زاده", "@receiver_" + i)).ToArray();
+        var rows = Enumerable.Range(1, 25).Select(i => new PreparedAddressReport.Entry(1000 + i, "ليلا بابا زاده", "@receiver_" + i, new DateTime(2026,11,11,10,0,0,DateTimeKind.Utc))).ToArray();
         var pages = Enumerable.Range(0, 4).Select(i => PreparedAddressReport.Build("-1004397297289", rows, i)).ToArray();
         check(pages.All(p => p.Text.Contains("ارسال‌نشده: 25") && p.Pages == 4 && p.Text.Length < 4096), "remaining address report counts all registered parcels without a result cap and respects Telegram length limits");
         check(rows.All(r => pages.Sum(p => p.Text.Split("https://t.me/c/4397297289/" + r.MessageId + "\n").Length - 1) == 1), "each remaining address has its exact source link once across report pages");
@@ -22,6 +23,13 @@ public static class PreparedAddressReportTests
         check(duplicate.Text.Contains("ارسال‌نشده: 1"), "duplicate context references do not inflate physical-address report counts");
         var longRows = rows.Take(8).Select(r => r with { Name = new string('ن', 500), Username = new string('a', 500) }).ToArray();
         check(PreparedAddressReport.Build("-1004397297289", longRows, 0).Text.Length < 4096, "unusually long recipient fields cannot overflow a Telegram report page");
+        check(pages.All(p=>p.Text.Contains("📅 تاریخ ثبت: ۱۴۰۵/۰۸/۲۰")),"remaining-address report shows the actual registration date in Persian calendar and Persian digits");
+        check(ShippingAddressDisplay.RegisteredDate(new DateTime(2026,3,20,21,0,0,DateTimeKind.Unspecified))=="۱۴۰۵/۰۱/۰۱",
+            "registration date uses Tehran midnight and Nowruz correctly for SQL UTC timestamps without a DateTime kind");
+        const string body="📦 درخواست ارسال دستی\n\nآیدی: @example\nنام و آدرس اصلی\n🔴 تعداد آیتم‌ها: 2";
+        var dated=ShippingAddressDisplay.WithRegistrationDate(body,new DateTime(2026,11,11,10,0,0));
+        check(dated.Replace("📅 تاریخ ثبت: ۱۴۰۵/۰۸/۲۰\n",string.Empty)==body&&ShippingAddressDisplay.WithRegistrationDate(dated,new DateTime(2026,11,11,10,0,0))==dated,
+            "adding registration date preserves the complete original address body and never duplicates the date on refresh");
         var sender = DispatchProxy.Create<ITelegramMessageSender, PreparedReportSender>();
         var capture = (PreparedReportSender)(object)sender;
         var controller = (TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));

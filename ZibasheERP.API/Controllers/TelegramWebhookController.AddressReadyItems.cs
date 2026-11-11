@@ -219,6 +219,8 @@ public sealed partial class TelegramWebhookController
             ZibasheERP.Infrastructure.Services.ManualShippingRegistration.TrackingDestination(customer,_options.OwnerUserId) is not null)
             buttons=new[]{(IReadOnlyCollection<TelegramInlineButton>)new[]{new TelegramInlineButton("✅ ارسال شد",ManualSentPrefix+reference.ToString("N"))}}.Concat(buttons).ToArray();
         var referenceButtons = buttons.Concat(previous is null?ShippingReferenceButtons(reference):ShippingReferenceButtonsWithPhotoCount(reference,previous.Data.PhotoFileIds.Length)).ToArray();
+        var registeredAt=await _db.NotificationOutbox.AsNoTracking().Where(n=>n.Id==reference).Select(n=>n.CreatedAt).SingleAsync(ct);
+        addressText=ZibasheERP.API.AddressLabels.ShippingAddressDisplay.WithRegistrationDate(addressText,registeredAt);
         var selectedFancyModels = await GetSelectedFancyModelsAsync(items, ct);
         var parts = SplitTelegramMessage(addressText + "\n\n" + FormatAddressReadyItems(items, selectedFancyModels)).ToArray();
         var sent = await _sender.SendInlineKeyboardAsync(chatId, parts[0], referenceButtons, ct);

@@ -195,6 +195,7 @@ public sealed partial class TelegramWebhookController
         var address=await _db.Addresses.AsNoTracking().SingleAsync(a=>a.Id==parcel.AddressId&&a.CustomerId==customer.Id&&!a.IsDeleted,ct);
         var items=await SharedShippingService.Items(_db,context.RequestId.Value).AsNoTracking().Where(i=>i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null).ToArrayAsync(ct);
         var header=$"📦 درخواست ارسال مشترک\nگیرندهٔ اصلی: {ZibasheERP.API.AddressLabels.ShippingAddressDisplay.Identity(OrderCustomerLabel(customer),address)}\n\n{FormatAddressForDisplay(address)}\n\n";
+        header=ZibasheERP.API.AddressLabels.ShippingAddressDisplay.WithRegistrationDate(header,row.CreatedAt);
         var members=await SharedShippingMembersTextAsync(parcel,items,ct);
         var text=header+members+await SharedShippingItemsTextAsync(items,ct);
         if(text.Length>3900)text=header+members+await SharedShippingItemsTextAsync(items,ct,true)+"\nبرای مشاهدهٔ تمام اقلام، دکمهٔ زیر را بزنید.";

@@ -38,7 +38,7 @@ public sealed partial class TelegramWebhookController
         var addresses = await _db.Addresses.AsNoTracking().Where(a => addressIds.Contains(a.Id)).ToDictionaryAsync(a => a.Id, ct);
         var entries = roots.OrderBy(r => r.PostedAt).ThenBy(r => r.MessageId).Select(r => new PreparedAddressReport.Entry(
             r.MessageId, addresses.TryGetValue(r.AddressId, out var address) ? ShippingAddressDisplay.RecipientName(address) ?? "نام ثبت نشده" : "نام ثبت نشده",
-            r.Username)).ToArray();
+            r.Username, r.PostedAt)).ToArray();
         var page = PreparedAddressReport.Build(_options.ShippingChatId.Trim(), entries,
             first ? 0 : int.Parse(action, CultureInfo.InvariantCulture));
         var buttons = new List<IReadOnlyCollection<TelegramInlineButton>>();

@@ -20,6 +20,26 @@ public static class ShippingAddressDisplay
         }
         return text.ToString();
     }
+    public static string RegisteredDate(DateTime utc)
+    {
+        var local=TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.SpecifyKind(utc,DateTimeKind.Utc),"Asia/Tehran");
+        var calendar=new PersianCalendar();
+        var date=FormattableString.Invariant($"{calendar.GetYear(local):0000}/{calendar.GetMonth(local):00}/{calendar.GetDayOfMonth(local):00}");
+        return string.Concat(date.Select(c=>c is >= '0' and <= '9'?(char)('۰'+c-'0'):c));
+    }
+    public static string WithRegistrationDate(string text,DateTime utc)
+    {
+        var line="📅 تاریخ ثبت: "+RegisteredDate(utc);
+        var split=text.IndexOf('\n');
+        if(split<0)return text+"\n"+line;
+        var rest=text[(split+1)..];
+        if(rest.StartsWith("📅 تاریخ ثبت: ",StringComparison.Ordinal))
+        {
+            var end=rest.IndexOf('\n');
+            return text[..(split+1)]+line+(end<0?string.Empty:rest[end..]);
+        }
+        return text[..(split+1)]+line+"\n"+rest;
+    }
     public static string NormalizeName(string value)=>Regex.Replace(Characters(value),@"\s+"," ").Trim();
     private static bool IsCourtesy(string value)=>Regex.IsMatch(value,@"^(?:مرسی|ممنونم?|سپاسگزارم|سپاس|متشکرم|با تشکر|لطفا)(?:\s|$)");
     private static bool IsDisplayName(string value)=>value.Length is >=2 and <=100&&Regex.IsMatch(value,@"^[\p{L}\p{M} ]+$")&&
