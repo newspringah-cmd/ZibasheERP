@@ -10,6 +10,26 @@ namespace ZibasheERP.Application.Tests.Features.Invoices;
 public sealed class IssueInvoiceCommandHandlerTests
 {
     [Fact]
+    public async Task Handle_ManualPhotosPersistTheMatchingInvoiceLineIdentity()
+    {
+        var customer=new Customer{Id=Guid.NewGuid(),FullName="Photo fixture",Mobile="09120000009",TelegramGroup=new CustomerTelegramGroup{Id=Guid.NewGuid(),ChatId="-10099887766",IsActive=true}};
+        var vanilla=new OrderItem{Id=Guid.NewGuid(),ManualDescription="وانیلا اسموک",RequestedVolumeMl=10,RowNumber=1};
+        var cashmere=new OrderItem{Id=Guid.NewGuid(),ManualDescription="کشمیر اسکین",RequestedVolumeMl=5,RowNumber=2};
+        var order=new Order{Id=Guid.NewGuid(),Customer=customer,CustomerId=customer.Id,Source=OrderSource.ManualInvoice,OrderNumber="ZS-PHOTO-PAIR",FinalAmount=100000,Items={cashmere,vanilla}};
+        var outbox=new NotificationOutboxRepositoryStub();var handler=new IssueInvoiceCommandHandler(new InvoiceRepositoryStub(order),outbox,new PaymentAccountRepositoryStub());
+        await handler.Handle(new IssueInvoiceCommand(order.Id,["vanilla-photo","cashmere-photo"]),CancellationToken.None);
+        var photos=outbox.AddedNotifications.Where(n=>n.EventType=="InvoicePerfumePhoto").OrderBy(n=>n.CreatedAt).Select(n=>JsonSerializer.Deserialize<JsonElement>(n.Payload)).ToArray();
+        Assert.Equal(2,photos.Length);
+        Assert.Equal("vanilla-photo",photos[0].GetProperty("FileId").GetString());
+        Assert.Equal(vanilla.Id,photos[0].GetProperty("OrderItemId").GetGuid());
+        Assert.Equal("وانیلا اسموک",photos[0].GetProperty("PersianName").GetString());
+        Assert.Equal(10m,photos[0].GetProperty("RequestedVolumeMl").GetDecimal());
+        Assert.Equal("cashmere-photo",photos[1].GetProperty("FileId").GetString());
+        Assert.Equal(cashmere.Id,photos[1].GetProperty("OrderItemId").GetGuid());
+        Assert.Equal("کشمیر اسکین",photos[1].GetProperty("PersianName").GetString());
+    }
+
+    [Fact]
     public async Task Handle_CopiesOrderSnapshotAndMarksOrderInvoiced()
     {
         var customer = new Customer

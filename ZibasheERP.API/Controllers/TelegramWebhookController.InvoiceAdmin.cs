@@ -2832,6 +2832,8 @@ public sealed partial class TelegramWebhookController
                 : "شناسه مشتری را به صورت @username یا Telegram ID وارد کنید:", ct);
             return;
         }
+        if (await TryHandleManualInvoicePhotoCallbackAsync(callback, ct)) return;
+
         if (callback.Data == "invoicebatch:manualadd")
         {
             if (!_manualInvoiceDrafts.TryGet(chatId, userId, out var manualDraft) ||
@@ -3465,54 +3467,26 @@ public sealed partial class TelegramWebhookController
             _manualInvoiceDrafts.Remove(message.Chat.Id, message.From.Id);
             return false;
         }
+        if (message.Text?.Trim() is "/cancel" or "لغو")
+        {
+            _manualInvoiceDrafts.Remove(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "صدور فاکتور دستی لغو شد.", ct);
+            return true;
+        }
+        if (draft.Stage == TelegramManualInvoiceStage.AwaitingPhotoConfirmation)
+        {
+            await ReplyAsync(message.Chat.Id, "ابتدا عکس کنار نام عطر را بررسی کنید و «تأیید عکس» یا «تغییر عکس» را بزنید.", ct);
+            return true;
+        }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingPhoto)
         {
             var photo = message.Photo?.OrderByDescending(value => (long)value.Width * value.Height).FirstOrDefault();
             if (photo is null)
             {
-                await ReplyAsync(message.Chat.Id, "لطفاً عکس محصول را به‌صورت Photo ارسال کنید.", ct);
+                await ReplyAsync(message.Chat.Id, "لطفاً عکس محصول را به‌صورت Photo ارسال کنید؛ برای لغو /cancel را بفرستید.", ct);
                 return true;
             }
-            draft.ProductPhotoFileIds.Add(photo.FileId);
-            if (draft.ProductPhotoFileIds.Count < draft.Lines.Count)
-            {
-                var nextIndex = draft.ProductPhotoFileIds.Count;
-                _manualInvoiceDrafts.Set(draft);
-                await ReplyAsync(message.Chat.Id,
-                    $"عکس آیتم {nextIndex + 1} از {draft.Lines.Count} را ارسال کنید:\n{draft.Lines[nextIndex].Description}", ct);
-                return true;
-            }
-            static string IdentityKey(string identity) => identity.Trim().TrimStart('@').ToLowerInvariant();
-            var recipient = draft.IsGift ? draft.GiftRecipientIdentity : null;
-            var entry = draft.Entries.FirstOrDefault(value =>
-                IdentityKey(value.CustomerIdentity) == IdentityKey(draft.CustomerIdentity) &&
-                IdentityKey(value.GiftRecipientIdentity ?? "") == IdentityKey(recipient ?? ""));
-            if (entry is null)
-            {
-                entry = new TelegramManualInvoiceEntry
-                {
-                    CustomerIdentity = draft.CustomerIdentity, GiftRecipientIdentity = recipient
-                };
-                draft.Entries.Add(entry);
-            }
-            entry.Lines.AddRange(draft.Lines);
-            entry.Photos.AddRange(draft.ProductPhotoFileIds);
-            draft.Stage = TelegramManualInvoiceStage.AwaitingMoreLines;
-            _manualInvoiceDrafts.Set(draft);
-            var total = draft.Lines.Sum(line => (line.TotalAmount ?? line.Quantity * line.UnitAmount) + line.BottleAmount);
-            await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
-                (draft.IsInventory ? "🔴🔴 موجودی 🔴🔴\n" : string.Empty) +
-                $"پیش‌نمایش فاکتور دستی\n" +
-                (draft.IsGift
-                    ? $"هدیه‌دهنده: {draft.CustomerIdentity}\nهدیه‌گیرنده: {draft.GiftRecipientIdentity}\n"
-                    : $"مشتری: {draft.CustomerIdentity}\n") +
-                $"تعداد ردیف: {draft.Lines.Count}\nمبلغ کل: {total:N0} تومان\nعکس همه آیتم‌ها: دریافت شد ✅",
-                new IReadOnlyCollection<TelegramInlineButton>[]
-                {
-                    new[] { new TelegramInlineButton("➕ ادامه برای فاکتور جدید", "invoicebatch:manualadd") },
-                    new[] { new TelegramInlineButton("✅ پایان", "invoicebatch:manualfinish") },
-                    new[] { new TelegramInlineButton("❌ لغو", "invoicebatch:manualcancel") }
-                }, ct);
+            await PreviewManualInvoicePhotoAsync(draft, photo.FileId, ct);
             return true;
         }
         var text = message.Text?.Trim();

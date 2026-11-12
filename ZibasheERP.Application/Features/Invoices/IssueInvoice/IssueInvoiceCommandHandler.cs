@@ -180,14 +180,19 @@ public sealed class IssueInvoiceCommandHandler
             }
             if (!request.IsGift && request.ManualProductPhotoFileIds is { Count: > 0 })
             {
-                foreach (var photoFileId in request.ManualProductPhotoFileIds.Where(value => !string.IsNullOrWhiteSpace(value)))
+                var manualPhotoItems = order.Items.Where(item => !item.IsDeleted).OrderBy(item => item.RowNumber).ToArray();
+                foreach (var photo in request.ManualProductPhotoFileIds.Where(value => !string.IsNullOrWhiteSpace(value)).Select((file, index) => new { File = file, Index = index }))
                 {
+                    var item = manualPhotoItems.ElementAtOrDefault(photo.Index);
                     await _outboxRepository.AddAsync(new NotificationOutbox
                     {
                         Id = Guid.NewGuid(), CreatedAt = now.AddTicks(sequence++),
                         CustomerId = order.CustomerId, OrderId = order.Id, Channel = "Telegram",
                         EventType = "InvoicePerfumePhoto", Recipient = notification.Recipient,
-                        Payload = System.Text.Json.JsonSerializer.Serialize(new { FileId = photoFileId.Trim() })
+                        Payload = System.Text.Json.JsonSerializer.Serialize(new {
+                            FileId = photo.File.Trim(), OrderItemId = item?.Id,
+                            PersianName = item is null ? null : InvoicePersianName(item),
+                            RequestedVolumeMl = item?.RequestedVolumeMl })
                     }, cancellationToken);
                 }
             }

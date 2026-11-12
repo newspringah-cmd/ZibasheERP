@@ -43,6 +43,12 @@ if(args.Contains("--production-recipient-totals"))
     Console.WriteLine("Production recipient total tests passed.");
     return;
 }
+if(args.Contains("--manual-invoice-photos"))
+{
+    await ManualInvoicePhotoTests.Run(Check);
+    Console.WriteLine("Manual invoice photo tests passed.");
+    return;
+}
 if(args.Contains("--partial-invoice-cancellation"))
 {
     await PartialInvoiceCancellationTests.Run(Check);
@@ -319,6 +325,7 @@ await InvoiceCancellationTests.Run(Check);
 await PartialInvoiceCancellationTests.Run(Check);
 await InvoiceTransferTests.Run(Check);
 await InvoiceBundleTests.Run(Check);
+await ManualInvoicePhotoTests.Run(Check);
 await InvoicePaymentCopyTests.Run(Check);
 await BottleUpgradeTests.Run(Check);
 await SourcePhotoReadTests.Run(Check);

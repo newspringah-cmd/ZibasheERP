@@ -113,7 +113,8 @@ public enum TelegramManualInvoiceStage
     AwaitingMoreLines,
     AwaitingPhoto,
     AwaitingConfirmation,
-    Issuing
+    Issuing,
+    AwaitingPhotoConfirmation
 }
 
 public sealed class TelegramManualInvoiceDraft
@@ -127,6 +128,9 @@ public sealed class TelegramManualInvoiceDraft
     public bool IsInventory { get; set; }
     public string GiftRecipientIdentity { get; set; } = string.Empty;
     public List<string> ProductPhotoFileIds { get; } = [];
+    public string? PendingProductPhotoFileId { get; set; }
+    public Guid PendingPhotoToken { get; set; }
+    public long? PendingPhotoMessageId { get; set; }
     public string PendingLineDescription { get; set; } = string.Empty;
     public decimal PendingLineQuantity { get; set; }
     public decimal PendingLineUnitAmount { get; set; }
