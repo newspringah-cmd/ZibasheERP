@@ -721,6 +721,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                                              line.Quantity > 0 && line.UnitAmount >= 0 && line.BottleAmount >= 0).ToArray();
         if (validLines.Length == 0)
             throw new InvalidOperationException("حداقل یک ردیف معتبر برای فاکتور دستی لازم است.");
+        if (validLines.Any(line => ManualInvoiceInputRules.IsCustomerIdentityOnly(line.Description)))
+            throw new InvalidOperationException("آیدی مشتری جای نام عطر ثبت شده است؛ نام صحیح عطر را وارد کنید.");
         var validPhotoFileIds = productPhotoFileIds
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value.Trim())

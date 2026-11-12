@@ -3527,6 +3527,11 @@ public sealed partial class TelegramWebhookController
         }
         if (draft.Stage == TelegramManualInvoiceStage.AwaitingLine)
         {
+            if (ZibasheERP.Application.Services.ManualInvoiceInputRules.IsCustomerIdentityOnly(text.Split('\n', 2)[0]))
+            {
+                await ReplyAsync(message.Chat.Id, "اینجا نام عطر لازم است؛ آیدی مشتری را به‌جای نام عطر وارد نکنید. نام صحیح عطر را بفرستید.", ct);
+                return true;
+            }
             if (text.Equals("ثبت", StringComparison.OrdinalIgnoreCase))
             {
                 if (draft.Lines.Count == 0)

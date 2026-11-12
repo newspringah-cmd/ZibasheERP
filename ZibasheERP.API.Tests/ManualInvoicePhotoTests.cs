@@ -68,6 +68,17 @@ public static class ManualInvoicePhotoTests
         draft=Draft(1);await Photo("expired-photo");var expired=sent.Photos.Last();var expiredToken=draft.PendingPhotoToken;draft.UpdatedAt=DateTime.UtcNow.AddMinutes(-21);
         await Click("invoicebatch:photook:"+expiredToken.ToString("N"),expired.Id);
         check(draft.ProductPhotoFileIds.Count==0&&!store.TryGet(chat,owner,out _),"expired photo confirmation cannot resurrect a manual invoice draft");
+        draft=Draft(0);draft.Stage=TelegramManualInvoiceStage.AwaitingLine;
+        foreach(var text in new[]{"@marsheem","@marsheem\n2\n100000"})
+            await Call("TryHandleManualInvoiceMessageAsync",new TelegramMessage(text,new(chat,"private"),new(owner,null),null,MessageId:200),CancellationToken.None);
+        check(draft.Stage==TelegramManualInvoiceStage.AwaitingLine&&draft.Lines.Count==0&&draft.PendingLineDescription=="",
+            "customer username cannot become the perfume name in either stepwise or three-line manual entry");
+        check(!ManualInvoiceInputRules.IsCustomerIdentityOnly("عطر هدیه برای @fixture")&&ManualInvoiceInputRules.IsCustomerIdentityOnly("https://t.me/fixture"),
+            "identity-only name guard permits real product descriptions while recognizing a pasted Telegram profile link");
+        var rejected=false;
+        try { await new ZibasheERP.Infrastructure.Services.InvoiceIssuanceService(null!,null!).IssueManualAsync("@fixture",[new ManualInvoiceLineInput("@marsheem",1,100000)], ["photo"],owner.ToString()); }
+        catch(InvalidOperationException e) { rejected=e.Message.Contains("آیدی مشتری جای نام عطر"); }
+        check(rejected,"manual issuance service rejects identity-only perfume names before any database access or financial mutation");
     }
 }
 
