@@ -261,13 +261,18 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "اطلاعات مشتری پیدا نشد.", ct, true);
                 return true;
             }
+            Guid? resolvedRequest;
+            try { resolvedRequest = await ShippingTrackingParcelResolver.ResolveAsync(_db, trackingCustomerId,
+                callback.Message.Chat.Id.ToString(), callback.Message.MessageId, ct: ct); }
+            catch (InvalidOperationException exception)
+            { await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, true); return true; }
             await CancelPendingShippingPackDraftsAsync(callback.Message.Chat.Id,callback.From.Id,ct);
             _orderFlowDrafts.SetShippingTrackingPhoto(new TelegramShippingTrackingPhotoDraft
             {
                 ChatId = callback.Message.Chat.Id,
                 UserId = callback.From.Id,
                 CustomerId = trackingCustomerId,
-                ShippingRequestId = Guid.Empty,
+                ShippingRequestId = resolvedRequest ?? Guid.Empty,
                 SourceMessageId = callback.Message.MessageId,
                 HasBatchControls = false
             });
@@ -1277,6 +1282,22 @@ public sealed partial class TelegramWebhookController
         if (photo is null)
         {
             await ReplyAsync(message.Chat.Id, "لطفاً کد رهگیری را به‌صورت عکس ارسال کنید یا /cancel را بفرستید.", ct);
+            return true;
+        }
+        try
+        {
+            var resolved = await ShippingTrackingParcelResolver.ResolveAsync(_db, draft.CustomerId,
+                message.Chat.Id.ToString(), draft.SourceMessageId,
+                draft.ShippingRequestId == Guid.Empty ? null : draft.ShippingRequestId, ct);
+            if (resolved.HasValue && resolved != draft.ShippingRequestId)
+                draft = new TelegramShippingTrackingPhotoDraft { ChatId=draft.ChatId, UserId=draft.UserId,
+                    CustomerId=draft.CustomerId, ShippingRequestId=resolved.Value,
+                    SourceMessageId=draft.SourceMessageId, HasBatchControls=draft.HasBatchControls };
+        }
+        catch (InvalidOperationException exception)
+        {
+            _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
+            await ReplyAsync(message.Chat.Id, "⚠️ " + exception.Message, ct);
             return true;
         }
         if(draft.ShippingRequestId!=Guid.Empty&&await ZibasheERP.Infrastructure.Services.SharedShippingService.ReadAsync(_db,draft.ShippingRequestId,ct)!=null)

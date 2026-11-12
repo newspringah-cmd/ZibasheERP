@@ -357,7 +357,7 @@ public static class ShippingReferenceTests
                 check(cancelled.Status==NotificationOutboxStatus.Processed&&JsonDocument.Parse(cancelled.Payload).RootElement.GetProperty("State").GetString()=="cancelled"&&
                     (await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.Id==anotherOperator)).Status==NotificationOutboxStatus.Pending,
                     mode+" button cancels only this operator's pending pack-photo form, preserving other operators");
-                check(trackingStore.TryGetShippingTrackingPhoto(Ship,Operator,out var activeTracking)&&activeTracking.ShippingRequestId==(mode=="trackingcustomer"?Guid.Empty:trackingParcel),
+                check(trackingStore.TryGetShippingTrackingPhoto(Ship,Operator,out var activeTracking)&&activeTracking.ShippingRequestId==trackingParcel,
                     mode+" button selects the correct tracking photo destination");
                 // Reproduce a durable stale form surviving from the previous version.
                 await db.NotificationOutbox.Where(n=>n.Id==pending.Id).ExecuteUpdateAsync(u=>u.SetProperty(n=>n.Status,NotificationOutboxStatus.Pending).SetProperty(n=>n.Payload,pending.Payload));
@@ -560,6 +560,60 @@ public static class ShippingReferenceTests
             var legacyMessage=Message(id:901) with{ReplyMarkup=new([[new("گزارش این آیدی","shipping:idreport:"+newParcel.ToString("N")),new("لینک",Url:"https://example.invalid/")]])};
             await Call("UpgradeShippingAddressReferencesAsync",new TelegramCallbackQuery("fixture",new(Operator,null),legacyMessage,"shipping:idreport:"+newParcel.ToString("N")),CancellationToken.None);
             var edit=sent.Calls.Last(c=>c.Method=="EditReplyMarkupAsync");check(edit.Buttons!.Count==5&&edit.Buttons.First().Last().Url=="https://example.invalid/"&&!edit.Buttons.SelectMany(r=>r).Any(b=>b.CallbackData?.StartsWith("shipping:idreport:")==true),"existing address upgrade removes retired ID report, preserves unrelated buttons and appends four references");
+
+            // A repost contains an exact frozen snapshot but an old customer-only
+            // tracking button. It must complete that parcel, never all ready items.
+            var repostParcel=Guid.NewGuid();var sourceAddress=Guid.NewGuid();
+            var repostFirst=await Item(customer,request:repostParcel);var repostSecond=await Item(customer,request:repostParcel);
+            var newerUnassigned=await Item(customer);var unrelatedParcel=Guid.NewGuid();var unrelated=await Item(customer,request:unrelatedParcel);
+            var repostIds=new[]{repostFirst.Id,repostSecond.Id};
+            await db.OrderItems.Where(i=>repostIds.Contains(i.Id)).ExecuteUpdateAsync(s=>s.SetProperty(i=>i.ShippingTelegramMessageId,(long?)900001));
+            async Task<Guid> RepostSource(long message,Guid? request,Guid[] ids,Guid? addressOverride=null,DateTime? at=null)
+            {
+                var id=Guid.NewGuid();db.NotificationOutbox.Add(new(){Id=id,CustomerId=customer.Id,Channel="ShippingReferenceContext",EventType="AddressReferences",Recipient=Ship.ToString(),
+                    Payload=JsonSerializer.Serialize(new{CustomerId=customer.Id,RequestId=request,ItemIds=ids,ChatId=Ship.ToString(),Kind="root",MessageId=message,Installed=true,AddressId=addressOverride??sourceAddress}),
+                    Status=NotificationOutboxStatus.Processed,CreatedAt=at??DateTime.UtcNow});await db.SaveChangesAsync();db.ChangeTracker.Clear();return id;
+            }
+            await RepostSource(900001,repostParcel,repostIds);
+            var duplicateSource=await RepostSource(900002,null,repostIds);
+            check(await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900002)==repostParcel,
+                "reposted address resolves its frozen item snapshot to the original proven parcel instead of returning zero items");
+            check(!db.ChangeTracker.HasChanges(),"tracking parcel resolution is read-only and never assigns unrelated ready items");
+            check(await Throws(async()=>{await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900002,unrelatedParcel);}),
+                "a changed/stale draft cannot override the parcel bound to the source address");
+            await RepostSource(900003,null,[]);
+            check(await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900003)==null,
+                "empty legacy address never acquires even a single currently open parcel by customer identity");
+            await RepostSource(900004,null,[repostFirst.Id,unrelated.Id]);
+            check(await Throws(async()=>{await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900004);}),
+                "mixed parcel snapshots are rejected before sending tracking");
+            await RepostSource(900005,null,repostIds,Guid.NewGuid());
+            check(await Throws(async()=>{await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900005);}),
+                "reposted items cannot complete a different delivery address");
+            await RepostSource(900006,null,[repostFirst.Id,outside.Id]);
+            check(await Throws(async()=>{await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900006);}),
+                "snapshot containing another customer's item cannot authorize dispatch");
+            await RepostSource(900007,null,[newerUnassigned.Id]);
+            check(await Throws(async()=>{await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900007);}),
+                "unassigned snapshot cannot silently send tracking and report zero without parcel review");
+            await RepostSource(900008,null,repostIds,at:DateTime.UtcNow.AddDays(-1));
+            check(await Throws(async()=>{await ShippingTrackingParcelResolver.ResolveAsync(db,customer.Id,Ship.ToString(),900008);}),
+                "old address snapshot cannot ship items assigned to a later parcel");
+            await Call("TryHandleShippingRequestCallbackAsync",new TelegramCallbackQuery("fixture",new(Operator,null),Message(id:900002),"shipping:trackingcustomer:"+customer.Id.ToString("N")),CancellationToken.None);
+            check(trackingStore.TryGetShippingTrackingPhoto(Ship,Operator,out var repostDraft)&&repostDraft.ShippingRequestId==repostParcel,
+                "customer-only callback records the original parcel resolved from this exact repost");
+            // Also cover an in-flight draft captured before the upgrade.
+            trackingStore.SetShippingTrackingPhoto(new(){ChatId=Ship,UserId=Operator,CustomerId=customer.Id,ShippingRequestId=Guid.Empty,SourceMessageId=900002});
+            var repostPhotosBefore=sent.Photos.Count;
+            await Call("TryHandleShippingTrackingPhotoMessageAsync",new TelegramMessage(null,new(Ship,"supergroup"),new(Operator,null),null,Photo:[new("repost-tracking-photo",100,100)],MessageId:900010),CancellationToken.None);
+            check(sent.Photos.Count==repostPhotosBefore+1&&sent.Photos.Last().Chat==Client.ToString(),
+                "in-flight customer-only photo reaches the proper customer once after exact source recovery");
+            check(await db.OrderItems.CountAsync(i=>repostIds.Contains(i.Id)&&i.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped)==2,
+                "tracking photo for reposted address completes its original two-item package");
+            check(await db.OrderItems.CountAsync(i=>(i.Id==newerUnassigned.Id||i.Id==unrelated.Id)&&i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null)==2,
+                "reposted tracking leaves newer unassigned and other-parcel ready items untouched");
+            check((await Rows(ShippingTrackingNotices.Channel)).Any(n=>JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(n.Payload) is var notice&&notice!.SourceMessageId==900002&&notice.RequestId==repostParcel),
+                "tracking success notice durably records the recovered original parcel under the reposted address");
         }
         finally
         {

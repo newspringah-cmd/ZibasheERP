@@ -25,8 +25,15 @@ public static class ShippingTrackingNotices
         foreach(var payload in roots)
         {
             Source? root;try{root=JsonSerializer.Deserialize<Source>(payload);}catch(JsonException){continue;}
-            if(root is {Kind:"root",Installed:true}&&root.CustomerId==data.CustomerId&&root.ChatId==data.ChatId&&
-                root.MessageId==data.SourceMessageId&&(!data.RequestId.HasValue||root.RequestId==data.RequestId))return true;
+            if(root is {Kind:"root",Installed:true}&&root.CustomerId==data.CustomerId&&root.ChatId==data.ChatId&&root.MessageId==data.SourceMessageId)
+            {
+                if(!data.RequestId.HasValue||root.RequestId==data.RequestId)return true;
+                if(root.RequestId is null)
+                {
+                    try { if(await ShippingTrackingParcelResolver.ResolveAsync(db,data.CustomerId,data.ChatId,data.SourceMessageId,data.RequestId,ct)==data.RequestId)return true; }
+                    catch(InvalidOperationException) { /* Reposted snapshot is no longer a proven parcel. */ }
+                }
+            }
         }
         if(data.RequestId is not Guid request)return false;
         if(!await db.OrderItems.AsNoTracking().AnyAsync(i=>!i.IsDeleted&&i.ShippingRequestId==request&&i.ShippingTelegramMessageId==data.SourceMessageId,ct))return false;
