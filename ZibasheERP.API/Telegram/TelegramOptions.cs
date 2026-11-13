@@ -26,8 +26,8 @@ public sealed class TelegramOptions
     public string AccountingChatId { get; set; } = string.Empty;
     public string InvoiceGreetingStickerFileId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
-    // Enable after the live source layout and price unit have been verified.
-    public bool AutomaticDirhamRateEnabled { get; set; }
+    // Live source layout and denomination are verified; operators may disable refresh explicitly.
+    public bool AutomaticDirhamRateEnabled { get; set; } = true;
     public string ShippingOperatorUserIds { get; set; } = string.Empty;
     // Ignore inbound activity in announcement-only groups while retaining outbound publishing.
     public string SilentGroupChatIds { get; set; } = string.Empty;

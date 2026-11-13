@@ -18,6 +18,17 @@ public static class FlashSaleMainPriceTests
         var promo=Guid.NewGuid();var text=Caption(list,new(564000,promo));
         check(text.Contains("قیمت هر میل: 764,000 تومان\n🔴 <b>قیمت پروموشن هر میل: 564,000 تومان</b>"),"main channel caption places the exact promotion price in bold with a red marker directly below the unchanged ordinary price");
         check(!Caption(list,new(list.PricePerMl,null)).Contains("قیمت پروموشن"),"a caption without an active pricing quote has no promotion-price line");
+        foreach(var status in new[]{SalesListStatus.Cancelled,SalesListStatus.Closed,SalesListStatus.Full})
+        {
+            list.Status=status;
+            check(!Caption(list,new(564000,promo)).Contains("قیمت پروموشن")&&!FlashSaleMainPriceDisplay.Snapshot(list,new(564000,promo)).Visible,
+                "cancelled or completed list hides a promotion even when its old campaign deadline is still in the future: "+status);
+        }
+        list.Status=SalesListStatus.Open;list.ReservedVolume=list.TotalVolume;
+        check(!Caption(list,new(564000,promo)).Contains("قیمت پروموشن"),"a filled list cannot keep advertising a promotion while rollover is pending");
+        list.ReservedVolume=0;
+        check(FlashSalePricing.InvoicePrice(new SalesListRequest{FlashSalePromotionId=promo,PerfumePricePerMl=564000},764000)==564000,
+            "removing a promotion display preserves the discount accepted by existing confirmed purchases");
         check(Caption(list,new(5000.50m,promo)).Contains("5,000.50 تومان</b>"),"promotion display preserves the billing quote's decimal precision instead of rounding to a different charge");
         list.PersianName=new string('ن',200);list.EnglishName=new string('a',200);list.Accords=new string('b',200);list.TopNotes=new string('ن',200);list.MiddleNotes=new string('م',200);list.BaseNotes=new string('ب',200);list.ProductPageUrl="https://example.com/"+new string('a',200);
         var compact=Caption(list,new(564000,promo));
@@ -43,6 +54,12 @@ public static class FlashSaleMainPriceTests
             var state=FlashSaleMainPriceDisplay.Snapshot(origin,quote);
             db.NotificationOutbox.Add(new(){Id=FlashSaleMainPriceDisplay.Key(origin.Id),CustomerId=Guid.Empty,Channel=FlashSaleMainPriceDisplay.Channel,EventType="SyntheticPromotionCaption",Recipient=origin.Id.ToString("N"),Payload=JsonSerializer.Serialize(state),Status=NotificationOutboxStatus.Processed,CreatedAt=now});await db.SaveChangesAsync();
             check((await FlashSaleMainPriceDisplay.TargetsAsync(db,offer.EndsAtUtc,default)).Contains(origin.Id),"previously visible promotions remain cleanup targets after their deadline passes");
+            origin.Status=SalesListStatus.Cancelled;await db.SaveChangesAsync();
+            check((await FlashSaleMainPriceDisplay.TargetsAsync(db,now,default)).Contains(origin.Id)&&
+                !Caption(origin,await FlashSalePricing.QuoteAsync(db,origin,now)).Contains("قیمت پروموشن")&&
+                !FlashSaleMainPriceDisplay.Snapshot(origin,quote).Visible,
+                "a cancelled list remains a cleanup target while its future-dated promotion is still recorded");
+            origin.Status=SalesListStatus.Open;await db.SaveChangesAsync();
             offer.CancelledAtUtc=now;await db.SaveChangesAsync();
             check(!Caption(origin,await FlashSalePricing.QuoteAsync(db,origin,now)).Contains("قیمت پروموشن")&&(await FlashSaleMainPriceDisplay.TargetsAsync(db,now,default)).Contains(origin.Id),"manual cancellation removes the offer line and schedules cleanup of its original channel post");
             offer.CancelledAtUtc=null;offer.EndsAtUtc=now.AddHours(1);await db.SaveChangesAsync();await FlashSaleLifecycle.EndAsync(db,offer.Id);

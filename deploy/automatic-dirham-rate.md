@@ -2,25 +2,21 @@
 
 Source: https://alanchand.com/currencies-price
 
-Status: implemented but **disabled by default**. The live Alanchand document has
-not yet been verified: the development environment rejects the domain with a
-network-policy HTTP 403. A draft adds `alanchand.com` while preserving the other
-pending and published domain rules. Reviewing and publishing that draft is
-required before live source verification. Do not enable the worker using only
-the synthetic parser fixtures as evidence of source compatibility.
+Enabled by default when Telegram is enabled. Disable explicitly with
+`Telegram__AutomaticDirhamRateEnabled=false`. No database migration is required.
 
-After access is available, save a bounded copy of the actual source, verify the
-AED row, buy/sell column, denomination and displayed numeric value, and run the
-parser against it. The current adapter accepts explicitly labeled HTML tables;
-if the provider instead returns client-rendered data or a different layout,
-adapt the parser to the observed source and retain a redacted source fixture.
-Do not infer prices from page-wide numbers. Verify redirects before enabling;
-the registered HTTP client intentionally does not follow them automatically.
+The live source was retrieved over HTTPS with status 200 on 2026-11-13 after the
+reviewed network policy update was applied. Its AED row displayed **74,150 toman
+selling** and **73,410 toman buying**; the unit appears in the nearest enclosing
+section's `v4-ltbl__sub` header ("اسکناس · تومان"). The adapter reads that section
+unit together with the selling column and visible AED price, rather than page
+metadata, the buying column or the "one dollar" conversion. A regression fixture
+preserves this observed layout. Current prices may change; this is verification
+evidence, not a permanently configured rate.
 
-Once the live result is independently verified, enable
-`Telegram__AutomaticDirhamRateEnabled=true` in the existing production release
-workflow, preserving all current environment values and services. No database
-migration is required. Deploying source alone does not enable the worker.
+The adapter accepts explicitly labeled HTML tables. If the provider switches to
+client-rendered data or changes its labels, a failed parse retains the prior rate.
+The registered HTTP client intentionally does not follow redirects automatically.
 
 The worker fetches on startup if due, then every two hours after a successful
 record. Failures retry on the five-minute scan. Cadence is durable across

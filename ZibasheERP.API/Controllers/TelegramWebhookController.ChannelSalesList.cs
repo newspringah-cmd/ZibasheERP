@@ -841,7 +841,7 @@ public sealed partial class TelegramWebhookController
     internal static (string Main, string? Continuation) FormatPromotionChannelSalesListPages(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests,
         ZibasheERP.Infrastructure.Services.FlashSalePricing.Quote quote)
-        => FormatSalesListPagesCore(list,requests,false,1000,quote);
+        => FormatSalesListPagesCore(list,requests,false,1000,FlashSaleMainPriceDisplay.DisplayQuote(list,quote));
 
     private static (string Main, string? Continuation) FormatSalesListPages(
         SalesList list, IReadOnlyCollection<SalesListRequest> requests,

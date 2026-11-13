@@ -68,7 +68,14 @@ public sealed class AlanchandDirhamRateSource(HttpClient client)
                 var cells = Cells(row);
                 if (cells.Length != columns.Length || !cells.Any(IsDirham)) continue;
                 var text = Text(cells[selected]);
-                var labels = columns[selected] + " " + text;
+                // Live Alanchand tables label the unit in their own section header,
+                // while the column itself is simply "فروش". Do not borrow another
+                // table's unit (for example transfers versus cash exchange).
+                var section = table.Ancestors("section").FirstOrDefault();
+                var sectionUnit = section?.Descendants("span").FirstOrDefault(n =>
+                    n.GetAttributeValue("class", "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                        .Contains("v4-ltbl__sub"));
+                var labels = columns[selected] + " " + text + " " + (sectionUnit is null ? "" : Text(sectionUnit));
                 var toman = labels.Contains("تومان");
                 var rial = labels.Contains("ریال");
                 if (toman == rial || !TryPrice(text, out var amount))
@@ -87,7 +94,8 @@ public sealed class AlanchandDirhamRateSource(HttpClient client)
     }
 
     private static HtmlNode[] Cells(HtmlNode row) => row.ChildNodes.Where(n => n.Name is "td" or "th").ToArray();
-    private static string Text(HtmlNode node) => Normalize(HtmlEntity.DeEntitize(node.InnerText));
+    private static string Text(HtmlNode node) => Normalize(HtmlEntity.DeEntitize(string.Join(" ",
+        node.DescendantsAndSelf().Where(n => n.NodeType == HtmlNodeType.Text).Select(n => n.InnerText))));
     private static bool IsDirham(HtmlNode node)
     {
         var text = Text(node);

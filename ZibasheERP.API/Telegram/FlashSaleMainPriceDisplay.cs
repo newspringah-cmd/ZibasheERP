@@ -29,5 +29,12 @@ public static class FlashSaleMainPriceDisplay
         foreach(var payload in old){try{var state=JsonSerializer.Deserialize<State>(payload);if(state is not null)clean.Add(state.ListId);}catch(JsonException){}}
         return active.Concat(clean).Distinct().ToArray();
     }
-    public static State Snapshot(SalesList list,FlashSalePricing.Quote quote)=>new(list.Id,quote.PromotionId,quote.PromotionId.HasValue?quote.PricePerMl:null,quote.PromotionId.HasValue);
+    public static FlashSalePricing.Quote DisplayQuote(SalesList list,FlashSalePricing.Quote quote)=>
+        !list.IsDeleted&&list.Status==SalesListStatus.Open&&list.RemainingVolume>0
+            ?quote:new(list.PricePerMl,null);
+    public static State Snapshot(SalesList list,FlashSalePricing.Quote quote)
+    {
+        var visible=DisplayQuote(list,quote);
+        return new(list.Id,visible.PromotionId,visible.PromotionId.HasValue?visible.PricePerMl:null,visible.PromotionId.HasValue);
+    }
 }

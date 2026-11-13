@@ -22,6 +22,16 @@ public static class AutomaticDirhamRateTests
             "automatic dirham retains decimal precision without rounding currency incorrectly");
         check(AlanchandDirhamRateSource.Parse(Table("تومان", "40123") + Table("تومان", "40123"), at).TomanPerDirham == 40123,
             "duplicate responsive copies must agree on the same rate");
+        var actualLayout="<section class='v4-ltbl'><div><span class='v4-ltbl__sub'>اسکناس · تومان</span></div>"+
+            "<table><thead><tr><th>ارز</th><th>فروش</th><th>خرید</th><th>تغییر</th><th>یک دلار چند؟</th><th>صفحه</th></tr></thead>"+
+            "<tbody><tr><th scope='row'><a href='https://alanchand.com/currencies-price/aed'>درهم<small>AED</small></a></th>"+
+            "<td><b data-live='c.aed' data-f='s' data-n='74150'>۷۴,۱۵۰</b></td><td>۷۳,۴۱۰</td><td>۰.۰۰%</td><td>۳.۶۷</td><td>←</td></tr></tbody></table></section>";
+        check(AlanchandDirhamRateSource.Parse(actualLayout,at).TomanPerDirham==74150,
+            "verified Alanchand section layout selects AED cash sale 74150 toman, not buy 73410 or USD conversion 3.67");
+        var missingUnitRefused=false;
+        try{AlanchandDirhamRateSource.Parse(actualLayout.Replace("اسکناس · تومان","اسکناس"),at);}
+        catch(InvalidOperationException){missingUnitRefused=true;}
+        check(missingUnitRefused,"Alanchand section layout still refuses rates when the table unit disappears");
         foreach (var invalid in new[] {
             Table("", "40123"), Table("تومان / ریال", "40123"), Table("تومان", "0"),
             Table("تومان", "-40123"), Table("تومان", "40,123 +5%"), Table("تومان", "ناموجود"),
