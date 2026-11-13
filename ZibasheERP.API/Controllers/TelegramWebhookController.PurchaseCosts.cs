@@ -48,7 +48,17 @@ public sealed partial class TelegramWebhookController
                 else
                 {
                     var current=await _db.DirhamExchangeRates.AsNoTracking().Where(r=>!r.IsDeleted&&r.EffectiveAtUtc<=DateTime.UtcNow).OrderByDescending(r=>r.EffectiveAtUtc).FirstOrDefaultAsync(ct);
+                    var automatic="";
+                    if(_options.AutomaticDirhamRateEnabled)
+                    {
+                        var lastSync=await new AutomaticDirhamRateService(_db).LastSuccessAsync(ct);
+                        automatic="\n🔄 دریافت خودکار هر ۲ ساعت از الان‌چند\n"+AlanchandDirhamRateSource.SourceUrl+"\n"+
+                            (lastSync.HasValue?$"آخرین دریافت موفق: {CostDate(lastSync.Value)}\n"+
+                                (DateTime.UtcNow-lastSync.Value>TimeSpan.FromHours(3)?"⚠️ دریافت نرخ جدید نیازمند بررسی است؛ نرخ قبلی همچنان معتبر است.\n":""):
+                                "هنوز دریافت خودکار موفق ثبت نشده است.\n");
+                    }
                     await PurchaseCostPrompt(actor,"💱 ثبت نرخ درهم\n"+(current is null?"هنوز نرخی ثبت نشده.":$"نرخ فعلی هر درهم: {current.TomanPerDirham:N4} تومان\nمعتبر از: {CostDate(current.EffectiveAtUtc)}")+
+                        automatic+
                         "\nنرخ هر ۱ درهم را به تومان وارد کنید.\nنرخ جدید از لحظهٔ تأیید تا ثبت نرخ بعدی معتبر است و نرخ روزهای گذشته را تغییر نمی‌دهد.",ct);
                 }
                 return true;

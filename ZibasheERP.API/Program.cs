@@ -178,6 +178,12 @@ builder.Services.AddHostedService<ManualShippingAddressWorker>();
 builder.Services.AddHostedService<FlashSaleMainPriceWorker>();
 builder.Services.AddHostedService<ShippingDecantReferenceWorker>();
 builder.Services.AddHostedService<PerfumePurchaseReportWorker>();
+builder.Services.AddHttpClient(AutomaticDirhamRateWorker.ClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("ZibasheERP/1.0");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHostedService<AutomaticDirhamRateWorker>();
 builder.Services.AddHostedService<InvoiceTransferWorker>();
 builder.Services.AddHostedService<SharedShippingWorker>();
 builder.Services.AddHostedService<GroupChatReplyWorker>();

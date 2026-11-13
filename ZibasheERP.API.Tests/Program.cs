@@ -106,6 +106,12 @@ if(args.Contains("--dirham-cost"))
     Console.WriteLine("Dirham cost tests passed.");
     return;
 }
+if(args.Contains("--automatic-dirham"))
+{
+    await AutomaticDirhamRateTests.Run(Check);
+    await PurchaseCostTests.Run(Check);
+    return;
+}
 if(args.Contains("--purchase-report"))
 {
     await PerfumePurchaseReportTests.Run(Check);
@@ -313,6 +319,7 @@ await SharedShippingTests.Run(Check);
 await GroupChatReplyTests.Run(Check);
 await PerfumePurchaseReportTests.Run(Check);
 await PurchaseCostTests.Run(Check);
+await AutomaticDirhamRateTests.Run(Check);
 await LegacyPackPhotoTests.Run(Check);
 await GiftShippingStatisticsTests.Run(Check);
 await ShippingPromptIsolationTests.Run(Check);
