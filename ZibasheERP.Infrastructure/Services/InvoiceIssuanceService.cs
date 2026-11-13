@@ -981,7 +981,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     link.TelegramPaymentTrackingMessageId, actions,
                     string.IsNullOrWhiteSpace(link.SalesList.PersianName)
                         ? link.SalesList.EnglishName : link.SalesList.PersianName,
-                    link.SalesList.TelegramPhotoFileId);
+                    link.SalesList.TelegramPhotoFileId,
+                    listOrders.Length>0&&listOrders.All(order=>invoices.TryGetValue(order.Id,out var document)&&document.Status==InvoiceStatus.Paid));
             })
             .ToArray();
     }

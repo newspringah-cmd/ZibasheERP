@@ -100,6 +100,11 @@ if(args.Contains("--legacy-pack-photos"))
     Console.WriteLine("Legacy pack photo tests passed.");
     return;
 }
+if(args.Contains("--paid-tracking-cleanup"))
+{
+    await PaidPaymentTrackingCleanupTests.Run(Check);
+    return;
+}
 if(args.Contains("--dirham-cost"))
 {
     await PurchaseCostTests.Run(Check);
@@ -320,6 +325,7 @@ await GroupChatReplyTests.Run(Check);
 await PerfumePurchaseReportTests.Run(Check);
 await PurchaseCostTests.Run(Check);
 await AutomaticDirhamRateTests.Run(Check);
+await PaidPaymentTrackingCleanupTests.Run(Check);
 await LegacyPackPhotoTests.Run(Check);
 await GiftShippingStatisticsTests.Run(Check);
 await ShippingPromptIsolationTests.Run(Check);

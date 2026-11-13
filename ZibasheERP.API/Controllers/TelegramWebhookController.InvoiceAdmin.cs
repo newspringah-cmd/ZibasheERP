@@ -1505,22 +1505,7 @@ public sealed partial class TelegramWebhookController
             }
             if (result.InvoiceIssuanceBatchId.HasValue)
             {
-                var reports = await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(
-                    result.InvoiceIssuanceBatchId.Value, ct);
-                foreach (var report in reports.Where(report =>
-                             !string.IsNullOrWhiteSpace(report.TelegramChatId) &&
-                             report.TelegramMessageId.HasValue))
-                {
-                    var refresh = await _sender.EditTextWithKeyboardAsync(
-                        report.TelegramChatId!,
-                        report.TelegramMessageId!.Value,
-                        report.Message,
-                        BuildPaymentTrackingButtons(report),
-                        ct);
-                    if (!refresh.IsSuccessful && !IsTelegramMessageUnchanged(refresh.Error))
-                        await ReplyAsync(callback.Message.Chat.Id,
-                            $"⚠️ وضعیت مالی ثبت شد اما گزارش گروه واریز بروزرسانی نشد: {refresh.Error}", ct);
-                }
+                await RefreshPaymentTrackingReportAsync(result.InvoiceIssuanceBatchId.Value,callback.Message.Chat.Id,ct);
             }
             await RefreshManualPaymentTrackingReportAsync(result.InvoiceId, callback.Message.Chat.Id, ct);
         }
@@ -1695,6 +1680,8 @@ public sealed partial class TelegramWebhookController
         Guid batchId, long fallbackChatId, CancellationToken ct)
     {
         var reports = await _invoiceIssuanceService.GetPaymentTrackingReportsAsync(batchId, ct);
+        if(reports.Any(report=>!report.AllPaid&&!report.TelegramMessageId.HasValue))
+            await SendPaymentTrackingReportAsync(batchId,ct);
         foreach (var report in reports.Where(report =>
                      !string.IsNullOrWhiteSpace(report.TelegramChatId) &&
                      report.TelegramMessageId.HasValue))
@@ -3062,9 +3049,11 @@ public sealed partial class TelegramWebhookController
         if (reports.Count == 0)
             return "⚠️ گزارش واریز ساخته نشد.";
         var failures = new List<string>();
-        foreach (var report in reports)
+        foreach (var report in reports.Where(r=>!r.AllPaid&&!r.TelegramMessageId.HasValue))
         {
-            if (!string.IsNullOrWhiteSpace(report.TelegramPhotoFileId))
+            var link = await _db.InvoiceIssuanceBatchSalesLists.FirstAsync(value =>
+                value.InvoiceIssuanceBatchId == batchId && value.SalesListId == report.SalesListId, ct);
+            if (!link.TelegramPaymentTrackingPhotoMessageId.HasValue&&!string.IsNullOrWhiteSpace(report.TelegramPhotoFileId))
             {
                 var photo = await _sender.SendPhotoHtmlAsync(
                     _options.NewPaymentsChatId.Trim(), report.TelegramPhotoFileId,
@@ -3074,8 +3063,6 @@ public sealed partial class TelegramWebhookController
                     failures.Add(photo.Error ?? "ارسال عکس عطر ناموفق بود.");
                     continue;
                 }
-                var link = await _db.InvoiceIssuanceBatchSalesLists.FirstAsync(value =>
-                    value.InvoiceIssuanceBatchId == batchId && value.SalesListId == report.SalesListId, ct);
                 link.TelegramPaymentTrackingPhotoMessageId = photo.MessageId.Value;
                 await _db.SaveChangesAsync(ct);
             }
