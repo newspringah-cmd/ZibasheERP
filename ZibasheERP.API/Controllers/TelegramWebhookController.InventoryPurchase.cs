@@ -105,6 +105,7 @@ public sealed partial class TelegramWebhookController
             var buyer=await FindInventoryBuyerAsync(draft.BuyerIdentity,ct);
             if((draft.BuyerCustomerId.HasValue&&buyer.CustomerId!=draft.BuyerCustomerId)||buyer.UserId!=draft.BuyerUserId)
                 throw new InvalidOperationException("اطلاعات مشتری تغییر کرده است؛ آیدی را دوباره بررسی کنید.");
+            if(!await AllowCallbackRegistrationDebtAsync(callback,buyer.UserId,buyer.Username,ct,$"{draft.Id:N}:{draft.Token}"))return true;
             var request=await _db.SalesListRequests.SingleOrDefaultAsync(v=>v.Id==draft.Id,ct);
             if(request is not null&&(request.IsDeleted||!request.CreatedByAdmin||request.SalesListId!=draft.PurchaseList||
                 request.TelegramUserId!=draft.BuyerUserId||!string.Equals(request.TelegramUsername,draft.BuyerUsername,StringComparison.OrdinalIgnoreCase)))

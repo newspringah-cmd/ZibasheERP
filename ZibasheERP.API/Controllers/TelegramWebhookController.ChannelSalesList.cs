@@ -97,7 +97,7 @@ public sealed partial class TelegramWebhookController
         catch (InvalidOperationException exception)
         {
             await _sender.AnswerCallbackAsync(callback.Id, exception.Message, cancellationToken,
-                showAlert: exception.Message == CustomerListReservationPolicy.DuplicateMessage);
+                showAlert: exception.Message == CustomerListReservationPolicy.DuplicateMessage || exception.Message == ZibasheERP.Infrastructure.Services.RegistrationDebtService.CustomerMessage);
             return true;
         }
         catch (DbUpdateConcurrencyException)
@@ -134,6 +134,13 @@ public sealed partial class TelegramWebhookController
             !initialList.CanReserveVolume(volume))
             throw new InvalidOperationException($"فقط کل باقی‌ماندهٔ این لیست، یعنی {initialList.RemainingVolume:0.#} میل، قابل انتخاب است.");
         var adminRegistration = false;
+        var registrationDebt=await new ZibasheERP.Infrastructure.Services.RegistrationDebtService(_db).GetAsync(callback.From.Id.ToString(),callback.From.Username,cancellationToken);
+        if(registrationDebt.BlocksRegistration)
+        {
+            if(!await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id,cancellationToken))
+            {await _sender.AnswerCallbackAsync(callback.Id,ZibasheERP.Infrastructure.Services.RegistrationDebtService.CustomerMessage,cancellationToken,true);return;}
+            adminRegistration=true;
+        }
         if (volume > 0 && volume < initialList.EffectiveMinimumRequestVolumeMl)
             adminRegistration = await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id, cancellationToken);
         if (await _salesListRequestRepository.HasCustomerItemAsync(salesListId, callback.From.Id.ToString(),
@@ -259,6 +266,11 @@ public sealed partial class TelegramWebhookController
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
         if (request.TelegramUserId != callback.From.Id.ToString())
             throw new InvalidOperationException("این دکمه متعلق به کاربر دیگری است.");
+        if(request.Status==SalesListRequestStatus.PendingConfirmation)
+        {
+            if(!await AllowCallbackRegistrationDebtAsync(callback,request.TelegramUserId,request.TelegramUsername,cancellationToken,ChannelDebtOperation(request)))return;
+            if(await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id,cancellationToken)){request.CreatedByAdmin=true;await _salesListRequestRepository.SaveChangesAsync(cancellationToken);}
+        }
         var confirmed = await _salesListRequestRepository.GetConfirmedAsync(request.SalesListId, cancellationToken);
         var owner = confirmed.FirstOrDefault(value => value.IsBottleOwner)
             ?? throw new InvalidOperationException("صاحب باتل برای این لیست مشخص نشده است.");
@@ -400,12 +412,19 @@ public sealed partial class TelegramWebhookController
         await EnsureUsernameCanRegisterAsync(callback.From.Username, cancellationToken);
         var request = await _salesListRequestRepository.GetAsync(requestId, cancellationToken)
             ?? throw new InvalidOperationException("درخواست پیدا نشد.");
+        if(request.TelegramUserId!=callback.From.Id.ToString())
+            throw new InvalidOperationException("این درخواست متعلق به شما نیست.");
         if (string.IsNullOrWhiteSpace(request.TelegramUsername))
             throw new InvalidOperationException(
                 "این درخواست بدون یوزرنیم ایجاد شده و قابل ثبت نیست؛ دوباره از پست لیست اقدام کنید.");
         if (!request.BottleId.HasValue && !request.IsBottleOwner &&
             !await _salesListRequestRepository.IsGiftRecipientBottleOwnerAsync(request.Id, cancellationToken))
             throw new InvalidOperationException("ابتدا نوع شیشه را انتخاب کنید.");
+        if(request.Status==SalesListRequestStatus.PendingConfirmation)
+        {
+            if(!await AllowCallbackRegistrationDebtAsync(callback,request.TelegramUserId,request.TelegramUsername,cancellationToken,ChannelDebtOperation(request)))return;
+            if(await IsAuthorizedInvoiceActionAdminAsync(callback.From.Id,cancellationToken)){request.CreatedByAdmin=true;await _salesListRequestRepository.SaveChangesAsync(cancellationToken);}
+        }
         await _salesListRequestRepository.ConfirmCurrentBottleAsync(
             request.Id, callback.From.Id.ToString(), cancellationToken, queueCompletion: true);
         if (request.SalesList.TelegramMessageId.HasValue && !string.IsNullOrWhiteSpace(request.SalesList.TelegramChannelId))

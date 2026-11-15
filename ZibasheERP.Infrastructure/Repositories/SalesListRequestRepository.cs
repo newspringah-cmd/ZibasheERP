@@ -126,6 +126,9 @@ public sealed class SalesListRequestRepository : ISalesListRequestRepository
             throw new InvalidOperationException("صف بطری بعدی فقط توسط ادمین مدیریت می‌شود.");
         if (request.Status == SalesListRequestStatus.Confirmed)
             return;
+        if(!request.CreatedByAdmin&&(await new ZibasheERP.Infrastructure.Services.RegistrationDebtService(_dbContext)
+            .GetAsync(request.TelegramUserId,request.TelegramUsername,cancellationToken)).BlocksRegistration)
+            throw new InvalidOperationException(ZibasheERP.Infrastructure.Services.RegistrationDebtService.CustomerMessage);
         _dbContext.Entry(request.SalesList).CurrentValues.SetValues(lockedList);
         _dbContext.Entry(request.SalesList).OriginalValues.SetValues(lockedList);
         if (CustomerListReservationPolicy.RequiresSingleItem(request) && await HasCustomerItemAsync(

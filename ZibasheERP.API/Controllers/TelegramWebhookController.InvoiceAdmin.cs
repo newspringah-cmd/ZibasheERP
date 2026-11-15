@@ -188,6 +188,7 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
+            if(!await AllowCommandRegistrationDebtAsync(message,telegramId,username,ct))return true;
             var request = new SalesListRequest
             {
                 Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
@@ -251,6 +252,7 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
+            if(!await AllowCommandRegistrationDebtAsync(message,telegramId,username,ct))return true;
             var request = new SalesListRequest
             {
                 Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow,
@@ -5698,6 +5700,7 @@ public sealed partial class TelegramWebhookController
         var identity = draft.Identity.Trim();
         var username = identity.StartsWith('@') ? identity.TrimStart('@') : null;
         var telegramId = username is null ? identity : $"admin-username:{username.ToLowerInvariant()}";
+        if(!await AllowCallbackRegistrationDebtAsync(callback,telegramId,username,ct,JsonSerializer.Serialize(new{draft.SalesListId,draft.VolumeMl,draft.Kind,draft.IsGift,draft.GiftRecipientIdentity,draft.IsBottleOwner,draft.IsComplimentaryBottle,draft.BottleType,draft.RequestNotes})))return;
         var list = await _salesListRepository.GetByIdAsync(draft.SalesListId, ct);
         if (list is null)
         {

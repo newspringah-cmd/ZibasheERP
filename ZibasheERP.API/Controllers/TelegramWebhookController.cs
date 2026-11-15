@@ -504,6 +504,7 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramCallbackQuery callback,
         CancellationToken cancellationToken)
     {
+        if(await TryHandleRegistrationDebtApprovalAsync(callback,cancellationToken))return;
         if(callback.Message is not null&&callback.Data?.StartsWith("groupchatreply:",StringComparison.Ordinal)!=true)
             GroupChatReplyDrafts.TryRemove((callback.Message.Chat.Id,callback.From.Id),out _);
         if(callback.Message is not null && callback.Data?.StartsWith("invoiceadmin:ready:",StringComparison.Ordinal)!=true)

@@ -645,6 +645,12 @@ public sealed partial class TelegramWebhookController
             return;
         }
 
+        if(!draft.SalesListId.HasValue&&!string.IsNullOrWhiteSpace(draft.BottleOwnerIdentity)&&draft.BottleOwnerVolumeMl>0)
+        {
+            var owner=draft.BottleOwnerIdentity.Trim();var ownerName=owner.StartsWith('@')?owner.TrimStart('@'):null;
+            var ownerId=ownerName is null?new string(owner.Where(char.IsDigit).ToArray()):"admin-username:"+ownerName.ToLowerInvariant();
+            if(!await AllowCallbackRegistrationDebtAsync(callback,ownerId,ownerName,cancellationToken,System.Text.Json.JsonSerializer.Serialize(new{draft.PerfumeId,draft.PersianName,draft.EnglishName,draft.PhotoFileId,draft.TotalVolume,draft.PricePerMl,draft.BottleOwnerVolumeMl})))return;
+        }
         try
         {
             if (!draft.SalesListId.HasValue)
