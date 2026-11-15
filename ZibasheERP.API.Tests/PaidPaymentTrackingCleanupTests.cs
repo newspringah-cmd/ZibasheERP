@@ -16,7 +16,9 @@ public static class PaidPaymentTrackingCleanupTests
         var cs=Environment.GetEnvironmentVariable("TRACKING_TEST_DB_CONNECTION")??throw new Exception("Isolated SQL required");
         var guard=new SqlConnectionStringBuilder(cs);if(guard.InitialCatalog!="ZibasheERPCloudDev"||guard.DataSource!="127.0.0.1,14333")throw new Exception("Wrong database");
         await using var db=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(cs).Options);
-        var perfume=await db.Perfumes.Select(x=>x.Id).FirstAsync();var customer=await db.Customers.Select(x=>x.Id).FirstAsync();var now=DateTime.UtcNow;const string chat="-100999000111";
+        var perfume=await db.Perfumes.Select(x=>x.Id).FirstAsync();var now=DateTime.UtcNow;const string chat="-100999000111";
+        var customerFixture=new Customer{Id=Guid.NewGuid(),FullName="Paid report cleanup fixture",Mobile=Guid.NewGuid().ToString("N")[..18],CreatedAt=now};
+        var customer=customerFixture.Id;
         var batch=new InvoiceIssuanceBatch{Id=Guid.NewGuid(),Status=InvoiceIssuanceBatchStatus.Issued,IssuedAt=now,CreatedAt=now};
         var lists=Enumerable.Range(0,5).Select(i=>new SalesList{Id=Guid.NewGuid(),PublicCode=Random.Shared.Next(10000000,20000000),PerfumeId=perfume,EnglishName="Synthetic paid report",TelegramPhotoFileId="paid-cleanup-photo",TotalVolume=100,PricePerMl=1000,Status=SalesListStatus.Invoiced,CreatedAt=now}).ToArray();
         var links=lists.Select((l,i)=>new InvoiceIssuanceBatchSalesList{InvoiceIssuanceBatch=batch,SalesList=l,SalesListId=l.Id,InvoiceIssuanceBatchId=batch.Id,TelegramPaymentTrackingChatId=chat,TelegramPaymentTrackingPhotoMessageId=100+i*2,TelegramPaymentTrackingMessageId=101+i*2}).ToArray();
@@ -26,7 +28,7 @@ public static class PaidPaymentTrackingCleanupTests
         var sender=DispatchProxy.Create<ITelegramMessageSender,PaidCleanupSender>();var proxy=(PaidCleanupSender)(object)sender;var service=new PaidPaymentTrackingCleanup(db,sender);
         try
         {
-            db.SalesLists.AddRange(lists);db.InvoiceIssuanceBatches.Add(batch);db.InvoiceIssuanceBatchSalesLists.AddRange(links);db.Orders.AddRange(orders);db.OrderItems.AddRange(items);db.Invoices.AddRange(invoices);await db.SaveChangesAsync();
+            db.Customers.Add(customerFixture);db.SalesLists.AddRange(lists);db.InvoiceIssuanceBatches.Add(batch);db.InvoiceIssuanceBatchSalesLists.AddRange(links);db.Orders.AddRange(orders);db.OrderItems.AddRange(items);db.Invoices.AddRange(invoices);await db.SaveChangesAsync();
             var targets=(await service.CandidatesAsync(chat,default)).Where(t=>t.BatchId==batch.Id).ToArray();
             check(targets.Length==1&&targets[0].SalesListId==lists[0].Id,"only paid invoices qualify; issued, cancelled, missing-invoice and empty lists stay visible");
             check(!(await service.CandidatesAsync("-100555",default)).Any(t=>t.BatchId==batch.Id),"cleanup is confined to the configured new-payments destination");
@@ -62,7 +64,7 @@ public static class PaidPaymentTrackingCleanupTests
         finally
         {
             db.ChangeTracker.Clear();await db.NotificationOutbox.Where(n=>n.Channel==PaidPaymentTrackingCleanup.Channel&&n.Payload.Contains(batch.Id.ToString())).ExecuteDeleteAsync();
-            await db.Invoices.Where(i=>orders.Select(o=>o.Id).Contains(i.OrderId)).ExecuteDeleteAsync();await db.OrderItems.Where(i=>orders.Select(o=>o.Id).Contains(i.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(o=>o.InvoiceIssuanceBatchId==batch.Id).ExecuteDeleteAsync();await db.InvoiceIssuanceBatchSalesLists.Where(l=>l.InvoiceIssuanceBatchId==batch.Id).ExecuteDeleteAsync();await db.InvoiceIssuanceBatches.Where(b=>b.Id==batch.Id).ExecuteDeleteAsync();await db.SalesLists.Where(l=>lists.Select(x=>x.Id).Contains(l.Id)).ExecuteDeleteAsync();
+            await db.Invoices.Where(i=>orders.Select(o=>o.Id).Contains(i.OrderId)).ExecuteDeleteAsync();await db.OrderItems.Where(i=>orders.Select(o=>o.Id).Contains(i.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(o=>o.InvoiceIssuanceBatchId==batch.Id).ExecuteDeleteAsync();await db.InvoiceIssuanceBatchSalesLists.Where(l=>l.InvoiceIssuanceBatchId==batch.Id).ExecuteDeleteAsync();await db.InvoiceIssuanceBatches.Where(b=>b.Id==batch.Id).ExecuteDeleteAsync();await db.SalesLists.Where(l=>lists.Select(x=>x.Id).Contains(l.Id)).ExecuteDeleteAsync();await db.Customers.Where(c=>c.Id==customer).ExecuteDeleteAsync();
         }
     }
 }

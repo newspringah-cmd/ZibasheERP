@@ -26,7 +26,9 @@ public static class RegistrationDebtTests
         var orders=Enumerable.Range(0,4).Select(i=>new Order{Id=Guid.NewGuid(),CustomerId=i==3?other.Id:customer.Id,OrderNumber="DEBT-"+Guid.NewGuid().ToString("N"),Source=i==2?OrderSource.ManualInvoice:OrderSource.SalesListInvoice,IsInventory=i==1,Status=OrderStatus.Invoiced,CreatedAt=now}).ToArray();
         var invoices=orders.Select((o,i)=>new Invoice{Id=Guid.NewGuid(),OrderId=o.Id,InvoiceNumber="DEBT-"+Guid.NewGuid().ToString("N"),Status=InvoiceStatus.Issued,TotalAmount=i==3?100000000: i==0?6000000:i==1?3000000:1000000,CreatedAt=now}).ToArray();
         var payment=new Payment{Id=Guid.NewGuid(),OrderId=orders[0].Id,Amount=1,Status=PaymentStatus.Pending,PaymentMethod="Test",CreatedAt=now};
-        var perfume=await db.Perfumes.Select(p=>p.Id).FirstAsync();var bottle=await db.Bottles.Where(b=>!b.IsDeleted).Select(b=>b.Id).FirstAsync();
+        var perfume=await db.Perfumes.Select(p=>p.Id).FirstAsync();
+        var bottleFixture=new Bottle{Id=Guid.NewGuid(),Name="Registration debt fixture",VolumeMl=1,Type=BottleType.Normal,SalePrice=0,CreatedAt=now};
+        var bottle=bottleFixture.Id;
         var list=new SalesList{Id=Guid.NewGuid(),PublicCode=Random.Shared.Next(10000000,20000000),PerfumeId=perfume,EnglishName="Synthetic debt reservation",TotalVolume=100,PricePerMl=1000,Status=SalesListStatus.Open,CreatedAt=now,OpenDate=now};
         var request=new SalesListRequest{Id=Guid.NewGuid(),SalesListId=list.Id,TelegramUserId=user.ToString(),TelegramUsername=name,VolumeMl=1,BottleId=bottle,PerfumePricePerMl=1000,Status=SalesListRequestStatus.PendingConfirmation,ExpiresAt=now.AddHours(1),CreatedAt=now};
         var sender=DispatchProxy.Create<ITelegramMessageSender,RegistrationDebtSender>();var sent=(RegistrationDebtSender)(object)sender;
@@ -36,7 +38,7 @@ public static class RegistrationDebtTests
         async Task<T> Call<T>(string method,params object?[] args)=>await (Task<T>)typeof(TelegramWebhookController).GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(controller,args)!;
         try
         {
-            db.Customers.AddRange(customer,other);db.Orders.AddRange(orders);db.Invoices.AddRange(invoices);db.Payments.Add(payment);db.SalesLists.Add(list);db.SalesListRequests.Add(request);await db.SaveChangesAsync();
+            db.Customers.AddRange(customer,other);db.Bottles.Add(bottleFixture);db.Orders.AddRange(orders);db.Invoices.AddRange(invoices);db.Payments.Add(payment);db.SalesLists.Add(list);db.SalesListRequests.Add(request);await db.SaveChangesAsync();
             check(!(await service.GetAsync(user.ToString(),name)).BlocksRegistration,"exactly ten million toman is allowed across list, inventory and manual invoices");
             invoices[2].TotalAmount+=1;await db.SaveChangesAsync();
             check((await service.GetAsync(user.ToString(),name)).BlocksRegistration,"one toman above ten million blocks registration");
@@ -93,7 +95,7 @@ public static class RegistrationDebtTests
         }
         finally
         {
-            db.ChangeTracker.Clear();await db.NotificationOutbox.Where(n=>n.Channel=="AdminDebtOverride"&&n.CustomerId==customer.Id).ExecuteDeleteAsync();await db.SalesListRequests.Where(r=>r.SalesListId==list.Id).ExecuteDeleteAsync();await db.SalesLists.Where(l=>l.Id==list.Id).ExecuteDeleteAsync();await db.Payments.Where(p=>p.Id==payment.Id).ExecuteDeleteAsync();await db.Invoices.Where(i=>orders.Select(o=>o.Id).Contains(i.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(o=>orders.Select(v=>v.Id).Contains(o.Id)).ExecuteDeleteAsync();await db.Customers.Where(c=>c.Id==customer.Id||c.Id==other.Id).ExecuteDeleteAsync();
+            db.ChangeTracker.Clear();await db.NotificationOutbox.Where(n=>n.Channel=="AdminDebtOverride"&&n.CustomerId==customer.Id).ExecuteDeleteAsync();await db.SalesListRequests.Where(r=>r.SalesListId==list.Id).ExecuteDeleteAsync();await db.SalesLists.Where(l=>l.Id==list.Id).ExecuteDeleteAsync();await db.Bottles.Where(b=>b.Id==bottle).ExecuteDeleteAsync();await db.Payments.Where(p=>p.Id==payment.Id).ExecuteDeleteAsync();await db.Invoices.Where(i=>orders.Select(o=>o.Id).Contains(i.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(o=>orders.Select(v=>v.Id).Contains(o.Id)).ExecuteDeleteAsync();await db.Customers.Where(c=>c.Id==customer.Id||c.Id==other.Id).ExecuteDeleteAsync();
         }
     }
 }
