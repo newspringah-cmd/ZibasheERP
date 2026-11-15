@@ -11,7 +11,7 @@ public sealed class TelegramTemporaryMessageCleaner : BackgroundService
     private readonly SemaphoreSlim _maintenanceSlots = new(4, 4);
     private readonly SemaphoreSlim _workAvailable = new(0, 1);
     private const int MaxPromptAttempts = 3;
-    private static readonly TimeSpan SelectionTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan SelectionTimeout = TimeSpan.FromSeconds(12);
     private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
     private sealed record ScheduledRestore(
         DateTime ExpiresAt,

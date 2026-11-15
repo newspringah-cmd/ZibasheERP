@@ -86,26 +86,26 @@ public static class ReservationPromptDeliveryTests
             "already-visible prompt counts as accepted instead of triggering more edits");
 
         var (visible, visibleSender, visibleClock) = Create();
-        check(visible.TryAcquireInteraction("channel", 6, 100, TimeSpan.FromSeconds(20)),
+        check(visible.TryAcquireInteraction("channel", 6, 100, TimeSpan.FromSeconds(12)),
             "customer owns the post before delayed prompt publication");
         visible.QueuePrompt("channel", 6, "late but visible", Rows, "original", Rows);
         visibleClock.Advance(TimeSpan.FromSeconds(10));
         await Publish(visible);
-        await Restore(visible, visibleClock.GetUtcNow().UtcDateTime.AddSeconds(15));
+        await Restore(visible, visibleClock.GetUtcNow().UtcDateTime.AddSeconds(11));
         check(visibleSender.Calls.Count == 1, "selection keeps its full timeout after the prompt actually becomes visible");
-        visibleClock.Advance(TimeSpan.FromSeconds(15));
-        check(!visible.TryAcquireInteraction("channel", 6, 200, TimeSpan.FromSeconds(20)),
+        visibleClock.Advance(TimeSpan.FromSeconds(11));
+        check(!visible.TryAcquireInteraction("channel", 6, 200, TimeSpan.FromSeconds(12)),
             "another customer cannot take a delayed prompt during its visible selection window");
-        await Restore(visible, visibleClock.GetUtcNow().UtcDateTime.AddSeconds(6));
+        await Restore(visible, visibleClock.GetUtcNow().UtcDateTime.AddSeconds(2));
         check(visibleSender.Calls.Last().Caption == "original" && !visible.IsScheduled("channel", 6),
             "accepted prompt still restores the original list after the visible-step timeout");
-        visibleClock.Advance(TimeSpan.FromSeconds(6));
-        check(visible.TryAcquireInteraction("channel", 6, 200, TimeSpan.FromSeconds(20)),
+        visibleClock.Advance(TimeSpan.FromSeconds(2));
+        check(visible.TryAcquireInteraction("channel", 6, 200, TimeSpan.FromSeconds(12)),
             "other customers regain access after the visible selection window expires");
 
         var (expired, expiredSender, expiredClock) = Create();
         expired.QueuePrompt("channel", 7, "obsolete", Rows, "original", Rows);
-        expiredClock.Advance(TimeSpan.FromSeconds(21));
+        expiredClock.Advance(TimeSpan.FromSeconds(13));
         await Publish(expired);
         check(expiredSender.Calls.IsEmpty, "expired selection is never published as a stale next step");
 
