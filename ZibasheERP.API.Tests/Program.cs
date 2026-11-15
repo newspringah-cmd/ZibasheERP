@@ -320,6 +320,7 @@ SharedDecantGroupTests.Run(Check);
 SilentGroupTests.Run(Check);
 AdminItemActivityTests.Run(Check);
 CustomerListReservationTests.Run(Check);
+await TelegramItemReplayTests.Run(Check);
 await AccountantReplyTests.Run(Check);
 await TrackingMatchingTests.Run(Check);
 await TrackingAddressNameTests.Run(Check);

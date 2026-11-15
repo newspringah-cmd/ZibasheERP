@@ -39,6 +39,9 @@ public sealed class TelegramUpdateDeduplicator : ITelegramUpdateDeduplicator
                 SELECT 1
                 FROM [TelegramProcessedUpdates] WITH (UPDLOCK, HOLDLOCK)
                 WHERE [UpdateId] = {updateId}
+            ) AND NOT EXISTS (
+                SELECT 1 FROM [AdminItemActivities]
+                WHERE [SourceUpdateId] = {updateId} AND [Action] <> 0
             );
             """, cancellationToken);
         if (acquired == 0) return false;
@@ -64,7 +67,12 @@ public sealed class TelegramUpdateDeduplicator : ITelegramUpdateDeduplicator
         await using var scope = _scopeFactory.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await dbContext.TelegramProcessedUpdates
-            .Where(update => update.UpdateId == updateId)
+            // An item and its audit receipt commit in the same transaction. A later
+            // Telegram acknowledgement/audit-message failure must not replay that
+            // committed registration, removal or volume change on webhook retry.
+            .Where(update => update.UpdateId == updateId &&
+                !dbContext.AdminItemActivities.Any(activity =>
+                    activity.SourceUpdateId == update.UpdateId && activity.Action != AdminItemAction.TrackingStarted))
             .ExecuteDeleteAsync(cancellationToken);
     }
 }

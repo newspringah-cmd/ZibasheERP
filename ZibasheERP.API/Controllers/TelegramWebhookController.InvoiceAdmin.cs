@@ -5559,7 +5559,19 @@ public sealed partial class TelegramWebhookController
         return rows;
     }
 
+    private static readonly SemaphoreSlim[] AdminRequestConfirmationLocks =
+        Enumerable.Range(0, 128).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+
     private async Task ConfirmAdminRequestAsync(TelegramCallbackQuery callback, CancellationToken ct)
+    {
+        var gate = AdminRequestConfirmationLocks[(int)((uint)HashCode.Combine(
+            callback.Message!.Chat.Id, callback.From.Id) % (uint)AdminRequestConfirmationLocks.Length)];
+        await gate.WaitAsync(ct);
+        try { await ConfirmAdminRequestCoreAsync(callback, ct); }
+        finally { gate.Release(); }
+    }
+
+    private async Task ConfirmAdminRequestCoreAsync(TelegramCallbackQuery callback, CancellationToken ct)
     {
         var chatId = callback.Message!.Chat.Id;
         if (!_adminRequestDrafts.TryGet(chatId, callback.From.Id, out var draft) ||
@@ -5784,6 +5796,9 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, exception.Message, ct, showAlert: true);
             return;
         }
+        // Consume the successful operation before any fallible Telegram I/O.
+        // A second click may arrive while its confirmation is still being sent.
+        _adminRequestDrafts.Remove(chatId, callback.From.Id);
         await _sender.AnswerCallbackAsync(callback.Id, "درخواست ثبت شد ✅", ct);
         await RefreshChannelSalesListAsync(list.Id, ct);
         var auditChatId = string.IsNullOrWhiteSpace(_options.SalesAuditChatId)
