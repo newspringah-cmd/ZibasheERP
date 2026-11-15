@@ -38,7 +38,7 @@ public sealed partial class TelegramWebhookController
                 await _sender.AnswerCallbackAsync(callback.Id, "این گزینه فقط برای مدیر و حسابدار فعال است.", ct, true);
                 return true;
             }
-            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await AnswerShippingPreparationCallbackAsync(callback,null,ct);
             var isLinkedCustomerGroup = await _db.CustomerTelegramGroups.AsNoTracking().AnyAsync(value =>
                 !value.IsDeleted && value.IsActive && value.ChatId == callback.Message.Chat.Id.ToString(), ct);
             if (isLinkedCustomerGroup)
@@ -169,7 +169,7 @@ public sealed partial class TelegramWebhookController
             draft.CustomerId = preparedCustomerId;
             draft.Stage = TelegramShippingPreparationStage.AwaitingAddressChoice;
             _orderFlowDrafts.SetShippingPreparation(draft);
-            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await AnswerShippingPreparationCallbackAsync(callback,draft.CustomerId,ct);
             await SendShippingAddressChoicesAsync(draft, ct);
             return true;
         }
@@ -183,7 +183,7 @@ public sealed partial class TelegramWebhookController
             }
             draft.Stage = TelegramShippingPreparationStage.AwaitingNewAddress;
             _orderFlowDrafts.SetShippingPreparation(draft);
-            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await AnswerShippingPreparationCallbackAsync(callback,draft.CustomerId,ct);
             await SendShippingInputPromptAsync(
                 callback.Message.Chat.Id, "آدرس کامل را وارد کنید", ct,callback.From.Id);
             return true;
@@ -200,7 +200,7 @@ public sealed partial class TelegramWebhookController
             draft.AddressId = preparedAddressId;
             draft.Stage = TelegramShippingPreparationStage.Ready;
             _orderFlowDrafts.SetShippingPreparation(draft);
-            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await AnswerShippingPreparationCallbackAsync(callback,draft.CustomerId,ct);
             await SendShippingPreparationPreviewAsync(draft, ct);
             return true;
         }
@@ -1142,8 +1142,8 @@ public sealed partial class TelegramWebhookController
             await _db.SaveChangesAsync(ct);
         }
         _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, draft.UserId);
-        await _sender.AnswerCallbackAsync(callback.Id,
-            "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.", ct, true);
+        await AnswerShippingPreparationCallbackAsync(callback,customer.Id,ct,
+            "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.");
         await ReplyAsync(callback.Message.Chat.Id,
             "آدرس جهت آماده سازی و ارسال با موفقیت ثبت شد", ct);
         await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
