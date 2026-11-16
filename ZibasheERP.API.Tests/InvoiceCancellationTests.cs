@@ -213,6 +213,9 @@ public static class InvoiceCancellationTests
             check(delayedSelection.RestockOnly&&delayedSelection.Amount==0&&await Rejected(async()=>{await service.SelectAsync(delayedSelection,true,[delayedItems[0]]);}),"previously cancelled invoice can be found by number but cannot be transferred before physical readiness");
             db.NotificationOutbox.Add(new(){Id=Guid.NewGuid(),CustomerId=customer.Id,Channel=InvoiceRestockTracking.DecantedChannel,EventType="ListDecanted",Recipient=isolated.Id.ToString("N"),Payload="{}",Status=NotificationOutboxStatus.Processed,CreatedAt=DateTime.UtcNow});await db.SaveChangesAsync();db.ChangeTracker.Clear();
             check((await InvoiceRestockTracking.ItemStatesAsync(db,[delayed.OrderId])).Values.All(s=>s.Icon=="🟣"),"readiness alone keeps archived items purple until an actual inventory transfer");
+            await db.OrderItems.Where(i=>i.Id==delayedItems[0]).ExecuteUpdateAsync(s=>s.SetProperty(i=>i.FulfillmentStatus,OrderItemFulfillmentStatus.DecantedReadyToShip));db.ChangeTracker.Clear();
+            var readyBacklog=(await InvoiceRestockTracking.ItemStatesAsync(db,[delayed.OrderId]))[delayedItems[0]];
+            check(readyBacklog.Icon=="🟣"&&readyBacklog.Note.Contains("آمادهٔ انتقال"),"historical ready but unstocked cancellation stays purple with an accurate ready-for-transfer note");
             var oneDelayed=await service.SelectAsync(await service.ResolveCancelledForSelectionAsync(delayed.InvoiceNumber),true,[delayedItems[0]]);
             var deferredOperation=Guid.NewGuid();var fixedPrices=new Dictionary<Guid,decimal>{{delayedItems[0],13000}};var fixedPositions=new Dictionary<Guid,string>{{delayedItems[0],"قفسه تست ۹"}};
             var deferred=await service.ExecuteWithPositionsAsync(deferredOperation,oneDelayed,true,fixedPrices,owner,"@zibasheperfume_mojodi",fixedPositions);

@@ -81,7 +81,7 @@ public static partial class InvoiceRestockTracking
                 return new ItemState("🔵",posted?Caption:UnknownCaption,InInventory:true,Published:posted);
             }
             if(waiting.Contains(i.Id)||i.FulfillmentStatus is OrderItemFulfillmentStatus.WaitingForArrivalInIran or OrderItemFulfillmentStatus.DecantQueue)
-                return new ItemState("🟣",WaitingCaption,Waiting:true);
+                return new ItemState("🟣",i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip?"فاکتور حذف‌شده؛ آمادهٔ انتقال به موجودی":WaitingCaption,Waiting:true);
             return new ItemState("🔵",UnknownCaption);
         });
     }
