@@ -39,8 +39,8 @@ public static class TrackingMatchingTests
             "an exact structured destination city can disambiguate otherwise identical full receiver names");
         check(Select("پریسا احمدی","رشت",[Row(id,"پروانه احمدی",city:"رشت")])==null,
             "destination agreement never upgrades a weak name similarity to automatic delivery");
-        check(Select("پریسا احمدی","",[Row(id,"پریسا احمدی",request:Guid.NewGuid()),Row(id,"پریسا احمدی",request:Guid.NewGuid())]) is {Status:TrackingDispatchStatus.NeedsReview,ShippingRequestId:null},
-            "matching a customer with multiple open parcels does not guess the shipping request");
+        check(Select("پریسا احمدی","",[Row(id,"پریسا احمدی",request:Guid.NewGuid()),Row(id,"پریسا احمدی",request:Guid.NewGuid())]) is {Status:TrackingDispatchStatus.Ready,ShippingRequestId:not null},
+            "multiple ready requests of one uniquely matched customer share one tracking operation");
         check(Select("نام گیرنده خوانده نشد","",[Row(id,"فاطمه محمدی")])==null,
             "unreadable PDF recipient placeholders cannot turn into automatic customer matches");
         check(Select("مانده کرمی","",[Row(id,"مائده کرمی")],exact:true)==null,

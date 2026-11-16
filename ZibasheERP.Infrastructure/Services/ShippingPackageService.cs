@@ -167,6 +167,54 @@ public static class ShippingPackageService
                 Payload=System.Text.Json.JsonSerializer.Serialize(new{ReferenceId=addressReference.Id}),CreatedAt=DateTime.UtcNow});
     }
 
+    // One tracking code closes the ready requests of the same physical recipient.
+    // Preserve request IDs and the gift-recipient ownership checks for each parcel.
+    public static async Task<Guid[]> CustomerDispatchRequestsAsync(AppDbContext db, Guid requestId, Guid customerId, CancellationToken ct = default)
+    {
+        await ValidateDispatchAsync(db, requestId, customerId, ct);
+        var customer = await db.Customers.AsNoTracking().SingleAsync(c => c.Id == customerId && !c.IsDeleted, ct);
+        var candidates = await CustomerItems(db, customer).AsNoTracking()
+            .Where(i => i.ShippingRequestId != null && i.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip && i.ShippedAt == null)
+            .Select(i => i.ShippingRequestId!.Value).Distinct().ToArrayAsync(ct);
+        var requests = new List<Guid> { requestId };
+        foreach (var candidate in candidates.Where(id => id != requestId).Order())
+        {
+            if (await db.OrderItems.AsNoTracking().AnyAsync(i => !i.IsDeleted && i.ShippingRequestId == candidate &&
+                (i.FulfillmentStatus == OrderItemFulfillmentStatus.Shipped || i.ShippedAt != null), ct)) continue;
+            var owner = await PackageCustomerAsync(db, candidate, ct);
+            // A shared parcel for which this customer is only a companion belongs
+            // to its primary recipient's tracking operation.
+            if (owner.Id != customerId) continue;
+            await ValidateDispatchAsync(db, candidate, customerId, ct);
+            requests.Add(candidate);
+        }
+        return requests.Distinct().Order().ToArray();
+    }
+
+    public static async Task<OrderItem[]> CompleteCustomerRequestsAsync(AppDbContext db, IReadOnlyCollection<Guid> requestIds, Guid customerId, CancellationToken ct = default)
+    {
+        var requests = requestIds.Distinct().Order().ToArray();
+        if (requests.Length == 0) return [];
+        await using var own = db.Database.CurrentTransaction == null ? await db.Database.BeginTransactionAsync(ct) : null;
+        try
+        {
+            foreach (var request in requests)
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @r int; EXEC @r=sp_getapplock @Resource={"shared-shipping:"+request},@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=10000; IF @r<0 THROW 51000,'Shared parcel busy',1;",ct);
+                await ValidateDispatchAsync(db, request, customerId, ct);
+            }
+            var items = new List<OrderItem>();
+            foreach (var request in requests) items.AddRange(await CompleteAsync(db, request, customerId, ct));
+            if (own != null) await own.CommitAsync(ct);
+            return items.DistinctBy(i => i.Id).ToArray();
+        }
+        catch
+        {
+            if (own != null) { await own.RollbackAsync(CancellationToken.None); db.ChangeTracker.Clear(); }
+            throw;
+        }
+    }
+
     public static async Task<OrderItem[]> CompleteAsync(AppDbContext db, Guid? requestId, Guid? customerId, CancellationToken ct = default)
     {
         await using var own = db.Database.CurrentTransaction == null ? await db.Database.BeginTransactionAsync(ct) : null;

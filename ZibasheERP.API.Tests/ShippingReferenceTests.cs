@@ -400,7 +400,10 @@ public static class ShippingReferenceTests
             var normalResolved=(string[])(await Call("ResolveTrackingDestinationChatIdsAsync",new TrackingDispatch{Id=Guid.NewGuid(),CustomerId=other.Id},CancellationToken.None))!;
             check(normalResolved.SequenceEqual(["1907823600"]),"ordinary address-only customers retain their original tracking destination");
             await db.Addresses.Where(a=>a.Id==manualAddress.Id).ExecuteDeleteAsync();
-            await Call("SendAddressWithReadyItemsAsync",Ship.ToString(),"لغو فرم عکس",customer,Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(),CancellationToken.None,(Guid?)newParcel,null);
+            // Earlier tracking now completes all ready requests of this customer.
+            // Exercise cancellation on a genuinely new, unshipped parcel.
+            var cancelParcel=Guid.NewGuid();await Item(customer,request:cancelParcel);
+            await Call("SendAddressWithReadyItemsAsync",Ship.ToString(),"لغو فرم عکس",customer,Array.Empty<IReadOnlyCollection<TelegramInlineButton>>(),CancellationToken.None,(Guid?)cancelParcel,null);
             var cancelRoot=(await Rows("ShippingReferenceContext")).First(n=>n.EventType=="AddressReferences").Id;var cancelAddress=sent.Calls.Last(c=>c.Method=="SendInlineKeyboardAsync");
             foreach(var textCancel in new[]{false,true})
             {
@@ -610,8 +613,9 @@ public static class ShippingReferenceTests
                 "in-flight customer-only photo reaches the proper customer once after exact source recovery");
             check(await db.OrderItems.CountAsync(i=>repostIds.Contains(i.Id)&&i.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped)==2,
                 "tracking photo for reposted address completes its original two-item package");
-            check(await db.OrderItems.CountAsync(i=>(i.Id==newerUnassigned.Id||i.Id==unrelated.Id)&&i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null)==2,
-                "reposted tracking leaves newer unassigned and other-parcel ready items untouched");
+            check(await db.OrderItems.AnyAsync(i=>i.Id==newerUnassigned.Id&&i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null)&&
+                await db.OrderItems.AnyAsync(i=>i.Id==unrelated.Id&&i.FulfillmentStatus==OrderItemFulfillmentStatus.Shipped&&i.ShippedAt!=null),
+                "reposted tracking closes the same customer's other ready parcel while preserving newer unassigned items");
             check((await Rows(ShippingTrackingNotices.Channel)).Any(n=>JsonSerializer.Deserialize<ShippingTrackingNotices.Data>(n.Payload) is var notice&&notice!.SourceMessageId==900002&&notice.RequestId==repostParcel),
                 "tracking success notice durably records the recovered original parcel under the reposted address");
         }

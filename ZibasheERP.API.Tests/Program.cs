@@ -75,6 +75,7 @@ if(args.Contains("--tracking-photo-optional"))
 {
     await ShippingReferenceTests.Run(Check);
     await ShippingPackageTests.Run(Check);
+await CustomerTrackingGroupTests.Run(Check);
     await SharedShippingTests.Run(Check);
     await TrackingRetryTests.Run(Check);
     Console.WriteLine("Optional tracking photo tests passed.");
@@ -84,6 +85,7 @@ if(args.Contains("--gift-parcels"))
 {
     await GiftParcelMembershipTests.Run(Check);
     await ShippingPackageTests.Run(Check);
+await CustomerTrackingGroupTests.Run(Check);
     Console.WriteLine("Gift parcel tests passed.");
     return;
 }
@@ -326,6 +328,7 @@ await TrackingMatchingTests.Run(Check);
 await TrackingAddressNameTests.Run(Check);
 await TrackingRetryTests.Run(Check);
 await ShippingPackageTests.Run(Check);
+await CustomerTrackingGroupTests.Run(Check);
 await ShippingTrackingNoticeTests.Run(Check);
 await ShippingNameWarningTests.Run(Check);
 await PreparedAddressReportTests.Run(Check);

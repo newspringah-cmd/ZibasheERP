@@ -6,10 +6,23 @@ using ZibasheERP.Domain.Entities;
 namespace ZibasheERP.API.Controllers;
 public sealed partial class TelegramWebhookController
 {
-    private async Task QueueTrackingAddressNoticeAsync(TrackingDispatch dispatch,CancellationToken ct)
+    private Task QueueTrackingAddressNoticeAsync(TrackingDispatch dispatch,CancellationToken ct) =>
+        QueueTrackingAddressNoticeCoreAsync(dispatch,ct,true);
+
+    private async Task QueueTrackingAddressNoticeCoreAsync(TrackingDispatch dispatch,CancellationToken ct,bool includeCustomerGroup)
     {
         if(dispatch.CustomerId is not Guid customer||string.IsNullOrWhiteSpace(_options.ShippingChatId))return;
         var chat=_options.ShippingChatId.Trim();
+        if(includeCustomerGroup && dispatch.ShippingRequestId.HasValue)
+        {
+            var group=await CustomerTrackingRequestsAsync(dispatch,ct);
+            if(group.Length>1)
+            {
+                foreach(var groupedRequest in group)await QueueTrackingAddressNoticeCoreAsync(TrackingForRequest(dispatch,groupedRequest,false),ct,false);
+                return;
+            }
+        }
+
         if(dispatch.ShippingRequestId is null && dispatch.Status==TrackingDispatchStatus.Sent && dispatch.SentAt.HasValue)
         {
             var manualSources=await ManualShippingAddresses.SourcesAsync(_db,_options,ct);

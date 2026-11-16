@@ -1338,9 +1338,10 @@ public sealed partial class TelegramWebhookController
                 $"⚠️ مقصد ارسال کد رهگیری برای {(customer is null ? draft.CustomerId.ToString("N") : OrderCustomerLabel(customer))} پیدا نشد.", ct);
             return true;
         }
+        Guid[] trackingRequests = [];
         if (draft.ShippingRequestId != Guid.Empty)
         {
-            try { await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidateDispatchAsync(_db, draft.ShippingRequestId, draft.CustomerId, ct); }
+            try { trackingRequests = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CustomerDispatchRequestsAsync(_db, draft.ShippingRequestId, draft.CustomerId, ct); }
             catch (ZibasheERP.Infrastructure.Services.ShippingRecipientValidationException exception)
             {
                 _orderFlowDrafts.ClearShippingTrackingPhoto(message.Chat.Id, message.From.Id);
@@ -1370,8 +1371,13 @@ public sealed partial class TelegramWebhookController
         }
         catch(Exception e)when(!ct.IsCancellationRequested)
         { _logger.LogWarning("Could not queue tracking address notice: {ErrorType}",e.GetType().Name); }
-        var shippedItems = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteAsync(
-            _db,draft.ShippingRequestId==Guid.Empty?null:draft.ShippingRequestId,draft.CustomerId,ct);
+        var shippedItems = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteCustomerRequestsAsync(
+            _db,trackingRequests,draft.CustomerId,ct);
+        foreach(var request in trackingRequests)
+        {
+            foreach(var source in shippedItems.Where(i=>i.ShippingRequestId==request&&i.ShippingTelegramMessageId.HasValue).Select(i=>i.ShippingTelegramMessageId!.Value).Distinct())
+                await ShippingTrackingNotices.QueueAsync(_db,_options,new(draft.CustomerId,message.Chat.Id.ToString(),source,request),ct);
+        }
         if(shippedItems.Length==0)
             await ReplyAsync(message.Chat.Id,"⚠️ کد رهگیری ارسال شد؛ بستهٔ یکتای مشخصی برای تغییر وضعیت عطرها پیدا نشد. اقلام آماده به‌صورت کلی ارسال‌شده ثبت نشدند.",ct);
 

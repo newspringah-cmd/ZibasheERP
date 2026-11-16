@@ -428,8 +428,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         {
             if(preparedResult.Status!=TrackingDispatchStatus.Ready)return preparedResult;
             var packages=active.Where(c=>c.CustomerId==preparedCustomer).Select(c=>c.ShippingRequestId).Distinct().ToArray();
-            if(packages.Length>1)return new(preparedCustomer,null,TrackingDispatchStatus.NeedsReview,"نام مشتری با آدرس آماده‌سازی تطبیق دارد اما چند بستهٔ باز دارد؛ بستهٔ مقصد باید مشخص شود");
-            var request=preparedResult.ShippingRequestId??packages.SingleOrDefault();
+            var request=preparedResult.ShippingRequestId??packages.Order().FirstOrDefault();
             if(request is Guid package)
             {
                 try
@@ -466,13 +465,13 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
                     .Select(value => value.ShippingRequestId)
                     .Distinct()
                     .ToArray();
-                if (customerRequests.Length == 1)
+                if (customerRequests.Length > 0)
                 {
                     return new TrackingMatch(
                         recentResult.CustomerId,
                         customerRequests[0],
                         TrackingDispatchStatus.Ready,
-                        "تطبیق با آدرس یکتای مشتری و تنها درخواست ارسال فعال");
+                        "تطبیق با آدرس یکتای مشتری و درخواست‌های آمادهٔ ارسال او");
                 }
             }
             return await CheckManualAddressDestinationAsync(recentResult,ct);
@@ -627,8 +626,8 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         var packages = source.Where(v => v.CustomerId == candidate.CustomerId && v.IsActive && v.ShippingRequestId.HasValue)
             .Select(v => v.ShippingRequestId!.Value).Distinct().ToArray();
         if (packages.Length > 1)
-            return new TrackingMatch(candidate.CustomerId, null, TrackingDispatchStatus.NeedsReview,
-                "نام مشتری تطبیق دارد اما چند بستهٔ باز دارد؛ بستهٔ مقصد باید مشخص شود");
+            return new TrackingMatch(candidate.CustomerId, candidate.ShippingRequestId ?? packages.Order().First(),
+                TrackingDispatchStatus.Ready, "تطبیق یکتای مشتری؛ همهٔ درخواست‌های آمادهٔ همین مشتری با یک رهگیری ارسال می‌شوند");
         return new TrackingMatch(candidate.CustomerId, candidate.ShippingRequestId,
             TrackingDispatchStatus.Ready, note);
     }

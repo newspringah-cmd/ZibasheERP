@@ -1215,7 +1215,7 @@ public sealed partial class TelegramWebhookController
         return choices;
     }
 
-    private async Task<string[]> ResolveTrackingDestinationChatIdsAsync(
+    private async Task<string[]> ResolveSingleTrackingDestinationChatIdsAsync(
         TrackingDispatch dispatch, CancellationToken ct)
     {
         var shared=await SharedTrackingDestinationsAsync(dispatch,ct);
@@ -1288,8 +1288,9 @@ public sealed partial class TelegramWebhookController
         catch(Exception e)when(!ct.IsCancellationRequested)
         { _logger.LogWarning("Could not queue tracking address notice for {DispatchId}: {ErrorType}",dispatch.Id,e.GetType().Name); }
         if (!dispatch.ShippingRequestId.HasValue) return;
-        var items = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteAsync(
-            _db,dispatch.ShippingRequestId,dispatch.CustomerId,ct);
+        var requests = await CustomerTrackingRequestsAsync(dispatch, ct);
+        var items = await ZibasheERP.Infrastructure.Services.ShippingPackageService.CompleteCustomerRequestsAsync(
+            _db,requests,dispatch.CustomerId!.Value,ct);
 
         var messageId = items.Select(value => value.ShippingTelegramMessageId).FirstOrDefault(value => value.HasValue);
         if (messageId.HasValue && !string.IsNullOrWhiteSpace(_options.ShippingChatId))
