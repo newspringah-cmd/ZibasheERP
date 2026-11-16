@@ -78,7 +78,7 @@ public sealed partial class TelegramWebhookController
     private const string InvoiceCancelStatusPrefix="invoiceadmin:icstatus:";
     private sealed record InvoiceCancelDraft(Guid Operation,bool Returned,string Step,DateTime Until,
         InvoiceCancellationService.Preview? Preview=null,int Index=0,Dictionary<Guid,decimal>? Prices=null,string? Token=null,
-        InvoiceCancellationService.Preview? Original=null,Guid[]? Selected=null,int Page=0,Dictionary<Guid,string>? Positions=null,bool DeferredRequested=false);
+        InvoiceCancellationService.Preview? Original=null,Guid[]? Selected=null,int Page=0,Dictionary<Guid,string>? Positions=null,bool DeferredRequested=false,Dictionary<Guid,decimal>? Volumes=null);
     private static readonly ConcurrentDictionary<(long Chat,long User),InvoiceCancelDraft> InvoiceCancelDrafts=new();
     private Task InvoiceCancelPrompt(long chat,string text,CancellationToken ct)=>_sender.SendInlineKeyboardAsync(chat.ToString(),text,
         [[new TelegramInlineButton("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
@@ -126,7 +126,7 @@ public sealed partial class TelegramWebhookController
                 else if(selection=="next")
                 {
                     var preview=await new InvoiceCancellationService(_db).SelectAsync(d.Preview,d.Returned,selected.Order().ToArray(),ct);
-                    d=d with{Preview=preview,Selected=selected.Order().ToArray(),Index=0,Prices=preview.Lines.ToDictionary(l=>l.ItemId,l=>d.Prices?.GetValueOrDefault(l.ItemId,l.CurrentPrice)??l.CurrentPrice),Positions=(d.Positions??new()).Where(p=>selected.Contains(p.Key)).ToDictionary(p=>p.Key,p=>p.Value)};
+                    d=d with{Preview=preview,Selected=selected.Order().ToArray(),Index=0,Prices=preview.Lines.ToDictionary(l=>l.ItemId,l=>d.Prices?.GetValueOrDefault(l.ItemId,l.CurrentPrice)??l.CurrentPrice),Volumes=preview.Lines.ToDictionary(l=>l.ItemId,l=>d.Volumes?.GetValueOrDefault(l.ItemId,l.Volume)??l.Volume),Positions=(d.Positions??new()).Where(p=>selected.Contains(p.Key)).ToDictionary(p=>p.Key,p=>p.Value)};
                     InvoiceCancelDrafts[key]=d;
                     if(d.Returned)await ShowInvoiceReturnPriceAsync(chat,callback.From.Id,d,ct);else await ShowInvoiceCancellationConfirmationAsync(chat,callback.From.Id,d,ct);
                     return;
@@ -135,7 +135,7 @@ public sealed partial class TelegramWebhookController
                 await ShowInvoiceCancellationSelectionAsync(chat,callback.From.Id,d with{Selected=selected.Order().ToArray()},ct);return;
             }
             if(action=="edit-price:"+d.Index&&d.Step=="compare")
-            {InvoiceCancelDrafts[key]=d with{Step="price"};await InvoiceCancelPrompt(chat,$"قیمت هر میلِ موجودی «{d.Preview.Lines[d.Index].Name}» را به تومان وارد کنید؛ مبلغ کل یا قیمت شیشه را وارد نکنید.",ct);return;}
+            {InvoiceCancelDrafts[key]=d with{Step="price"};await InvoiceCancelPrompt(chat,$"قیمت هر میل و مقدار میلِ موجودی «{d.Preview.Lines[d.Index].Name}» را در دو خط وارد کنید:\nخط اول: قیمت هر میل به تومان\nخط دوم: مقدار میل (مثلاً ۱.۵)\nمثال:\n۱۰۰۰۰۰\n۱.۵",ct);return;}
             if(action=="accept-price:"+d.Index&&d.Step=="compare")
             {
                 await ShowInvoiceReturnPositionAsync(chat,callback.From.Id,d,ct);return;
@@ -159,7 +159,7 @@ public sealed partial class TelegramWebhookController
             {
                 if(d.Returned&&(d.Positions is null||d.Preview.Lines.Any(l=>!d.Positions.TryGetValue(l.ItemId,out var location)||!HasInventoryLocation(location)||location.Trim().Length>150)))
                     throw new InvalidOperationException("ابتدا جایگاه فیزیکی همهٔ موجودی‌های انتخاب‌شده را وارد و تأیید کنید.");
-                var result=await new InvoiceCancellationService(_db).ExecuteWithPositionsAsync(d.Operation,d.Preview,d.Returned,d.Prices??new Dictionary<Guid,decimal>(),callback.From.Id,_options.ReadyInventoryChannelId,d.Returned?d.Positions:null,ct);
+                var result=await new InvoiceCancellationService(_db).ExecuteWithDetailsAsync(d.Operation,d.Preview,d.Returned,d.Prices??new Dictionary<Guid,decimal>(),callback.From.Id,_options.ReadyInventoryChannelId,d.Returned?d.Positions:null,d.Returned?d.Volumes:null,ct);
                 InvoiceCancelDrafts.TryRemove(key,out _);
                 await _sender.SendInlineKeyboardAsync(chat.ToString(),(result.Deferred?"✅ اقلام فاکتور حذف‌شده به موجودی منتقل شدند؛ بدهی مشتری قبلی تغییر نکرد.\n":result.SourceInvoiceId.HasValue?$"✅ آیتم‌های انتخاب‌شده از فاکتور {d.Preview.Number} حذف شدند؛ سایر آیتم‌ها باقی ماندند.\nمبلغ فاکتور باقی‌مانده: {result.RemainingAmount:N0} تومان\nنسخهٔ اصلاح‌شده با کپشن جدید در صف ارسال است.\n":$"✅ فاکتور {d.Preview.Number} برای {d.Preview.Customer} لغو شد.\n")+(result.Deferred?"":$"مبلغ اصلاح‌شدهٔ بدهی: {result.ReversedAmount:N0} تومان\n")+
                     (result.Returned?$"{result.Codes.Length} بستهٔ موجودی ثبت شد؛ کدها: {string.Join("، ",result.Codes)}\nانتشار با عکس در کانال موجودی در حال انجام است.":"موجودی جدیدی ایجاد نشد.")+(result.Deferred?"\nوضعیت گزارش واریز جدید به‌روزرسانی می‌شود.":"\nپاکسازی پیام‌های قدیمی از صف پیگیری می‌شود؛ در حذف جزئی، بعد از تحویل موفق نسخهٔ اصلاح‌شده انجام می‌شود."),
@@ -206,7 +206,7 @@ public sealed partial class TelegramWebhookController
             if(d.Step=="caption")
             {
                 var service=new InvoiceCancellationService(_db);var preview=d.DeferredRequested?await service.ResolveCancelledForSelectionAsync(text,ct):await service.ResolveForSelectionAsync(text,d.Returned,ct);
-                d=d with{Preview=preview,Original=preview,Prices=preview.Lines.ToDictionary(l=>l.ItemId,l=>l.CurrentPrice),Index=0,Selected=[]};
+                d=d with{Preview=preview,Original=preview,Prices=preview.Lines.ToDictionary(l=>l.ItemId,l=>l.CurrentPrice),Volumes=preview.Lines.ToDictionary(l=>l.ItemId,l=>l.Volume),Index=0,Selected=[]};
                 InvoiceCancelDrafts[key]=d;
                 if(preview.Lines.Length>1){await ShowInvoiceCancellationSelectionAsync(message.Chat.Id,message.From.Id,d,ct);return true;}
                 preview=await service.SelectAsync(preview,d.Returned,preview.Lines.Select(l=>l.ItemId).ToArray(),ct);
@@ -220,11 +220,19 @@ public sealed partial class TelegramWebhookController
                 if(!HasInventoryLocation(text)||text.Length>150)throw new InvalidOperationException("جایگاه فیزیکی معتبر را حداکثر در ۱۵۰ کاراکتر وارد کنید.");
                 await ShowInvoiceReturnPositionConfirmationAsync(message.Chat.Id,message.From.Id,d,text,ct);return true;
             }
-            if(d.Step=="price")
+            if(d.Step is "price" or "compare")
             {
-                var numeric=NormalizeNumber(text).Replace("٬","").Replace(",","").Replace('٫','.');
+                var rows=text.Split('\n',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
+                if(rows.Length!=2)throw new InvalidOperationException("اطلاعات را در دو خط وارد کنید: خط اول قیمت هر میل به تومان؛ خط دوم مقدار میل.");
+                var numeric=NormalizeNumber(rows[0]).Replace("٬","").Replace(",","").Replace('٫','.');
                 if(!decimal.TryParse(numeric,NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out var price)||price<=0||price>1000000000000m||decimal.Round(price,2)!=price)throw new InvalidOperationException("قیمت مثبت هر میل را به تومان وارد کنید؛ حداکثر دو رقم اعشار.");
-                var prices=new Dictionary<Guid,decimal>(d.Prices!){[d.Preview!.Lines[d.Index].ItemId]=price};d=d with{Prices=prices};
+                var quantity=NormalizeNumber(rows[1]).Replace('٫','.');
+                if(!decimal.TryParse(quantity,NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out var volume)||volume<0.5m||volume>1000m||volume*2!=decimal.Truncate(volume*2))throw new InvalidOperationException("مقدار میل را با گام نیم‌میل وارد کنید؛ مثلاً ۱.۵ یا ۵.");
+                var line=d.Preview!.Lines[d.Index];
+                var capacity=await _db.Bottles.AsNoTracking().Where(b=>b.Id==line.BottleId&&!b.IsDeleted&&b.IsActive).Select(b=>b.VolumeMl).SingleAsync(ct);
+                if(volume>capacity)throw new InvalidOperationException("مقدار میل از ظرفیت شیشه بیشتر است.");
+                var prices=new Dictionary<Guid,decimal>(d.Prices!){[line.ItemId]=price};
+                var volumes=new Dictionary<Guid,decimal>(d.Volumes??d.Preview.Lines.ToDictionary(l=>l.ItemId,l=>l.Volume)){[line.ItemId]=volume};d=d with{Prices=prices,Volumes=volumes};
                 await ShowInvoiceReturnPriceAsync(message.Chat.Id,message.From.Id,d,ct);return true;
             }
             await InvoiceCancelPrompt(message.Chat.Id,"از دکمه‌های پیش‌نمایش فعلی استفاده کنید.",ct);return true;
@@ -239,7 +247,7 @@ public sealed partial class TelegramWebhookController
         foreach(var (line,index) in p.Lines.Select((l,i)=>(l,i)).Skip(d.Page*10).Take(10))
         {
             var name=line.Name.Length>30?line.Name[..30]+"…":line.Name;
-            buttons.Add([new TelegramInlineButton($"{(selected.Contains(line.ItemId)?"☑️":"⬜️")} آیتم {index+1}: {name} | {line.Volume:0.#} میل",InvoiceCancelPrefix+$"pick:{index}:"+token)]);
+            buttons.Add([new TelegramInlineButton($"{(selected.Contains(line.ItemId)?"☑️":"⬜️")} آیتم {index+1}: {name} | {(d.Volumes?.GetValueOrDefault(line.ItemId,line.Volume)??line.Volume):0.#} میل",InvoiceCancelPrefix+$"pick:{index}:"+token)]);
         }
         var paging=new List<TelegramInlineButton>();if(d.Page>0)paging.Add(new("⬅️ قبلی",InvoiceCancelPrefix+$"page:{d.Page-1}:"+token));
         if((d.Page+1)*10<p.Lines.Length)paging.Add(new("بعدی ➡️",InvoiceCancelPrefix+$"page:{d.Page+1}:"+token));if(paging.Count>0)buttons.Add(paging);
@@ -248,10 +256,10 @@ public sealed partial class TelegramWebhookController
     }
     private async Task ShowInvoiceReturnPriceAsync(long chat,long user,InvoiceCancelDraft d,CancellationToken ct)
     {
-        var p=d.Preview!;var line=p.Lines[d.Index];var price=d.Prices![line.ItemId];
+        var p=d.Preview!;var line=p.Lines[d.Index];var price=d.Prices![line.ItemId];var volume=d.Volumes?.GetValueOrDefault(line.ItemId,line.Volume)??line.Volume;
         InvoiceCancelDrafts[(chat,user)]=d with{Step="compare",Token=null};
-        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📦 انتقال فاکتور {p.Number} به موجودی\nمشتری: {p.Customer}\nآیتم {d.Index+1} از {p.Lines.Length}: {line.Name}\nحجم: {line.Volume:0.#} میل\n\nقیمت هر میل در فاکتور: {line.InvoicePrice:N0} تومان\nقیمت روز هر میل: {line.CurrentPrice:N0} تومان\nاختلاف با فاکتور: {line.CurrentPrice-line.InvoicePrice:+#,0;-#,0;0} تومان\n\nقیمت انتخابی موجودی، هر میل: {price:N0} تومان\nشیشه: {line.BottleName} — {line.BottlePrice:N0} تومان\nمبلغ نهایی موجودی: {price*line.Volume+line.BottlePrice:N0} تومان\nجایگاه داخلی: {line.Position}\n\nقیمت شیشه جداست؛ در صورت نیاز قیمت هر میل را اصلاح کنید.",
-            [[new TelegramInlineButton("✅ همین قیمت؛ ادامه",InvoiceCancelPrefix+"accept-price:"+d.Index)],[new TelegramInlineButton("✏️ اصلاح قیمت هر میل",InvoiceCancelPrefix+"edit-price:"+d.Index)],[new TelegramInlineButton("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
+        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📦 انتقال فاکتور {p.Number} به موجودی\nمشتری: {p.Customer}\nآیتم {d.Index+1} از {p.Lines.Length}: {line.Name}\nحجم فاکتور: {line.Volume:0.#} میل\nحجم انتخابی موجودی: {volume:0.#} میل\n\nقیمت هر میل در فاکتور: {line.InvoicePrice:N0} تومان\nقیمت روز هر میل: {line.CurrentPrice:N0} تومان\nاختلاف با فاکتور: {line.CurrentPrice-line.InvoicePrice:+#,0;-#,0;0} تومان\n\nقیمت انتخابی موجودی، هر میل: {price:N0} تومان\nشیشه: {line.BottleName} — {line.BottlePrice:N0} تومان\nمبلغ نهایی موجودی: {price*volume+line.BottlePrice:N0} تومان\nجایگاه داخلی: {line.Position}\n\nاگر قیمت یا مقدار تغییر کرده، در دو خط بفرستید: خط اول قیمت هر میل به تومان، خط دوم مقدار میل. در غیر این صورت «ادامه» را بزنید.",
+            [[new TelegramInlineButton("✅ ادامه",InvoiceCancelPrefix+"accept-price:"+d.Index)],[new TelegramInlineButton("✏️ اصلاح قیمت و مقدار میل",InvoiceCancelPrefix+"edit-price:"+d.Index)],[new TelegramInlineButton("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
     }
     private async Task ShowInvoiceReturnPositionAsync(long chat,long user,InvoiceCancelDraft d,CancellationToken ct)
     {
@@ -260,7 +268,7 @@ public sealed partial class TelegramWebhookController
         var buttons=new List<IReadOnlyCollection<TelegramInlineButton>>();
         if(HasInventoryLocation(current))buttons.Add([new("✅ حفظ همین جایگاه",InvoiceCancelPrefix+"keep-position:"+d.Index)]);
         buttons.Add([new("❌ انصراف",InvoiceCancelPrefix+"cancel")]);
-        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📍 جایگاه فیزیکی موجودی\nآیتم {d.Index+1} از {d.Preview.Lines.Length}: {line.Name}\nحجم: {line.Volume:0.#} میل\n"+
+        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📍 جایگاه فیزیکی موجودی\nآیتم {d.Index+1} از {d.Preview.Lines.Length}: {line.Name}\nحجم: {(d.Volumes?.GetValueOrDefault(line.ItemId,line.Volume)??line.Volume):0.#} میل\n"+
             (HasInventoryLocation(current)?$"جایگاه فعلی/انتخاب‌شده: {current}\n":"")+
             "\nجایگاه فیزیکی نگهداری این موجودی را بنویسید؛ مثلاً قفسه ۲، باکس ۵.\nهنوز انتقالی انجام نشده است.",buttons,ct);
     }
@@ -270,7 +278,7 @@ public sealed partial class TelegramWebhookController
         if(!HasInventoryLocation(position)||position.Length>150)throw new InvalidOperationException("جایگاه فیزیکی معتبر را حداکثر در ۱۵۰ کاراکتر وارد کنید.");
         var token=Guid.NewGuid().ToString("N")[..10];var line=d.Preview!.Lines[d.Index];
         InvoiceCancelDrafts[(chat,user)]=d with{Step="position-confirm",Token=token,Positions=new Dictionary<Guid,string>(d.Positions??new()){[line.ItemId]=position}};
-        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📍 تأیید جایگاه موجودی\n{line.Name} — {line.Volume:0.#} میل\nجایگاه فیزیکی: {position}\n\nاین جایگاه ثبت شود؟",
+        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📍 تأیید جایگاه موجودی\n{line.Name} — {(d.Volumes?.GetValueOrDefault(line.ItemId,line.Volume)??line.Volume):0.#} میل\nجایگاه فیزیکی: {position}\n\nاین جایگاه ثبت شود؟",
             [[new("✅ تأیید جایگاه و ادامه",InvoiceCancelPrefix+$"accept-position:{d.Index}:"+token)],
              [new("✏️ تغییر جایگاه",InvoiceCancelPrefix+$"edit-position:{d.Index}:"+token)],
              [new("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
@@ -285,7 +293,7 @@ public sealed partial class TelegramWebhookController
         }
         var token=Guid.NewGuid().ToString("N")[..12];InvoiceCancelDrafts[(chat,user)]=d with{Step="confirm",Token=token};
         var text=$"👁 پیش‌نمایش {(p.RestockOnly?"انتقال فاکتور حذف‌شده به موجودی":d.Returned?"لغو و انتقال به موجودی":"لغو فاکتور")}\nشماره: {p.Number}\nمشتری: {p.Customer}\nمبلغ قابل برگشت از بدهی: {p.Amount:N0} تومان\n\n"+
-            string.Join("\n\n",p.Lines.Select(l=>$"🧴 {l.Name} — {l.Volume:0.#} میل\nشیشه: {l.BottleName}"+(d.Returned?$"\nقیمت موجودی هر میل: {d.Prices![l.ItemId]:N0} تومان\nمبلغ عطر و شیشه: {d.Prices[l.ItemId]*l.Volume+l.BottlePrice:N0} تومان\n📍 جایگاه فیزیکی: {d.Positions![l.ItemId]}":"")));
+            string.Join("\n\n",p.Lines.Select(l=>$"🧴 {l.Name} — {(d.Returned?(d.Volumes?.GetValueOrDefault(l.ItemId,l.Volume)??l.Volume):l.Volume):0.#} میل\nشیشه: {l.BottleName}"+(d.Returned?$"\nقیمت موجودی هر میل: {d.Prices![l.ItemId]:N0} تومان\nمبلغ عطر و شیشه: {d.Prices[l.ItemId]*(d.Volumes?.GetValueOrDefault(l.ItemId,l.Volume)??l.Volume)+l.BottlePrice:N0} تومان\n📍 جایگاه فیزیکی: {d.Positions![l.ItemId]}":"")));
         foreach(var part in SplitTelegramMessage(text))await _sender.SendAsync(chat.ToString(),part,ct);
         var scope=p.RestockOnly?"فاکتور قبلاً لغو شده است؛ این انتقال فقط موجودی آمادهٔ ارسال می‌سازد و اثر مالی دوباره ندارد.":p.Partial?$"فقط آیتم‌های بالا حذف می‌شوند. شمارهٔ فاکتور باقی‌مانده حفظ و مبلغش {p.RemainingAmount:N0} تومان می‌شود؛ نسخهٔ اصلاح‌شده با کپشن جدید برای مشتری ارسال می‌شود.":"کل فاکتور لغو و مبلغ آن از بدهی مشتری کسر می‌شود.";
         await _sender.SendInlineKeyboardAsync(chat.ToString(),scope+(d.Returned?" آیتم‌های انتخاب‌شده به موجودی آمادهٔ ارسال منتقل و با عکس در کانال موجودی منتشر می‌شوند؛ تخفیف قبلی خودکار به قیمت موجودی منتقل نمی‌شود.":" موجودی جدیدی ساخته نمی‌شود."),

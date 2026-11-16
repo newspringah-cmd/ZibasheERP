@@ -251,6 +251,11 @@ public static class InvoiceCancellationTests
             check(await Rejected(async()=>{await service.ResolveAsync(Caption(missing),true);})&&await Debt()==missingDebt&&await db.Invoices.AnyAsync(i=>i.Id==missing.Id&&i.Status==InvoiceStatus.Issued),"missing product photo prevents direct return without cancelling the invoice or changing debt");
             await db.SalesLists.Where(l=>l.Id==source.Id).ExecuteUpdateAsync(s=>s.SetProperty(l=>l.TelegramPhotoFileId,"fixture-photo"));
 
+            var adjusted=await Invoice(false,3m);var adjustedPreview=await service.ResolveAsync(Caption(adjusted),true);var adjustedItem=adjustedPreview.Lines.Single().ItemId;var adjustedDebt=await Debt();
+            check(await Rejected(async()=>{await service.ExecuteWithDetailsAsync(Guid.NewGuid(),adjustedPreview,true,new Dictionary<Guid,decimal>{{adjustedItem,100000}},owner,"@zibasheperfume_mojodi",new Dictionary<Guid,string>{{adjustedItem,"قفسه تست"}},new Dictionary<Guid,decimal>{{adjustedItem,10.5m}});}),"restock volume above bottle capacity is rejected before financial cancellation");
+            var adjustedResult=await service.ExecuteWithDetailsAsync(Guid.NewGuid(),adjustedPreview,true,new Dictionary<Guid,decimal>{{adjustedItem,100000}},owner,"@zibasheperfume_mojodi",new Dictionary<Guid,string>{{adjustedItem,"قفسه تست"}},new Dictionary<Guid,decimal>{{adjustedItem,1.5m}});
+            var adjustedStock=await db.SalesLists.AsNoTracking().SingleAsync(l=>l.Id==adjustedResult.Offers.Single());
+            check(adjustedStock.TotalVolume==1.5m&&adjustedStock.PricePerMl==100000&&await Debt()==adjustedDebt-adjusted.TotalAmount,"edited half-millilitre stock quantity and price are saved while debt reversal retains the exact original invoice amount");
             var ui=await Invoice(false,4m);var sender=DispatchProxy.Create<ITelegramMessageSender,MarketingSender>();var sent=(MarketingSender)(object)sender;
             var controller=(TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));
             foreach(var f in typeof(TelegramWebhookController).GetFields(BindingFlags.Instance|BindingFlags.NonPublic))if(f.Name.EndsWith("Drafts")&&f.FieldType.GetConstructor(Type.EmptyTypes)is not null)f.SetValue(controller,Activator.CreateInstance(f.FieldType));
@@ -266,7 +271,7 @@ public static class InvoiceCancellationTests
             check(await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Issued),"cancelled or expired approval cannot cancel an invoice later");
             sent.AllowAccountingAdmin=true;await Select("return-start",owner+1);check(sent.Texts.Last().Contains("کپشن کامل"),"authorized accountant can start the separate return-to-stock caption workflow");
             await Input(Caption(ui),owner+1);check(sent.Texts.Last().Contains("قیمت روز هر میل")&&sent.Texts.Last().Contains("قیمت هر میل در فاکتور"),"accountant sees original invoice and current per-ml prices before direct stock return");
-            await Select("edit-price:0",owner+1);await Input("۸۵۰۰",owner+1);check(sent.Texts.Last().Contains("8,500")&&sent.Texts.Last().Contains("39,000"),"accountant can edit Persian-digit per-ml price and preview exact perfume-plus-bottle total");
+            await Select("edit-price:0",owner+1);await Input("۸۵۰۰\n۱.۵",owner+1);check(sent.Texts.Last().Contains("8,500")&&sent.Texts.Last().Contains("17,750"),"accountant can edit Persian-digit per-ml price and preview exact perfume-plus-bottle total");
             var finalButtons=sent.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"));
             await Select("accept-price:0",owner+1);
             check(sent.Texts.Last().Contains("جایگاه فیزیکی نگهداری")&&sent.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"))==finalButtons&&await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Issued),"return-to-stock asks for a physical position before exposing final financial approval");
@@ -281,7 +286,7 @@ public static class InvoiceCancellationTests
             await Select(sent.Buttons.Last(b=>b.StartsWith(prefix+"confirm:"))[prefix.Length..],owner+1);db.ChangeTracker.Clear();
             var uiItems=await db.OrderItems.AsNoTracking().Where(i=>i.OrderId==ui.OrderId).Select(i=>i.Id).ToArrayAsync();
             var uiOffer=await db.SalesLists.AsNoTracking().Include(l=>l.FixedBottle).SingleAsync(l=>l.SourceOrderItemId!=null&&uiItems.Contains(l.SourceOrderItemId.Value));
-            check(uiOffer.StoragePosition=="کشوی ۴"&&await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Cancelled),"the real accountant confirmation atomically saves the entered position on returned inventory");
+            check(uiOffer.TotalVolume==1.5m&&uiOffer.StoragePosition=="کشوی ۴"&&await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Cancelled),"the real accountant confirmation atomically saves the entered position on returned inventory");
             var publicCaption=(string)typeof(TelegramWebhookController).GetMethod("ReadyInventoryCaption",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[uiOffer])!;
             check(!publicCaption.Contains("کشوی ۴"),"physical storage position remains private and is not shown in the inventory channel caption");
             var keepLocation=await Invoice(false,2m);await Select("return-start",owner+1);await Input(Caption(keepLocation),owner+1);await Select("accept-price:0",owner+1);await Select("keep-position:0",owner+1);

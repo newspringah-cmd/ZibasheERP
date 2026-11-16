@@ -133,7 +133,10 @@ public sealed class InvoiceCancellationService(AppDbContext db)
     public Task<Result> ExecuteAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,CancellationToken ct=default) =>
         ExecuteWithPositionsAsync(operation,expected,returned,prices,actor,inventoryChannel,null,ct);
 
-    public async Task<Result> ExecuteWithPositionsAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,IReadOnlyDictionary<Guid,string>? positions,CancellationToken ct=default)
+    public Task<Result> ExecuteWithPositionsAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,IReadOnlyDictionary<Guid,string>? positions,CancellationToken ct=default) =>
+        ExecuteWithDetailsAsync(operation,expected,returned,prices,actor,inventoryChannel,positions,null,ct);
+
+    public async Task<Result> ExecuteWithDetailsAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,IReadOnlyDictionary<Guid,string>? positions,IReadOnlyDictionary<Guid,decimal>? volumes,CancellationToken ct=default)
     {
         if(operation==Guid.Empty||actor<=0||returned&&string.IsNullOrWhiteSpace(inventoryChannel))throw new InvalidOperationException("درخواست یا مقصد موجودی معتبر نیست.");
         if(db.ChangeTracker.HasChanges())throw new InvalidOperationException("ابتدا تغییرات قبلی را تکمیل و کپشن را دوباره بررسی کنید.");
@@ -163,7 +166,7 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         var o=invoice.Order!;
         if(fresh.RestockOnly)
         {
-            var deferredNow=DateTime.UtcNow;var deferredOffers=await CreateOffersAsync(fresh,prices,positions,actor,deferredNow,ct);
+            var deferredNow=DateTime.UtcNow;var deferredOffers=await CreateOffersAsync(fresh,prices,positions,volumes,actor,deferredNow,ct);
             var deferredResult=new Result(invoice.Id,0,deferredOffers.Select(l=>l.Id).ToArray(),deferredOffers.Select(l=>l.InventoryCode!.Value).ToArray(),true,
                 SelectedItems:fresh.Lines.Select(l=>l.ItemId).ToArray(),Fingerprint:fresh.Fingerprint,Deferred:true);
             db.NotificationOutbox.Add(new(){Id=operation,CustomerId=o.CustomerId,OrderId=o.Id,Channel=InvoiceRestockTracking.DeferredChannel,EventType="CancelledInvoiceRestocked",Recipient=actor.ToString(),Payload=JsonSerializer.Serialize(deferredResult),Status=NotificationOutboxStatus.Processed,CreatedAt=deferredNow,ProcessedAt=deferredNow});
@@ -182,7 +185,7 @@ public sealed class InvoiceCancellationService(AppDbContext db)
             invoice=await InvoiceRevisionService.SplitAsync(db,invoice,fresh.Lines.Select(l=>l.ItemId).ToArray(),operation,now,ct);
             o=invoice.Order!;
         }
-        var offers=returned?await CreateOffersAsync(fresh,prices,positions,actor,now,ct):new List<SalesList>();
+        var offers=returned?await CreateOffersAsync(fresh,prices,positions,volumes,actor,now,ct):new List<SalesList>();
         foreach(var x in o.Items.Where(x=>!x.IsDeleted))
         {
             x.IsDeleted=true;x.UpdatedAt=now;x.ShippingRequestId=null;x.ShippingRequestedAt=null;x.ShippingTelegramMessageId=null;
@@ -201,15 +204,19 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         db.NotificationOutbox.Add(InvoiceRestockTracking.RefreshJob(invoice,o.CustomerId,now));
         await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return result;
     }
-    private async Task<List<SalesList>> CreateOffersAsync(Preview fresh,IReadOnlyDictionary<Guid,decimal> prices,IReadOnlyDictionary<Guid,string>? positions,long actor,DateTime now,CancellationToken ct)
+    private async Task<List<SalesList>> CreateOffersAsync(Preview fresh,IReadOnlyDictionary<Guid,decimal> prices,IReadOnlyDictionary<Guid,string>? positions,IReadOnlyDictionary<Guid,decimal>? volumes,long actor,DateTime now,CancellationToken ct)
     {
         if(prices.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!prices.TryGetValue(l.ItemId,out var p)||p<=0||p>1000000000000m||decimal.Round(p,2)!=p))throw new InvalidOperationException("قیمت هر میل همهٔ آیتم‌ها باید مشخص و مثبت باشد.");
         if(positions is not null&&(positions.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!positions.TryGetValue(l.ItemId,out var position)||string.IsNullOrWhiteSpace(position)||position.Trim().Length>150||position.Trim() is "ثبت نشده" or "جایگاه ثبت نشده" or "نامشخص" or "-")))throw new InvalidOperationException("جایگاه فیزیکی معتبر همهٔ موجودی‌های انتخاب‌شده باید مشخص باشد.");
+        if(volumes is not null&&(volumes.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!volumes.TryGetValue(l.ItemId,out var v)||v<0.5m||v>1000m||v*2!=decimal.Truncate(v*2))))throw new InvalidOperationException("مقدار میل هر موجودی باید مثبت و با گام نیم‌میل باشد.");
+        var bottleIds=fresh.Lines.Select(l=>l.BottleId!.Value).Distinct().ToArray();
+        var capacities=await db.Bottles.AsNoTracking().Where(b=>bottleIds.Contains(b.Id)&&!b.IsDeleted&&b.IsActive).ToDictionaryAsync(b=>b.Id,b=>b.VolumeMl,ct);
+        if(fresh.Lines.Any(l=>!capacities.TryGetValue(l.BottleId!.Value,out var capacity)||capacity<(volumes?.GetValueOrDefault(l.ItemId)??l.Volume)))throw new InvalidOperationException("مقدار میل از ظرفیت شیشه بیشتر است؛ مقدار یا نوع شیشه باید اصلاح شود.");
         var offers=new List<SalesList>();
         foreach(var line in fresh.Lines)
         {
             var position=positions is null?line.Position:positions[line.ItemId].Trim();
-            var offer=await new ReadyInventoryService(db).CreateAsync(new(Guid.NewGuid(),line.ReferenceId,line.Name,line.Photo,prices[line.ItemId],line.Volume,line.BottleId!.Value,line.BottlePrice,position,actor,line.Description),ct);
+            var offer=await new ReadyInventoryService(db).CreateAsync(new(Guid.NewGuid(),line.ReferenceId,line.Name,line.Photo,prices[line.ItemId],volumes?.GetValueOrDefault(line.ItemId)??line.Volume,line.BottleId!.Value,line.BottlePrice,position,actor,line.Description),ct);
             offer.SourceOrderItemId=line.ItemId;offers.Add(offer);
             db.NotificationOutbox.Add(new(){Id=offer.Id,CustomerId=Guid.Empty,Channel="MarketingPromotion",EventType="ReadyInventoryPublication",Recipient=actor.ToString(),CreatedAt=now,
                 Payload=JsonSerializer.Serialize(new{SalesListId=offer.Id,Code=offer.InventoryCode!.Value,Destination="inventory-publish",AdminChatId=actor,AdminUserId=actor,HoldHours=24,ChannelMode="replace"})});
