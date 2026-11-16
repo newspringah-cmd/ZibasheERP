@@ -94,7 +94,14 @@ public static class InvoiceCancellationTests
             check(await Rejected(async()=>{await service.ExecuteAsync(Guid.NewGuid(),returnPreview,true,changedPrices,owner,"@zibasheperfume_mojodi");})&&await Debt()==staleDebt,"market price change after transfer preview invalidates the approval atomically");
             returnPreview=await service.ResolveAsync(Caption(returned),true);
             check(returnPreview.Lines.All(l=>l.CurrentPrice==12000),"renewed transfer preview reads the current perfume price rather than historical invoice price");
-            var returnOp=Guid.NewGuid();var transferred=await service.ExecuteAsync(returnOp,returnPreview,true,changedPrices,owner,"@zibasheperfume_mojodi");db.ChangeTracker.Clear();
+            var positions=returnPreview.Lines.Select((line,index)=>(line.ItemId,Position:"return-box-"+(index+1))).ToDictionary(v=>v.ItemId,v=>v.Position);
+            var incompletePositions=positions.Take(1).ToDictionary(v=>v.Key,v=>v.Value);
+            check(await Rejected(async()=>{await service.ExecuteWithPositionsAsync(Guid.NewGuid(),returnPreview,true,changedPrices,owner,"@zibasheperfume_mojodi",incompletePositions);})&&await Debt()==staleDebt&&await db.Invoices.AnyAsync(i=>i.Id==returned.Id&&i.Status==InvoiceStatus.Issued),"missing physical position rolls back stock return without cancelling the invoice or changing debt");
+            var invalidPositions=positions.ToDictionary(v=>v.Key,v=>new string('x',151));
+            check(await Rejected(async()=>{await service.ExecuteWithPositionsAsync(Guid.NewGuid(),returnPreview,true,changedPrices,owner,"@zibasheperfume_mojodi",invalidPositions);})&&await Debt()==staleDebt,"invalid physical positions cannot create returned inventory or reverse customer debt");
+            var returnOp=Guid.NewGuid();var transferred=await service.ExecuteWithPositionsAsync(returnOp,returnPreview,true,changedPrices,owner,"@zibasheperfume_mojodi",positions);db.ChangeTracker.Clear();
+            var located=await db.SalesLists.AsNoTracking().Where(l=>transferred.Offers.Contains(l.Id)).ToArrayAsync();
+            check(located.All(l=>l.SourceOrderItemId.HasValue&&l.StoragePosition==positions[l.SourceOrderItemId.Value])&&await db.SalesLists.AnyAsync(l=>l.Id==source.Id&&l.StoragePosition=="fixture-shelf"),"each returned package stores its separately confirmed physical position without changing the source list position");
             var offers=await db.SalesLists.AsNoTracking().Where(l=>transferred.Offers.Contains(l.Id)).ToArrayAsync();
             check(offers.Length==2&&offers.All(l=>l.IsInventoryOffer&&l.InventoryCode>=1000&&l.InventoryCode<=9999&&l.PricePerMl==9000&&l.FixedBottlePrice==5000&&l.Status==SalesListStatus.Open)&&offers.Sum(l=>l.TotalVolume)==4.5m,
                 "whole invoice return creates independent four-digit ready packages with corrected per-ml price, original bottles and exact half-ml volumes");
@@ -202,7 +209,26 @@ public static class InvoiceCancellationTests
             sent.AllowAccountingAdmin=true;await Select("return-start",owner+1);check(sent.Texts.Last().Contains("کپشن کامل"),"authorized accountant can start the separate return-to-stock caption workflow");
             await Input(Caption(ui),owner+1);check(sent.Texts.Last().Contains("قیمت روز هر میل")&&sent.Texts.Last().Contains("قیمت هر میل در فاکتور"),"accountant sees original invoice and current per-ml prices before direct stock return");
             await Select("edit-price:0",owner+1);await Input("۸۵۰۰",owner+1);check(sent.Texts.Last().Contains("8,500")&&sent.Texts.Last().Contains("39,000"),"accountant can edit Persian-digit per-ml price and preview exact perfume-plus-bottle total");
-            await Select("accept-price:0",owner+1);check(sent.Buttons.Last(s=>s.StartsWith(prefix+"confirm:")).Length<=64,"final transfer approval fits Telegram callback limits and remains separate from price editing");
+            var finalButtons=sent.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"));
+            await Select("accept-price:0",owner+1);
+            check(sent.Texts.Last().Contains("جایگاه فیزیکی نگهداری")&&sent.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"))==finalButtons&&await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Issued),"return-to-stock asks for a physical position before exposing final financial approval");
+            await Input("-",owner+1);check(sent.Texts.Last().Contains("جایگاه فیزیکی معتبر"),"unknown placeholder cannot skip the required physical position");
+            await Input("قفسه ۲، باکس ۷",owner+1);
+            var stalePosition=sent.Buttons.Last(b=>b.StartsWith(prefix+"accept-position:"));
+            check(sent.Texts.Last().Contains("قفسه ۲، باکس ۷")&&await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Issued),"typed position is shown for explicit confirmation before any invoice change");
+            await Select(sent.Buttons.Last(b=>b.StartsWith(prefix+"edit-position:"))[prefix.Length..],owner+1);await Input("کشوی ۴",owner+1);
+            await Select(stalePosition[prefix.Length..],owner+1);check(await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Issued)&&sent.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"))==finalButtons,"stale position approval cannot confirm a changed location or cancel the invoice");
+            await Select(sent.Buttons.Last(b=>b.StartsWith(prefix+"accept-position:"))[prefix.Length..],owner+1);
+            check(sent.Texts.Any(t=>t.Contains("📍 جایگاه فیزیکی: کشوی ۴"))&&sent.Buttons.Last(b=>b.StartsWith(prefix+"confirm:")).Length<=64,"final private preview includes the confirmed physical position and a bounded approval token");
+            await Select(sent.Buttons.Last(b=>b.StartsWith(prefix+"confirm:"))[prefix.Length..],owner+1);db.ChangeTracker.Clear();
+            var uiItems=await db.OrderItems.AsNoTracking().Where(i=>i.OrderId==ui.OrderId).Select(i=>i.Id).ToArrayAsync();
+            var uiOffer=await db.SalesLists.AsNoTracking().Include(l=>l.FixedBottle).SingleAsync(l=>l.SourceOrderItemId!=null&&uiItems.Contains(l.SourceOrderItemId.Value));
+            check(uiOffer.StoragePosition=="کشوی ۴"&&await db.Invoices.AnyAsync(i=>i.Id==ui.Id&&i.Status==InvoiceStatus.Cancelled),"the real accountant confirmation atomically saves the entered position on returned inventory");
+            var publicCaption=(string)typeof(TelegramWebhookController).GetMethod("ReadyInventoryCaption",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[uiOffer])!;
+            check(!publicCaption.Contains("کشوی ۴"),"physical storage position remains private and is not shown in the inventory channel caption");
+            var keepLocation=await Invoice(false,2m);await Select("return-start",owner+1);await Input(Caption(keepLocation),owner+1);await Select("accept-price:0",owner+1);await Select("keep-position:0",owner+1);
+            check(sent.Texts.Last().Contains("fixture-shelf"),"existing physical position still requires explicit confirmation before reuse");
+            await Select("cancel",owner+1);check(await db.Invoices.AnyAsync(i=>i.Id==keepLocation.Id&&i.Status==InvoiceStatus.Issued),"cancelling at the location step preserves the original invoice");
         }
         finally
         {

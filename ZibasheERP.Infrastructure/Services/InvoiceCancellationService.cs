@@ -103,7 +103,10 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         return new(invoice.Id,invoice.InvoiceNumber,identity,amount,Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(data))),
             lines.Where(x=>selected is null||selected.Contains(x.ItemId)).ToArray(),selected,invoice.TotalAmount-amount,selected is not null&&selected.Length<active.Length);
     }
-    public async Task<Result> ExecuteAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,CancellationToken ct=default)
+    public Task<Result> ExecuteAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,CancellationToken ct=default) =>
+        ExecuteWithPositionsAsync(operation,expected,returned,prices,actor,inventoryChannel,null,ct);
+
+    public async Task<Result> ExecuteWithPositionsAsync(Guid operation,Preview expected,bool returned,IReadOnlyDictionary<Guid,decimal> prices,long actor,string inventoryChannel,IReadOnlyDictionary<Guid,string>? positions,CancellationToken ct=default)
     {
         if(operation==Guid.Empty||actor<=0||returned&&string.IsNullOrWhiteSpace(inventoryChannel))throw new InvalidOperationException("درخواست یا مقصد موجودی معتبر نیست.");
         if(db.ChangeTracker.HasChanges())throw new InvalidOperationException("ابتدا تغییرات قبلی را تکمیل و کپشن را دوباره بررسی کنید.");
@@ -145,9 +148,12 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         if(returned)
         {
             if(prices.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!prices.TryGetValue(l.ItemId,out var p)||p<=0||p>1000000000000m||decimal.Round(p,2)!=p))throw new InvalidOperationException("قیمت هر میل همهٔ آیتم‌ها باید مشخص و مثبت باشد.");
+            if(positions is not null&&(positions.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!positions.TryGetValue(l.ItemId,out var position)||string.IsNullOrWhiteSpace(position)||position.Trim().Length>150||position.Trim() is "ثبت نشده" or "جایگاه ثبت نشده" or "نامشخص" or "-")))
+                throw new InvalidOperationException("جایگاه فیزیکی معتبر همهٔ موجودی‌های انتخاب‌شده باید مشخص باشد.");
             foreach(var line in fresh.Lines)
             {
-                var offer=await new ReadyInventoryService(db).CreateAsync(new(Guid.NewGuid(),line.ReferenceId,line.Name,line.Photo,prices[line.ItemId],line.Volume,line.BottleId!.Value,line.BottlePrice,line.Position,actor,line.Description),ct);
+                var position=positions is null?line.Position:positions[line.ItemId].Trim();
+                var offer=await new ReadyInventoryService(db).CreateAsync(new(Guid.NewGuid(),line.ReferenceId,line.Name,line.Photo,prices[line.ItemId],line.Volume,line.BottleId!.Value,line.BottlePrice,position,actor,line.Description),ct);
                 offer.SourceOrderItemId=line.ItemId;
                 offers.Add(offer);
                 db.NotificationOutbox.Add(new(){Id=offer.Id,CustomerId=Guid.Empty,Channel="MarketingPromotion",EventType="ReadyInventoryPublication",Recipient=actor.ToString(),CreatedAt=now,

@@ -184,7 +184,7 @@ public static class PartialInvoiceCancellationTests
             foreach(var (name,value) in new(string,object)[]{("_db",db),("_sender",uiSender),("_options",new TelegramOptions{OwnerUserId=owner.ToString(),ReadyInventoryChannelId="@zibasheperfume_mojodi"}),("_adminActivityContext",new AdminActivityContext())})typeof(TelegramWebhookController).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(uiController,value);
             const string prefix="invoiceadmin:cancelinvoice:";
             Task Select(string action)=>(Task)typeof(TelegramWebhookController).GetMethod("HandleInvoiceCancellationCallbackAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(uiController,[new TelegramCallbackQuery("partial-fixture",new(owner,null),new TelegramMessage(null,new(owner,"private"),new(owner,null),null,MessageId:42),prefix+action),CancellationToken.None])!;
-            Task<bool> Input()=>(Task<bool>)typeof(TelegramWebhookController).GetMethod("TryHandleInvoiceCancellationMessageAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(uiController,[new TelegramMessage(Caption(ui.Invoice),new(owner,"private"),new(owner,null),null,MessageId:43),CancellationToken.None])!;
+            Task<bool> Input(string? text=null)=>(Task<bool>)typeof(TelegramWebhookController).GetMethod("TryHandleInvoiceCancellationMessageAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(uiController,[new TelegramMessage(text??Caption(ui.Invoice),new(owner,"private"),new(owner,null),null,MessageId:43),CancellationToken.None])!;
             await Select("start");await Input();
             check(uiCaptured.Texts.Last().Contains("تعداد انتخاب‌شده: 0 از 3")&&uiCaptured.Buttons.Any(b=>b.StartsWith(prefix+"all:")),"multi-item invoice cancellation asks for all items or explicit individual selection before any write");
             var stale=uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"next:"));
@@ -200,10 +200,26 @@ public static class PartialInvoiceCancellationTests
             await Select("return-start");await Input();await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"pick:1:"))[prefix.Length..]);
             await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"next:"))[prefix.Length..]);
             check(uiCaptured.Texts.Last().Contains("قیمت روز هر میل")&&uiCaptured.Texts.Last().Contains(sources[1].PersianName),"return-to-stock compares the current price only for the selected invoice item");
-            await Select("accept-price:0");await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"confirm:"))[prefix.Length..]);
+            await Select("accept-price:0");await Select("keep-position:0");
+            await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"accept-position:"))[prefix.Length..]);
+            await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"confirm:"))[prefix.Length..]);
             check(await db.Invoices.AnyAsync(i=>i.Id==ui.Invoice.Id&&i.Status==InvoiceStatus.Issued&&i.TotalAmount==44000)&&
                 await db.SalesLists.CountAsync(l=>l.SourceOrderItemId==ui.Items[1].Id)==1&&uiCaptured.Texts.Last().Contains("سایر آیتم‌ها باقی ماندند"),
                 "the administrator can finish a one-item stock return from a three-item invoice while keeping the other two invoiced");
+            check(await db.SalesLists.AnyAsync(l=>l.SourceOrderItemId==ui.Items[1].Id&&l.StoragePosition==sources[1].StoragePosition),"partial return stores the confirmed position for its selected item only");
+            var multi=await Fixture();await Select("return-start");await Input(Caption(multi.Invoice));
+            await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"all:"))[prefix.Length..]);
+            await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"next:"))[prefix.Length..]);
+            var previousApprovals=uiCaptured.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"));
+            for(var index=0;index<3;index++)
+            {
+                await Select("accept-price:"+index);await Input("باکس "+(index+1));
+                check(uiCaptured.Texts.Last().Contains("جایگاه فیزیکی: باکس "+(index+1))&&uiCaptured.Buttons.Count(b=>b.StartsWith(prefix+"confirm:"))==previousApprovals,"multi-item stock return confirms each item's physical position before financial approval");
+                await Select(uiCaptured.Buttons.Last(b=>b.StartsWith(prefix+"accept-position:"))[prefix.Length..]);
+            }
+            check(new[]{"باکس 1","باکس 2","باکس 3"}.All(position=>uiCaptured.Texts.Any(t=>t.Contains("📍 جایگاه فیزیکی: "+position)))&&await db.Invoices.AnyAsync(i=>i.Id==multi.Invoice.Id&&i.Status==InvoiceStatus.Issued),"final multi-item preview shows every chosen physical position while the invoice is still active");
+            await Select("cancel");
+
         }
         finally
         {
