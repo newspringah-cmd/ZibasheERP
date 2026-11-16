@@ -49,6 +49,12 @@ if(args.Contains("--manual-invoice-photos"))
     Console.WriteLine("Manual invoice photo tests passed.");
     return;
 }
+if(args.Contains("--invoice-cancellation"))
+{
+    await InvoiceCancellationTests.Run(Check);
+    await PartialInvoiceCancellationTests.Run(Check);
+    return;
+}
 if(args.Contains("--partial-invoice-cancellation"))
 {
     await PartialInvoiceCancellationTests.Run(Check);

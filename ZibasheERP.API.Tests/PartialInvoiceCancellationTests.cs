@@ -118,7 +118,7 @@ public static class PartialInvoiceCancellationTests
             var reportJob=await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==cancelledOrderId&&n.Channel==InvoiceRestockTracking.Channel);
             await (Task)typeof(TelegramWebhookController).GetMethod("ProcessInvoiceRestockTrackingAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(controller,[reportJob,CancellationToken.None])!;
             check(captured.Edits.Single().Message==f.Invoice.TelegramPaymentTrackingMessageId&&captured.Edits.Single().Text.Contains("22,000")&&
-                captured.Edits.Single().Text.Contains("🔵 آیتم‌های حذف‌شده")&&captured.Edits.Single().Text.Contains(InvoiceRestockTracking.UnknownCaption),
+                captured.Edits.Single().Text.Contains("📋 آیتم‌های حذف‌شده")&&captured.Edits.Single().Text.Contains("🔵 "+sources[0].PersianName)&&captured.Edits.Single().Text.Contains("فاکتور حذف‌شده:")&&captured.Edits.Single().Text.Contains(InvoiceRestockTracking.UnknownCaption),
                 "manual payments keep the retained invoice and blue cancellation history together in the original report");
             var artifactApi=new N8nIntegrationsController(null!,db,Options.Create(new TelegramOptions()),sender);
             async Task<IActionResult> Deliver(Guid source)

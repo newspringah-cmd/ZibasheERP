@@ -7,6 +7,7 @@ using ZibasheERP.Infrastructure.Services;
 namespace ZibasheERP.API.Telegram;
 public sealed class ReadyInventoryMaintenanceWorker(IServiceScopeFactory scopes,IOptions<TelegramOptions> options,ILogger<ReadyInventoryMaintenanceWorker> logger):BackgroundService
 {
+    private DateTime nextRestockCheck;
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         if(!options.Value.Enabled)return;
@@ -32,6 +33,11 @@ public sealed class ReadyInventoryMaintenanceWorker(IServiceScopeFactory scopes,
                     catch(Exception e)when(!ct.IsCancellationRequested)
                     {job.Status=NotificationOutboxStatus.Pending;job.LockedUntil=null;job.Attempts++;job.NextAttemptAt=DateTime.UtcNow.AddSeconds(Math.Min(600,15*job.Attempts));job.LastError=e.Message;}
                     await db.SaveChangesAsync(ct);
+                }
+                if(DateTime.UtcNow>=nextRestockCheck)
+                {
+                    await InvoiceRestockTracking.ReconcileAsync(db,ct);
+                    nextRestockCheck=DateTime.UtcNow.AddSeconds(30);
                 }
                 var restockReports=await repository.GetPendingAsync(InvoiceRestockTracking.Channel,5,ct);
                 foreach(var job in restockReports)

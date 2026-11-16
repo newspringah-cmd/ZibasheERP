@@ -40,7 +40,7 @@ public sealed partial class TelegramWebhookController
             await Edit(reportInvoice.TelegramPaymentTrackingChatId,reportInvoice.TelegramPaymentTrackingMessageId,
                 report.Text,report.Buttons);
         }
-        // First show every cancellation in blue. Keep a restock job retryable
+        // Keep a restock job retryable
         // until publication succeeds so the unknown note becomes a verified transfer.
         if(!published&&await _db.NotificationOutbox.AsNoTracking().AnyAsync(n=>!n.IsDeleted&&n.OrderId==invoice.OrderId&&
             n.Channel=="InvoiceCancellationReceipt"&&n.EventType=="InvoiceCancelledAndRestocked"&&n.Status==NotificationOutboxStatus.Processed,ct))
@@ -78,7 +78,7 @@ public sealed partial class TelegramWebhookController
     private const string InvoiceCancelStatusPrefix="invoiceadmin:icstatus:";
     private sealed record InvoiceCancelDraft(Guid Operation,bool Returned,string Step,DateTime Until,
         InvoiceCancellationService.Preview? Preview=null,int Index=0,Dictionary<Guid,decimal>? Prices=null,string? Token=null,
-        InvoiceCancellationService.Preview? Original=null,Guid[]? Selected=null,int Page=0,Dictionary<Guid,string>? Positions=null);
+        InvoiceCancellationService.Preview? Original=null,Guid[]? Selected=null,int Page=0,Dictionary<Guid,string>? Positions=null,bool DeferredRequested=false);
     private static readonly ConcurrentDictionary<(long Chat,long User),InvoiceCancelDraft> InvoiceCancelDrafts=new();
     private Task InvoiceCancelPrompt(long chat,string text,CancellationToken ct)=>_sender.SendInlineKeyboardAsync(chat.ToString(),text,
         [[new TelegramInlineButton("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
@@ -91,7 +91,7 @@ public sealed partial class TelegramWebhookController
         if(callback.Data!.StartsWith(InvoiceCancelStatusPrefix,StringComparison.Ordinal))
         {
             if(!Guid.TryParseExact(callback.Data[InvoiceCancelStatusPrefix.Length..],"N",out var operation))return;
-            var receipt=await _db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==operation&&n.Channel=="InvoiceCancellationReceipt",ct);
+            var receipt=await _db.NotificationOutbox.AsNoTracking().SingleOrDefaultAsync(n=>n.Id==operation&&(n.Channel=="InvoiceCancellationReceipt"||n.Channel==InvoiceRestockTracking.DeferredChannel),ct);
             if(receipt is null){await InvoiceCancelPrompt(chat,"عملیات پیدا نشد.",ct);return;}
             var result=JsonSerializer.Deserialize<InvoiceCancellationService.Result>(receipt.Payload)!;
             var cleanup=await _db.NotificationOutbox.AsNoTracking().Where(n=>n.OrderId==receipt.OrderId&&n.Channel=="InvoiceCancellationCleanup").Select(n=>n.Status).ToArrayAsync(ct);
@@ -103,11 +103,11 @@ public sealed partial class TelegramWebhookController
                 [[new TelegramInlineButton("🔄 بررسی وضعیت",callback.Data)],[new TelegramInlineButton("↩️ فاکتورها","invoiceadmin:menu:invoices")]],ct);return;
         }
         var action=callback.Data[InvoiceCancelPrefix.Length..];
-        if(action is "start" or "return-start")
+        if(action is "start" or "return-start" or "restock-start")
         {
-            ClearAdminWorkflowDrafts(chat,callback.From.Id);var returned=action=="return-start";
-            InvoiceCancelDrafts[key]=new(Guid.NewGuid(),returned,"caption",DateTime.UtcNow.AddMinutes(20));
-            await InvoiceCancelPrompt(chat,(returned?"📦 حذف فاکتور و ارسال مستقیم به موجودی":"🗑 حذف فاکتور")+"\nکپشن کامل فاکتور را کپی و ارسال کنید؛ کپشن عکس یا PDF هم پذیرفته می‌شود.\nابتدا فاکتور پیدا و پیش‌نمایش داده می‌شود؛ هنوز هیچ تغییری انجام نمی‌شود.",ct);return;
+            ClearAdminWorkflowDrafts(chat,callback.From.Id);var returned=action!="start";
+            InvoiceCancelDrafts[key]=new(Guid.NewGuid(),returned,"caption",DateTime.UtcNow.AddMinutes(20),DeferredRequested:action=="restock-start");
+            await InvoiceCancelPrompt(chat,(action=="restock-start"?"🟣 انتقال فاکتور حذف‌شده به موجودی\nشمارهٔ دقیق فاکتور یا کپشن قبلی آن را بفرستید؛ انتقال پس از آماده‌شدن و بدون کسر دوبارهٔ بدهی انجام می‌شود.":returned?"📦 حذف فاکتور و ارسال مستقیم به موجودی":"🗑 حذف فاکتور")+"\nکپشن کامل فاکتور را کپی و ارسال کنید؛ کپشن عکس یا PDF هم پذیرفته می‌شود.\nابتدا فاکتور پیدا و پیش‌نمایش داده می‌شود؛ هنوز هیچ تغییری انجام نمی‌شود.",ct);return;
         }
         if(action=="cancel"){InvoiceCancelDrafts.TryRemove(key,out _);await _sender.SendInlineKeyboardAsync(chat.ToString(),"عملیات لغو شد؛ فاکتور تغییری نکرد.",[[new TelegramInlineButton("↩️ فاکتورها","invoiceadmin:menu:invoices")]],ct);return;}
         try
@@ -161,8 +161,8 @@ public sealed partial class TelegramWebhookController
                     throw new InvalidOperationException("ابتدا جایگاه فیزیکی همهٔ موجودی‌های انتخاب‌شده را وارد و تأیید کنید.");
                 var result=await new InvoiceCancellationService(_db).ExecuteWithPositionsAsync(d.Operation,d.Preview,d.Returned,d.Prices??new Dictionary<Guid,decimal>(),callback.From.Id,_options.ReadyInventoryChannelId,d.Returned?d.Positions:null,ct);
                 InvoiceCancelDrafts.TryRemove(key,out _);
-                await _sender.SendInlineKeyboardAsync(chat.ToString(),(result.SourceInvoiceId.HasValue?$"✅ آیتم‌های انتخاب‌شده از فاکتور {d.Preview.Number} حذف شدند؛ سایر آیتم‌ها باقی ماندند.\nمبلغ فاکتور باقی‌مانده: {result.RemainingAmount:N0} تومان\nنسخهٔ اصلاح‌شده با کپشن جدید در صف ارسال است.\n":$"✅ فاکتور {d.Preview.Number} برای {d.Preview.Customer} لغو شد.\n")+$"مبلغ اصلاح‌شدهٔ بدهی: {result.ReversedAmount:N0} تومان\n"+
-                    (result.Returned?$"{result.Codes.Length} بستهٔ موجودی ثبت شد؛ کدها: {string.Join("، ",result.Codes)}\nانتشار با عکس در کانال موجودی در حال انجام است.":"موجودی جدیدی ایجاد نشد.")+"\nپاکسازی پیام‌های قدیمی از صف پیگیری می‌شود؛ در حذف جزئی، بعد از تحویل موفق نسخهٔ اصلاح‌شده انجام می‌شود.",
+                await _sender.SendInlineKeyboardAsync(chat.ToString(),(result.Deferred?"✅ اقلام فاکتور حذف‌شده به موجودی منتقل شدند؛ بدهی مشتری قبلی تغییر نکرد.\n":result.SourceInvoiceId.HasValue?$"✅ آیتم‌های انتخاب‌شده از فاکتور {d.Preview.Number} حذف شدند؛ سایر آیتم‌ها باقی ماندند.\nمبلغ فاکتور باقی‌مانده: {result.RemainingAmount:N0} تومان\nنسخهٔ اصلاح‌شده با کپشن جدید در صف ارسال است.\n":$"✅ فاکتور {d.Preview.Number} برای {d.Preview.Customer} لغو شد.\n")+(result.Deferred?"":$"مبلغ اصلاح‌شدهٔ بدهی: {result.ReversedAmount:N0} تومان\n")+
+                    (result.Returned?$"{result.Codes.Length} بستهٔ موجودی ثبت شد؛ کدها: {string.Join("، ",result.Codes)}\nانتشار با عکس در کانال موجودی در حال انجام است.":"موجودی جدیدی ایجاد نشد.")+(result.Deferred?"\nوضعیت گزارش واریز جدید به‌روزرسانی می‌شود.":"\nپاکسازی پیام‌های قدیمی از صف پیگیری می‌شود؛ در حذف جزئی، بعد از تحویل موفق نسخهٔ اصلاح‌شده انجام می‌شود."),
                     [[new TelegramInlineButton("🔄 وضعیت پاکسازی و انتشار",InvoiceCancelStatusPrefix+d.Operation.ToString("N"))],[new TelegramInlineButton("↩️ فاکتورها","invoiceadmin:menu:invoices")]],ct);return;
             }
             throw new InvalidOperationException("این دکمه مربوط به پیش‌نمایش فعلی نیست.");
@@ -205,7 +205,7 @@ public sealed partial class TelegramWebhookController
         {
             if(d.Step=="caption")
             {
-                var service=new InvoiceCancellationService(_db);var preview=await service.ResolveForSelectionAsync(text,d.Returned,ct);
+                var service=new InvoiceCancellationService(_db);var preview=d.DeferredRequested?await service.ResolveCancelledForSelectionAsync(text,ct):await service.ResolveForSelectionAsync(text,d.Returned,ct);
                 d=d with{Preview=preview,Original=preview,Prices=preview.Lines.ToDictionary(l=>l.ItemId,l=>l.CurrentPrice),Index=0,Selected=[]};
                 InvoiceCancelDrafts[key]=d;
                 if(preview.Lines.Length>1){await ShowInvoiceCancellationSelectionAsync(message.Chat.Id,message.From.Id,d,ct);return true;}
@@ -244,7 +244,7 @@ public sealed partial class TelegramWebhookController
         var paging=new List<TelegramInlineButton>();if(d.Page>0)paging.Add(new("⬅️ قبلی",InvoiceCancelPrefix+$"page:{d.Page-1}:"+token));
         if((d.Page+1)*10<p.Lines.Length)paging.Add(new("بعدی ➡️",InvoiceCancelPrefix+$"page:{d.Page+1}:"+token));if(paging.Count>0)buttons.Add(paging);
         buttons.Add([new("✅ ادامه با موارد انتخاب‌شده",InvoiceCancelPrefix+"next:"+token)]);buttons.Add([new("❌ انصراف",InvoiceCancelPrefix+"cancel")]);
-        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"🧾 فاکتور {p.Number}\nمشتری: {p.Customer}\nکدام موارد {(d.Returned?"حذف و به موجودی منتقل شوند":"حذف شوند")}؟\nیک یا چند آیتم را انتخاب کنید، یا «همهٔ موارد» را بزنید.\nتعداد انتخاب‌شده: {selected.Count} از {p.Lines.Length}\nآیتم‌های انتخاب‌نشده در فاکتور می‌مانند. هنوز تغییری ثبت نشده است.",buttons,ct);
+        await _sender.SendInlineKeyboardAsync(chat.ToString(),$"🧾 فاکتور {p.Number}\nمشتری: {p.Customer}\nکدام موارد {(p.RestockOnly?"به موجودی منتقل شوند":d.Returned?"حذف و به موجودی منتقل شوند":"حذف شوند")}؟\nیک یا چند آیتم را انتخاب کنید، یا «همهٔ موارد» را بزنید.\nتعداد انتخاب‌شده: {selected.Count} از {p.Lines.Length}\nآیتم‌های انتخاب‌نشده در فاکتور می‌مانند. هنوز تغییری ثبت نشده است.",buttons,ct);
     }
     private async Task ShowInvoiceReturnPriceAsync(long chat,long user,InvoiceCancelDraft d,CancellationToken ct)
     {
@@ -262,7 +262,7 @@ public sealed partial class TelegramWebhookController
         buttons.Add([new("❌ انصراف",InvoiceCancelPrefix+"cancel")]);
         await _sender.SendInlineKeyboardAsync(chat.ToString(),$"📍 جایگاه فیزیکی موجودی\nآیتم {d.Index+1} از {d.Preview.Lines.Length}: {line.Name}\nحجم: {line.Volume:0.#} میل\n"+
             (HasInventoryLocation(current)?$"جایگاه فعلی/انتخاب‌شده: {current}\n":"")+
-            "\nجایگاه فیزیکی نگهداری این موجودی را بنویسید؛ مثلاً قفسه ۲، باکس ۵.\nهنوز فاکتور حذف نشده است.",buttons,ct);
+            "\nجایگاه فیزیکی نگهداری این موجودی را بنویسید؛ مثلاً قفسه ۲، باکس ۵.\nهنوز انتقالی انجام نشده است.",buttons,ct);
     }
     private async Task ShowInvoiceReturnPositionConfirmationAsync(long chat,long user,InvoiceCancelDraft d,string position,CancellationToken ct)
     {
@@ -284,11 +284,11 @@ public sealed partial class TelegramWebhookController
             if(missing>=0){await ShowInvoiceReturnPositionAsync(chat,user,d with{Index=missing},ct);return;}
         }
         var token=Guid.NewGuid().ToString("N")[..12];InvoiceCancelDrafts[(chat,user)]=d with{Step="confirm",Token=token};
-        var text=$"👁 پیش‌نمایش {(d.Returned?"لغو و انتقال به موجودی":"لغو فاکتور")}\nشماره: {p.Number}\nمشتری: {p.Customer}\nمبلغ قابل برگشت از بدهی: {p.Amount:N0} تومان\n\n"+
+        var text=$"👁 پیش‌نمایش {(p.RestockOnly?"انتقال فاکتور حذف‌شده به موجودی":d.Returned?"لغو و انتقال به موجودی":"لغو فاکتور")}\nشماره: {p.Number}\nمشتری: {p.Customer}\nمبلغ قابل برگشت از بدهی: {p.Amount:N0} تومان\n\n"+
             string.Join("\n\n",p.Lines.Select(l=>$"🧴 {l.Name} — {l.Volume:0.#} میل\nشیشه: {l.BottleName}"+(d.Returned?$"\nقیمت موجودی هر میل: {d.Prices![l.ItemId]:N0} تومان\nمبلغ عطر و شیشه: {d.Prices[l.ItemId]*l.Volume+l.BottlePrice:N0} تومان\n📍 جایگاه فیزیکی: {d.Positions![l.ItemId]}":"")));
         foreach(var part in SplitTelegramMessage(text))await _sender.SendAsync(chat.ToString(),part,ct);
-        var scope=p.Partial?$"فقط آیتم‌های بالا حذف می‌شوند. شمارهٔ فاکتور باقی‌مانده حفظ و مبلغش {p.RemainingAmount:N0} تومان می‌شود؛ نسخهٔ اصلاح‌شده با کپشن جدید برای مشتری ارسال می‌شود.":"کل فاکتور لغو و مبلغ آن از بدهی مشتری کسر می‌شود.";
+        var scope=p.RestockOnly?"فاکتور قبلاً لغو شده است؛ این انتقال فقط موجودی آمادهٔ ارسال می‌سازد و اثر مالی دوباره ندارد.":p.Partial?$"فقط آیتم‌های بالا حذف می‌شوند. شمارهٔ فاکتور باقی‌مانده حفظ و مبلغش {p.RemainingAmount:N0} تومان می‌شود؛ نسخهٔ اصلاح‌شده با کپشن جدید برای مشتری ارسال می‌شود.":"کل فاکتور لغو و مبلغ آن از بدهی مشتری کسر می‌شود.";
         await _sender.SendInlineKeyboardAsync(chat.ToString(),scope+(d.Returned?" آیتم‌های انتخاب‌شده به موجودی آمادهٔ ارسال منتقل و با عکس در کانال موجودی منتشر می‌شوند؛ تخفیف قبلی خودکار به قیمت موجودی منتقل نمی‌شود.":" موجودی جدیدی ساخته نمی‌شود."),
-            [[new TelegramInlineButton(d.Returned?"✅ تأیید حذف موارد و ارسال به موجودی":"✅ تأیید حذف موارد انتخاب‌شده",InvoiceCancelPrefix+"confirm:"+token)],[new TelegramInlineButton("↩️ تغییر انتخاب آیتم‌ها",InvoiceCancelPrefix+"choose")],[new TelegramInlineButton("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
+            [[new TelegramInlineButton(p.RestockOnly?"✅ تأیید انتقال به موجودی":d.Returned?"✅ تأیید حذف موارد و ارسال به موجودی":"✅ تأیید حذف موارد انتخاب‌شده",InvoiceCancelPrefix+"confirm:"+token)],[new TelegramInlineButton("↩️ تغییر انتخاب آیتم‌ها",InvoiceCancelPrefix+"choose")],[new TelegramInlineButton("❌ انصراف",InvoiceCancelPrefix+"cancel")]],ct);
     }
 }

@@ -92,16 +92,21 @@ public sealed partial class TelegramWebhookController
 
     private async Task<string> FormatManualPaymentTrackingWithHistoryAsync(Invoice invoice,bool restocked,CancellationToken ct)
     {
-        var text=FormatManualPaymentTrackingMessage(invoice,restocked);
+        var mainStates=await InvoiceRestockTracking.ItemStatesAsync(_db,[invoice.OrderId],ct);
+        var state=invoice.Status==InvoiceStatus.Cancelled?InvoiceRestockTracking.Describe(invoice.Order!.Items.Select(i=>mainStates.GetValueOrDefault(i.Id,new("🔵",InvoiceRestockTracking.UnknownCaption)))):null;
+        var text=FormatManualPaymentTrackingState(invoice,state,restocked,mainStates);
         var rows=await _db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.CustomerId==invoice.Order!.CustomerId&&n.Channel=="InvoiceCancellationReceipt"&&n.Status==NotificationOutboxStatus.Processed).ToArrayAsync(ct);
         var ids=rows.Select(n=>JsonSerializer.Deserialize<InvoiceCancellationService.Result>(n.Payload)!).Where(r=>r.SourceInvoiceId==invoice.Id).Select(r=>r.InvoiceId).ToArray();
         if(ids.Length==0)return text;
         var cancelled=await _db.Invoices.AsNoTracking().Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(i=>i.SalesList)
             .Include(i=>i.Order).ThenInclude(o=>o!.Items).ThenInclude(i=>i.Perfume)
             .Where(i=>ids.Contains(i.Id)&&i.Status==InvoiceStatus.Cancelled&&i.Order!.CustomerId==invoice.Order!.CustomerId).OrderBy(i=>i.CreatedAt).ToArrayAsync(ct);
-        var published=await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,cancelled.Select(i=>i.OrderId).ToArray(),ct);
-        return text+"\n\n🔵 آیتم‌های حذف‌شده از این فاکتور:\n"+string.Join("\n\n",cancelled.Select(i=>
-            string.Join("\n",i.Order!.Items.Select(x=>$"🔵 {InvoiceRevisionService.Name(x)} — {x.RequestedVolumeMl:0.#} میل — {x.LineTotal:N0} تومان"))+"\n"+
-            (published.Contains(i.Id)?InvoiceRestockTracking.Caption:InvoiceRestockTracking.UnknownCaption)));
+        var states=await InvoiceRestockTracking.ItemStatesAsync(_db,cancelled.Select(i=>i.OrderId).ToArray(),ct);
+        return text+"\n\n📋 آیتم‌های حذف‌شده از این فاکتور:\n"+string.Join("\n\n",cancelled.Select(i=>
+            "فاکتور حذف‌شده: "+i.InvoiceNumber+"\n"+string.Join("\n",i.Order!.Items.Select(x=>
+            {
+                var itemState=states.GetValueOrDefault(x.Id,new("🔵",InvoiceRestockTracking.UnknownCaption));
+                return $"{itemState.Icon} {InvoiceRevisionService.Name(x)} — {x.RequestedVolumeMl:0.#} میل — {x.LineTotal:N0} تومان\n{itemState.Note}";
+            }))));
     }
 }

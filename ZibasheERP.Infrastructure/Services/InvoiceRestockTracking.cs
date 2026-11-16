@@ -8,7 +8,7 @@ using ZibasheERP.Infrastructure.Persistence;
 
 namespace ZibasheERP.Infrastructure.Services;
 
-public static class InvoiceRestockTracking
+public static partial class InvoiceRestockTracking
 {
     public const string Channel="InvoiceRestockTrackingRefresh";
     public const string Caption="ارسال شده به کانال موجودی";

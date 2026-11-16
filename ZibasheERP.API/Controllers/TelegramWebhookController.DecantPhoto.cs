@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Infrastructure.Services;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -362,6 +363,12 @@ public sealed partial class TelegramWebhookController
         if (draft.SalesListId != Guid.Empty)
         {
             var completedAt = DateTime.UtcNow;
+            var receiptId=new Guid(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("list-decanted:"+draft.SalesListId))[..16]);
+            if(!await _db.NotificationOutbox.AnyAsync(n=>n.Id==receiptId,ct))
+            {
+                _db.NotificationOutbox.Add(new(){Id=receiptId,CustomerId=Guid.Empty,Channel=InvoiceRestockTracking.DecantedChannel,EventType="ListDecanted",Recipient=draft.SalesListId.ToString("N"),Payload="{}",Status=NotificationOutboxStatus.Processed,CreatedAt=completedAt,ProcessedAt=completedAt});
+                await _db.SaveChangesAsync(ct);
+            }
             await _db.OrderItems.Where(value => !value.IsDeleted &&
                     value.SalesListId == draft.SalesListId &&
                     value.FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue)

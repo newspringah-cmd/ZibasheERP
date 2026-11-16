@@ -917,7 +917,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         var invoices = await _db.Invoices.AsNoTracking()
             .Where(value => orderIds.Contains(value.OrderId) && !value.IsDeleted)
             .ToDictionaryAsync(value => value.OrderId, cancellationToken);
-        var restocked=await InvoiceRestockTracking.PublishedInvoiceIdsAsync(_db,orderIds,cancellationToken);
+        var restockStates=await InvoiceRestockTracking.ItemStatesAsync(_db,orderIds,cancellationToken);
         foreach(var order in orders)
         {
             var cancelled=invoices.TryGetValue(order.Id,out var document)&&document.Status==InvoiceStatus.Cancelled;
@@ -944,8 +944,8 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         ? $"@{order.Customer.Username.TrimStart('@')}"
                         : order.Customer?.TelegramId ?? order.Customer?.FullName ?? "مشتری نامشخص";
                     var paid = invoice?.Status == ZibasheERP.Domain.Enums.InvoiceStatus.Paid;
-                    var returned=invoice is not null&&restocked.Contains(invoice.Id);
                     var cancelled=invoice?.Status==InvoiceStatus.Cancelled;
+                    var lifecycle=InvoiceRestockTracking.Describe(order.Items.Where(i=>i.SalesListId==link.SalesListId).Select(i=>restockStates.GetValueOrDefault(i.Id,new("🔵",InvoiceRestockTracking.UnknownCaption))));
                     var listAmount = order.Items
                         .Where(item => item.SalesListId == link.SalesListId)
                         .Sum(item => item.LineTotal);
@@ -953,15 +953,15 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         .Sum(item => item.RequestedVolumeMl);
                     var owner = order.Items.Any(item => item.SalesListId == link.SalesListId && item.IsBottleOwner)
                         ? " 👑" : "";
-                    return $"{(cancelled?"🔵":paid ? "✅" : "🔴")} {index + 1}. {identity}{owner} — {volume:0.#} میل — " +
+                    return $"{(cancelled?lifecycle.Icon:paid ? "✅" : "🔴")} {index + 1}. {identity}{owner} — {volume:0.#} میل — " +
                            $"{invoice?.InvoiceNumber ?? "بدون فاکتور"} — {listAmount:N0} تومان"+
-                           (cancelled?"\n   "+(returned?InvoiceRestockTracking.Caption:InvoiceRestockTracking.UnknownCaption):"");
+                           (cancelled?"\n   "+lifecycle.Note:"");
                 });
                 var message = $"💳 واریز جدید\n" +
                               $"عطر: {(string.IsNullOrWhiteSpace(link.SalesList.PersianName) ? link.SalesList.EnglishName : link.SalesList.PersianName)}\n" +
                               $"{(link.SalesList.IsInventoryOffer?"کد موجودی":"کد لیست")}: {link.SalesList.DisplayCode}\n" +
                               $"تعداد فاکتور: {listOrders.Length}\n\n{string.Join("\n", rows)}\n\n" +
-                              $"✅ پرداخت‌شده   🔴 در انتظار پرداخت"+(listOrders.Any(o=>invoices.TryGetValue(o.Id,out var i)&&i.Status==InvoiceStatus.Cancelled)?"   🔵 فاکتور حذف‌شده":"")+
+                              $"✅ پرداخت‌شده   🔴 در انتظار پرداخت"+(listOrders.Any(o=>invoices.TryGetValue(o.Id,out var i)&&i.Status==InvoiceStatus.Cancelled)?"   🟣 انتظار انتقال   🔵 موجودی/بررسی   🟢 فروش و پرداخت خریدار جدید":"")+
                               $"\nآخرین بروزرسانی: {DateTime.UtcNow.AddHours(3.5):yyyy/MM/dd HH:mm}";
                 var actions = listOrders.Where(order =>
                         invoices.TryGetValue(order.Id, out var invoice) &&
