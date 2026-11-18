@@ -1,5 +1,5 @@
-import {SmsLogin} from '../../components/sms-login';
+import {CustomerLogin} from '../../components/customer-login';
 
 export default function LoginPage() {
- return <SmsLogin/>;
+ return <CustomerLogin/>;
 }

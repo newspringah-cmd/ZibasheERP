@@ -2,7 +2,7 @@ namespace ZibasheERP.Application.WebIdentity;
 
 [Flags]
 public enum WebRole { Customer = 1, SalesAdmin = 2, Accountant = 4, Shipping = 8, PrimaryOwner = 16 }
-public enum WebAuthenticationStrength { CustomerSms, StaffMfa }
+public enum WebAuthenticationStrength { CustomerSms, StaffMfa, CustomerTelegram }
 
 // Must be reconstructed from a validated server-side session AND current directory, never model-bound from a request.
 public sealed record CurrentWebActor(Guid PrincipalId, Guid? CustomerId, WebRole Roles,

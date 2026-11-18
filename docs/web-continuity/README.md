@@ -25,4 +25,4 @@ python3 docs/web-continuity/render.py --output /tmp/zibashe-handbook-output
 
 [پایهٔ رابط اصلی Next.js](../../web/app/README.md) و [شاهد ساخت و آزمون](evidence/p1-next-foundation-20261118/status.fa.md): انتقال تم و حساب نمونه به React/TypeScript و static export مستقل؛ هنوز بدون احراز هویت و اتصال واقعی.
 
-[زیرساخت ورود پیامکی و مراحل فعال‌سازی](sms-login.fa.md): تصمیم مدیر برای SMS و تعویق پنل، فرم موبایل، چالش staging و سیاست اولیهٔ مالکیت؛ ارسال واقعی و نشست هنوز فعال نیستند.
+[زیرساخت ورود پیامکی و مراحل فعال‌سازی](sms-login.fa.md): فرم دوحالتهٔ موبایل/تلگرام، چالش SMS در staging، قرارداد مقصد تلگرامی و پیشنهاد شمارهٔ آخرین آدرس پس از احراز هویت؛ ارسال واقعی و نشست هنوز فعال نیستند.
