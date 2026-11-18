@@ -148,6 +148,20 @@ jobs:
           --no-build
           --no-restore
 
+      - name: Verify synthetic customer invoice contract parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet run --project tools/web-continuity/InvoiceReadFixture --configuration Release -- "$RUNNER_TEMP/customer-invoice-read.json"
+          python3 - "$RUNNER_TEMP/customer-invoice-read.json" <<'PY'
+          import json, pathlib, sys
+          generated = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          committed = json.loads(pathlib.Path('web/app/test-fixtures/invoice-read.synthetic.json').read_text())
+          assert generated.get('synthetic') is True
+          assert generated == committed, 'Synthetic invoice contract fixture is out of date'
+          print('C# customer invoice fixture matches the committed TypeScript test fixture')
+          PY
+
       - name: Initialize isolated API test database
         run: >-
           dotnet run
