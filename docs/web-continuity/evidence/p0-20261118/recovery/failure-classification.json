@@ -1,0 +1,26 @@
+{
+  "zibashe-b2-full.service": {
+    "journal_accessible": true,
+    "matched_categories": [
+      "tls"
+    ],
+    "allowlisted_error_codes": [],
+    "http_statuses": [],
+    "unexpected_tls_eof": true,
+    "exception_types": [],
+    "visible_nonempty_lines": 160,
+    "raw_logs_exported": false
+  },
+  "zibashe-b2-log.service": {
+    "journal_accessible": true,
+    "matched_categories": [
+      "tls"
+    ],
+    "allowlisted_error_codes": [],
+    "http_statuses": [],
+    "unexpected_tls_eof": true,
+    "exception_types": [],
+    "visible_nonempty_lines": 160,
+    "raw_logs_exported": false
+  }
+}

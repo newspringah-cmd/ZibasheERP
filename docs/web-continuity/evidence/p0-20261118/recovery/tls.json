@@ -1,0 +1,24 @@
+{
+  "zibashe-b2-full.service": {
+    "certificate_verify_failed": false,
+    "issuer_chain_missing": false,
+    "certificate_expired": false,
+    "self_signed": false,
+    "hostname_mismatch": false,
+    "not_yet_valid": false
+  },
+  "zibashe-b2-log.service": {
+    "certificate_verify_failed": false,
+    "issuer_chain_missing": false,
+    "certificate_expired": false,
+    "self_signed": false,
+    "hostname_mismatch": false,
+    "not_yet_valid": false
+  },
+  "current_tls_probe": {
+    "verified": true,
+    "expires": "Jan  8 19:06:44 2027 GMT"
+  },
+  "system_utc": "2026-11-18T08:06:18.135078+00:00",
+  "tls_verification_disabled": false
+}

@@ -1,0 +1,12 @@
+{
+  "synthetic_fixture_only": true,
+  "checksum_verifyonly": true,
+  "actual_restore": true,
+  "dbcc_checkdb": true,
+  "expected_rows": 3,
+  "expected_sum": "714000.00",
+  "duration_seconds": 1.099,
+  "production_backup_tested": false,
+  "real_customer_data_used": false,
+  "temporary_databases_removed": true
+}

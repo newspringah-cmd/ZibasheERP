@@ -1,0 +1,33 @@
+{
+  "scope": "system unit status only; success does not prove restore or foreign object existence",
+  "units": {
+    "zibashe-b2-full.service": {
+      "Result": "exit-code",
+      "ExecMainExitTimestamp": "Tue 2026-11-17 23:06:11 UTC",
+      "ExecMainStatus": "1",
+      "LoadState": "loaded",
+      "ActiveState": "failed"
+    },
+    "zibashe-b2-log.service": {
+      "Result": "exit-code",
+      "ExecMainExitTimestamp": "Wed 2026-11-18 08:02:29 UTC",
+      "ExecMainStatus": "1",
+      "LoadState": "loaded",
+      "ActiveState": "failed"
+    },
+    "zibashe-b2-full.timer": {
+      "NextElapseUSecRealtime": "Wed 2026-11-18 23:04:53 UTC",
+      "LastTriggerUSec": "Tue 2026-11-17 23:05:01 UTC",
+      "Result": "success",
+      "LoadState": "loaded",
+      "ActiveState": "active"
+    },
+    "zibashe-b2-log.timer": {
+      "NextElapseUSecRealtime": "Wed 2026-11-18 09:01:51 UTC",
+      "LastTriggerUSec": "Wed 2026-11-18 08:02:01 UTC",
+      "Result": "success",
+      "LoadState": "loaded",
+      "ActiveState": "active"
+    }
+  }
+}
