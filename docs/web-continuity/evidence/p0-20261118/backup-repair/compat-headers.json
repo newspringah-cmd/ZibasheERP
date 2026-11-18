@@ -1,0 +1,32 @@
+{
+  "boto3": "1.34.46",
+  "botocore": "1.34.46",
+  "probe_bytes": 58,
+  "backup_keys_modified": false,
+  "results": [
+    {
+      "mode": "bytes_put",
+      "checksum_mode": "not_supported",
+      "tls_verify": true,
+      "upload": false,
+      "error_type": "ConnectionClosedError",
+      "probe_cleanup": false
+    },
+    {
+      "mode": "without_expect",
+      "checksum_mode": "not_supported",
+      "tls_verify": true,
+      "upload": false,
+      "error_type": "S3UploadFailedError",
+      "probe_cleanup": false
+    },
+    {
+      "mode": "signed_payload",
+      "checksum_mode": "not_supported",
+      "tls_verify": true,
+      "upload": false,
+      "error_type": "ConnectionClosedError",
+      "probe_cleanup": false
+    }
+  ]
+}

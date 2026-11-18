@@ -1,0 +1,131 @@
+{
+  "source_sha256": "755938a026ce6b8932771a80d9e57acb7f7958829771badb7ff53e7516670b29",
+  "functions": [
+    "load_client",
+    "send_telegram",
+    "sha256",
+    "compress_backup",
+    "upload",
+    "upload_existing",
+    "sql_backup",
+    "cleanup_local",
+    "main"
+  ],
+  "endpoint_host": "s3.us-east-005.backblazeb2.com",
+  "units": {
+    "zibashe-b2-full.service": {
+      "specific_invocation": true,
+      "frames": [
+        "request",
+        "send",
+        "send",
+        "sendall",
+        "send",
+        "main",
+        "upload",
+        "upload_file",
+        "upload_file",
+        "result",
+        "result",
+        "urlopen",
+        "_make_request",
+        "request",
+        "request",
+        "chunk_readable",
+        "read",
+        "read",
+        "urlopen",
+        "_make_request",
+        "request",
+        "request",
+        "chunk_readable",
+        "read",
+        "read",
+        "__call__",
+        "_execute_main",
+        "_main",
+        "_api_call",
+        "_make_api_call",
+        "_make_request",
+        "make_request",
+        "_send_request",
+        "_do_get_response",
+        "_send",
+        "send"
+      ],
+      "unexpected_eof": true,
+      "certificate_failed": false,
+      "quota": false,
+      "last_function": null
+    },
+    "zibashe-b2-log.service": {
+      "specific_invocation": true,
+      "frames": [
+        "request",
+        "send",
+        "send",
+        "sendall",
+        "send",
+        "send",
+        "urlopen",
+        "increment",
+        "reraise",
+        "urlopen",
+        "_make_request",
+        "request",
+        "request",
+        "send",
+        "send",
+        "sendall",
+        "send",
+        "main",
+        "upload",
+        "upload_file",
+        "upload_file",
+        "result",
+        "result",
+        "__call__",
+        "_execute_main",
+        "_main",
+        "_api_call",
+        "_make_api_call",
+        "_make_request",
+        "make_request",
+        "_send_request",
+        "_do_get_response",
+        "_send",
+        "send"
+      ],
+      "unexpected_eof": true,
+      "certificate_failed": false,
+      "quota": false,
+      "last_function": null
+    }
+  },
+  "local_full": {
+    "count": 45,
+    "total_bytes": 18370427565,
+    "latest_utc": "2026-11-17T23:05:35.473846+00:00"
+  },
+  "local_log": {
+    "count": 1002,
+    "total_bytes": 6071752350,
+    "latest_utc": "2026-11-18T08:02:07.947914+00:00"
+  },
+  "endpoint_tls": {
+    "verified": true,
+    "expires": "Jan  8 19:06:44 2027 GMT"
+  },
+  "remote_full": {
+    "count": 24,
+    "latest_utc": "2026-11-16T23:02:46.744000+00:00",
+    "age_hours": 33.14,
+    "latest_bytes": 407123150
+  },
+  "remote_log": {
+    "count": 497,
+    "latest_utc": "2026-11-16T23:00:55.794000+00:00",
+    "age_hours": 33.17,
+    "latest_bytes": 301411
+  }
+}
