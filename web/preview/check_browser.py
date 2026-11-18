@@ -1,0 +1,42 @@
+"""Visual/navigation acceptance against a private ephemeral preview server only."""
+import argparse,json,subprocess,sys
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+p=argparse.ArgumentParser();p.add_argument('--output',required=True);args=p.parse_args();out=Path(args.output);out.mkdir(parents=True,exist_ok=True);root=Path(__file__).resolve().parent
+server=subprocess.Popen([sys.executable,str(root/'server.py'),'--port','0'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+checks=[]
+def check(ok,name):
+ if not ok:raise AssertionError(name)
+ checks.append(name)
+try:
+ line=server.stdout.readline().strip();assert line.startswith('Isolated synthetic preview: http://127.0.0.1:');origin=line.split(': ',1)[1]
+ with sync_playwright() as engine:
+  browser=engine.chromium.launch(executable_path='/usr/lib/chromium/chromium',headless=True,args=['--no-sandbox','--disable-dev-shm-usage'])
+  try:
+   page=browser.new_page(viewport={'width':1440,'height':1000});requests=[];errors=[]
+   page.on('request',lambda r:requests.append(r.url));page.on('pageerror',lambda e:errors.append(str(e)))
+   page.goto(origin,wait_until='networkidle')
+   check(page.locator('.card').count()==2,'sample sales cards render')
+   check(page.locator('.actions button:disabled').count()==2,'order actions remain disabled')
+   page.locator('[data-detail="demo-vanilla"]').click();check(page.locator('dialog').evaluate('(e)=>e.open'),'sample details modal opens');page.locator('#close-details').click()
+   page.locator('#search').fill('گل رز');check(page.locator('.card').count()==1,'sample search filters');page.locator('#search').fill('');page.locator('h1').click()
+   page.screenshot(path=str(out/'desktop.png'),full_page=True)
+   page.locator('[data-room="inventory"]').click();check('۱.۵' in page.locator('#room-content').inner_text(),'sample half-ml card preserved')
+   page.locator('[data-room="account"]').click();check('اطلاعات زیر از ERP خوانده نشده' in page.locator('#room-content').inner_text(),'account remains fictional')
+   page.locator('[data-room="staff"]').click();check('مجوز واقعی' in page.locator('#room-content').inner_text(),'staff view is explicitly not authorization')
+   page.locator('[data-room="messages"]').click();check(page.locator('.outgoing').count()==1 and page.locator('.incoming').count()==2,'incoming and outgoing sample bubbles render')
+   check(page.locator('.composer input').is_disabled(),'message input remains disabled')
+   page.screenshot(path=str(out/'conversation.png'),full_page=True)
+   page.locator('#preview-info').click();check(page.locator('dialog').evaluate('(e)=>e.open'),'header information opens');page.keyboard.press('Escape')
+   for width in [320,390,740]:
+    page.set_viewport_size({'width':width,'height':844})
+    page.locator('#open-rooms').click();check(page.locator('.sidebar').is_visible() and not page.locator('main').is_visible(),f'mobile chat list opens at {width}')
+    page.locator('[data-room="sales"]').click();check(page.locator('main').is_visible() and not page.locator('.sidebar').is_visible(),f'mobile chat selection returns at {width}')
+    check(page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'),f'no horizontal page overflow at {width}')
+    if width==390:page.screenshot(path=str(out/'mobile.png'),full_page=True)
+   page.set_viewport_size({'width':1440,'height':1000});check(page.locator('.sidebar').is_visible(),'desktop chat list returns after resize')
+   check(not errors,'no JavaScript errors');check(all(u.startswith(origin+'/') for u in requests),'all resources local');check(not any('/api/' in u for u in requests),'no ERP API requests')
+  finally:browser.close()
+finally:
+ server.terminate();server.wait(timeout=10)
+result={'theme':'telegram-inspired-light','browser_checks':len(checks),'checks':checks,'production_modified':False,'synthetic_only':True,'financial_actions_enabled':False};(out/'verification.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))

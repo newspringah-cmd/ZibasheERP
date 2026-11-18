@@ -3,18 +3,18 @@
 <body>
 <div class="safety" role="status">محیط آزمایشی مستقل · اطلاعات ساختگی · خرید و عملیات مالی غیرفعال</div>
 <div class="app">
-<aside class="sidebar"><div class="brand"><span class="brand-mark">ز</span><div><strong>زیباشی</strong><small>فضای عطر و گفتگو</small></div><span class="demo-tag">پیش‌نمایش</span></div>
+<aside class="sidebar"><div class="brand"><span class="brand-mark">➤</span><div><strong>زیباشی</strong><small>گفتگوهای زیباشی</small></div><span class="demo-tag">پیش‌نمایش</span></div>
 <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="جست‌وجو در عطرهای نمونه" aria-label="جست‌وجوی عطرهای نمونه"></label>
-<p class="nav-label">فضاهای شما</p><nav id="rooms" aria-label="انتخاب فضای نمایشی">
+<p class="nav-label">همهٔ گفتگوها</p><nav id="rooms" aria-label="انتخاب فضای نمایشی">
 <button class="room active" data-room="sales" aria-pressed="true"><span class="room-icon pink">✿</span><span><b>لیست عطرها</b><small>انتخاب عطر، با حال‌وهوای آشنا</small></span><i>۲</i></button>
 <button class="room" data-room="inventory" aria-pressed="false"><span class="room-icon amber">▣</span><span><b>موجودی آماده</b><small>نمونهٔ بسته‌های آمادهٔ ارسال</small></span><i>۱</i></button>
 <button class="room" data-room="account" aria-pressed="false"><span class="room-icon blue">◇</span><span><b>حساب من</b><small>نمونهٔ فاکتورها و وضعیت سفارش</small></span></button>
 <button class="room" data-room="messages" aria-pressed="false"><span class="room-icon mint">☏</span><span><b>گفتگو با زیباشی</b><small>پیش‌نمایش ارتباط با حسابداری</small></span></button>
 <button class="room" data-room="staff" aria-pressed="false"><span class="room-icon purple">▦</span><span><b>پیشخوان کارکنان</b><small>نمای چیدمان؛ ورود کارکنان فعال نیست</small></span></button>
-</nav><div class="sidebar-note"><span>◉</span><div><b>یک حساب، یک سابقه</b><p>طرح رابط برای ادامهٔ کار روی وب؛ اتصال به ERP در مراحل بعد بررسی می‌شود.</p></div></div></aside>
-<main><header class="room-header"><div class="heading-icon">✿</div><div><h1 id="room-title">لیست عطرها</h1><p id="room-subtitle">کارت‌های نمونه؛ بدون اتصال به اطلاعات واقعی فروش</p></div><span class="preview-badge">نمایش آزمایشی</span></header>
-<div class="conversation" id="conversation"><div class="day-chip">نسخهٔ اولیهٔ چیدمان</div><div id="room-content" aria-live="polite"></div></div>
-<footer class="composer"><span>＋</span><input disabled placeholder="ارسال پیام و ثبت سفارش در این پیش‌نمایش فعال نیست" aria-label="ورودی غیرفعال پیام"><button disabled aria-label="ارسال غیرفعال">➤</button></footer>
+</nav><div class="sidebar-note"><span>◉</span><div><b>پیش‌نمایش مستقل</b><p>طرح رابط برای ادامهٔ کار روی وب؛ اتصال به ERP در مراحل بعد بررسی می‌شود.</p></div></div></aside>
+<main><header class="room-header"><button id="open-rooms" class="header-back" aria-label="بازگشت به فهرست گفتگوها" aria-expanded="false">←</button><div class="heading-icon">✿</div><div class="header-text"><h1 id="room-title">لیست عطرها</h1><p id="room-subtitle">کارت‌های نمونه؛ بدون اتصال به اطلاعات واقعی فروش</p></div><span class="preview-badge">آزمایشی</span><button id="preview-info" class="header-more" aria-label="اطلاعات پیش‌نمایش">⋮</button></header><div class="pinned-message"><span class="pin-icon">⌖</span><div><b>پیام سنجاق‌شده</b><p>اطلاعات نمونه‌اند؛ خرید و عملیات مالی در این محیط غیرفعال است.</p></div></div>
+<div class="conversation" id="conversation"><div class="day-chip">امروز · گفتگوهای نمونه</div><div id="room-content" aria-live="polite"></div></div>
+<footer class="composer"><span aria-hidden="true">☺</span><input disabled placeholder="پیام بنویسید · پیش‌نمایش غیرفعال" aria-label="ورودی غیرفعال پیام"><button disabled aria-label="ارسال غیرفعال">➤</button></footer>
 </main></div>
 <dialog id="details"><div class="dialog-body"><button id="close-details" class="close" aria-label="بستن جزئیات">×</button><span class="eyebrow">اطلاعات نمونه</span><h2 id="detail-title"></h2><p id="detail-text"></p><div class="callout">این بخش فقط برای بررسی ظاهر است. قیمت قطعی، ورود مشتری و ثبت سفارش هنوز به هستهٔ ERP متصل نشده‌اند.</div></div></dialog>
 </body></html>

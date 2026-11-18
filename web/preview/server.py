@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 ROOT=Path(__file__).resolve().parent
-ALLOWED={'/':'index.html','/index.html':'index.html','/styles.css':'styles.css','/app.js':'app.js','/preview-config.json':'preview-config.json'}
+ALLOWED={'/':'index.html','/index.html':'index.html','/styles.css':'styles.css','/app.js':'app.js','/preview-config.json':'preview-config.json','/wallpaper.svg':'wallpaper.svg'}
 FLAGS=['databaseEnabled','customerLoginEnabled','orderWritesEnabled','financialWritesEnabled','telegramEnabled','smsEnabled','externalRequestsEnabled']
 def validate_environment(env,config):
     if any(env.get(k,'').lower()=='production' for k in ['ASPNETCORE_ENVIRONMENT','DOTNET_ENVIRONMENT','APP_ENV']):raise ValueError('Production environment refused')
@@ -18,7 +18,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path in ALLOWED:
             file=ROOT/ALLOWED[path]
             if file.resolve().parent!=ROOT:self.send_error(403);return
-            body=file.read_bytes();mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json'}[file.suffix]
+            body=file.read_bytes();mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json','.svg':'image/svg+xml'}[file.suffix]
         else:self.send_error(404);return
         self.send_response(200);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Referrer-Policy','no-referrer');self.send_header('X-Frame-Options','DENY');self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");self.end_headers()
         if not head:self.wfile.write(body)
