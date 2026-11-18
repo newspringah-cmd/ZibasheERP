@@ -321,6 +321,8 @@ public sealed partial class TelegramWebhookController
             await HandleMarketingCallbackAsync(callback, ct);
             return true;
         }
+        if(callback.Data.StartsWith(CustomerFinancePrefix,StringComparison.Ordinal))
+        {await HandleCustomerFinanceCallbackAsync(callback,ct);return true;}
         if(callback.Data.StartsWith(InvoiceCancelPrefix,StringComparison.Ordinal)||callback.Data.StartsWith(InvoiceCancelStatusPrefix,StringComparison.Ordinal))
         {await HandleInvoiceCancellationCallbackAsync(callback,ct);return true;}
         if(callback.Data.StartsWith(InvoiceTransferPrefix,StringComparison.Ordinal))
@@ -1775,6 +1777,7 @@ public sealed partial class TelegramWebhookController
                 buttons.Add(new[]{new TelegramInlineButton("🟣 انتقال فاکتور حذف‌شده به موجودی",InvoiceCancelPrefix+"restock-start")});
                 if (IsPrimaryOwner(userId))
                 {
+                    if(chatId==userId)buttons.Add(new[]{new TelegramInlineButton("📊 گزارش مالی مشتری",CustomerFinancePrefix+"start")});
                     buttons.Add(new[]
                     {
                         new TelegramInlineButton(
@@ -4447,6 +4450,7 @@ public sealed partial class TelegramWebhookController
 
     private void ClearAdminWorkflowDrafts(long chatId, long userId)
     {
+        CustomerFinanceDrafts.TryRemove((chatId,userId),out _);
         PurchaseCostDrafts.TryRemove((chatId,userId),out _);
         InvoicedListReportDrafts.TryRemove((chatId,userId),out _);
         InvoiceCancelDrafts.TryRemove((chatId,userId),out _);
