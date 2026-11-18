@@ -162,6 +162,11 @@ jobs:
           print('C# customer invoice fixture matches the committed TypeScript test fixture')
           PY
 
+      - name: Test customer sessions against the isolated preview API
+        run: |
+          dotnet build tools/web-continuity/AccountApiPreview --configuration Release --warnaserror
+          python3 tools/web-continuity/AccountApiPreview/check_http.py
+
       - name: Initialize isolated API test database
         run: >-
           dotnet run
