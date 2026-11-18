@@ -35,3 +35,11 @@ python3 tools/web-continuity/rehearse_fixture_restore.py --output /tmp/fixture-r
 ## guard آمادهٔ آپلود بک‌آپ
 
 `backup_upload_guard.py` یک مؤلفهٔ آزموده‌شده و **هنوز نصب‌نشده روی worker** است: HEAD قبل و بعد، تطبیق metadata و size، جلوگیری از overwrite متفاوت و تکرار کور پس از نتیجه نامعلوم. سیاست retry خود SDK یا multipart را جایگزین نمی‌کند. `omit_expect_header` پیش از امضای درخواست ثبت می‌شود و TLS را تغییر نمی‌دهد. ادغام production فقط با source hash و آزمون واقعی محدود پس از رفع cap انجام شود. فایل‌های اصلی و تنظیمات retention توسط این مؤلفه حذف یا تغییر نمی‌شوند.
+
+## آزمون مقصد S3 منتخب
+
+```bash
+python3 tools/web-continuity/check_storage_target.py --output /tmp/storage-probe-plan.json
+```
+
+پیش‌فرض بدون درخواست شبکه و بدون کلید است. `--execute` تنها پس از تأیید هزینه و bucket خصوصی و endpoint مجاز، با boto3 نصب‌شده و متغیرهای محیط امنِ سند انتخاب مقصد استفاده شود. فایل ورودی مشتری قبول نمی‌کند؛ فقط ۴ KiB تصادفی را روی prefix اختصاصی و با TLS معتبر آزمایش می‌کند. برخورد با شیء موجود مانع PUT و DELETE است. موفقیت probe اثبات محل ایران، private bucket، نسخه‌بندی یا restore دیتابیس نیست. این موارد آزمون‌های جدا دارند. خروجی خطا شامل نام کلاس است و متن خطای دارای URL امضاشده یا کلید چاپ نمی‌شود.

@@ -1,0 +1,13 @@
+{
+  "dry_run": true,
+  "network_requests": 0,
+  "customer_data_used": false,
+  "requires": [
+    "provider account",
+    "private test bucket",
+    "scoped key",
+    "endpoint approval",
+    "budget approval"
+  ],
+  "payload_bytes": 4096
+}

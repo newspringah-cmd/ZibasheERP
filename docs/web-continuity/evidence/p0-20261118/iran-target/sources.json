@@ -1,0 +1,22 @@
+[
+  {
+    "url": "https://www.arvancloud.ir/fa/products/cloud-storage",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden>"
+  },
+  {
+    "url": "https://liara.ir/products/object-storage/",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden>"
+  },
+  {
+    "url": "https://parspack.com/cloud-storage",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden>"
+  },
+  {
+    "url": "https://docs.liara.ir/object-storage/about/",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden>"
+  },
+  {
+    "url": "https://docs.arvancloud.ir/fa/object-storage/",
+    "error": "<urlopen error Tunnel connection failed: 403 Forbidden>"
+  }
+]
