@@ -15,15 +15,30 @@ function render(){
  if(activeRoom==='sales'||activeRoom==='inventory'){
   const query=document.getElementById('search').value.trim().toLowerCase();const items=demoItems.filter(x=>x.room===activeRoom&&(`${x.name} ${x.english} ${x.code}`).toLowerCase().includes(query));
   content.innerHTML=`<div class="welcome"><b>به فضای آزمایشی زیباشی خوش آمدی 🌿</b><br>این چیدمان اولیهٔ سایت است؛ کارت‌ها و اعداد نمونه‌اند و سفارش واقعی ثبت نمی‌شود.</div>`+(items.length?items.map(card).join(''):'<div class="empty">در داده‌های نمونه نتیجه‌ای پیدا نشد.</div>');
- }else if(activeRoom==='account')content.innerHTML='<section class="card"><div class="card-body"><span class="eyebrow">حساب مشتری نمونه</span><h2>سوابق، همیشه کنار هم</h2><p class="description">نمونهٔ محل نمایش گزارش مالی و وضعیت خریدها؛ اطلاعات زیر از ERP خوانده نشده‌اند.</p><div class="summary"><div class="stat">پرداخت‌شدهٔ نمونه<b>۲٬۵۰۰٬۰۰۰ تومان</b></div><div class="stat">بدهی نمونه<b>۳۰۰٬۰۰۰ تومان</b></div></div><div class="sample-row">فاکتور آزمایشی ۰۰۱<small>نمایش ساختگی · پرداخت‌شده</small></div><div class="sample-row">بستهٔ آزمایشی ۰۰۲<small>نمایش ساختگی · آمادهٔ ارسال</small></div><div class="callout">اتصال امن حساب تلگرام به موبایل و کنترل دسترسی، پیش‌نیاز نمایش سوابق واقعی است.</div></div></section>';
+ }else if(activeRoom==='account')content.innerHTML=ZibasheAccount.render();
  else if(activeRoom==='messages')content.innerHTML='<div class="welcome incoming"><span class="sender-name">زیبا | زیباشی</span><p>سلام عزیزم 🌸<br>اینجا می‌توانید پیام‌ها و پیگیری سفارش‌ها را کنار هم ببینید.</p><div class="message-meta">پیام نمونه · ۱۰:۲۰</div></div><div class="outgoing"><div class="reply-sample">زیبا | زیباشی<br><span>پیگیری سفارش‌ها</span></div><p>سلام، وضعیت بسته‌ام را از کجا ببینم؟</p><div class="message-meta">پیام نمونه · ۱۰:۲۱ <span>✓✓</span></div></div><div class="welcome incoming"><span class="sender-name">زیبا | زیباشی</span><p>در بخش «حساب من»، وضعیت سفارش و فاکتورها نمایش داده می‌شود.</p><div class="message-meta">پیام نمونه · ۱۰:۲۲</div></div><div class="preview-notice">این گفتگو ساختگی است؛ ارسال پیام و رسید در پیش‌نمایش غیرفعال است.</div>';
 
  else content.innerHTML='<section class="card"><div class="card-body"><span class="eyebrow">طرح چیدمان کارکنان</span><h2>کارهای روز، در یک نگاه</h2><p class="description">نمونهٔ صف‌های کاری؛ تعدادها واقعی نیستند و عملیاتی اجرا نمی‌شود.</p><div class="sample-row">درخواست‌های موجودی<small>نمونه · ۳ درخواست برای بررسی</small></div><div class="sample-row">رسیدهای پرداخت<small>نمونه · ۲ رسید برای بررسی</small></div><div class="sample-row">آماده‌سازی بسته<small>نمونه · ۴ بسته</small></div><div class="callout">این نما احراز هویت یا مجوز واقعی مدیر و حسابدار ندارد؛ همهٔ دکمه‌های عملیاتی غیرفعال‌اند.</div></div></section>';
 }
 document.getElementById('rooms').addEventListener('click',event=>{const b=event.target.closest('[data-room]');if(b){activeRoom=b.dataset.room;document.body.classList.remove('show-chat-list');document.getElementById('open-rooms').setAttribute('aria-expanded','false');render();}});
 document.getElementById('search').addEventListener('input',render);
-content.addEventListener('click',event=>{const b=event.target.closest('[data-detail]');if(!b)return;const item=demoItems.find(x=>x.id===b.dataset.detail);if(!item)return;document.getElementById('detail-title').textContent=item.name;document.getElementById('detail-text').textContent=item.description;document.getElementById('details').showModal();});
+function openDetail(title,text='',html=''){
+ document.getElementById('detail-title').textContent=title;
+ document.getElementById('detail-text').textContent=text;
+ document.getElementById('detail-extra').innerHTML=html;
+ document.getElementById('details').showModal();
+}
+content.addEventListener('click',event=>{
+ const filter=event.target.closest('[data-account-filter]');
+ if(filter&&activeRoom==='account'){content.innerHTML=ZibasheAccount.render(filter.dataset.accountFilter);content.querySelector(`[data-account-filter="${filter.dataset.accountFilter}"]`).focus();return;}
+ const invoice=event.target.closest('[data-invoice]');const parcel=event.target.closest('[data-parcel]');
+ if(activeRoom==='account'&&(invoice||parcel)){
+  const detail=invoice?ZibasheAccount.invoiceDetail(invoice.dataset.invoice):ZibasheAccount.parcelDetail(parcel.dataset.parcel);
+  if(detail)openDetail(detail.title,'',detail.html);return;
+ }
+ const b=event.target.closest('[data-detail]');if(!b)return;const item=demoItems.find(x=>x.id===b.dataset.detail);if(item)openDetail(item.name,item.description);
+});
 document.getElementById('open-rooms').addEventListener('click',()=>{document.body.classList.add('show-chat-list');document.getElementById('open-rooms').setAttribute('aria-expanded','true');});
-document.getElementById('preview-info').addEventListener('click',()=>{document.getElementById('detail-title').textContent='پیش‌نمایش زیباشی';document.getElementById('detail-text').textContent='این نمونه با چیدمان آشنای پیام‌رسان ساخته شده است. داده‌ها ساختگی‌اند و به حساب یا سفارش واقعی متصل نیست.';document.getElementById('details').showModal();});
+document.getElementById('preview-info').addEventListener('click',()=>openDetail('پیش‌نمایش زیباشی','این نمونه با چیدمان آشنای پیام‌رسان ساخته شده است. داده‌ها ساختگی‌اند و به حساب یا سفارش واقعی متصل نیست.'));
 document.getElementById('close-details').addEventListener('click',()=>document.getElementById('details').close());
 render();

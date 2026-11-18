@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 ROOT=Path(__file__).resolve().parent
-ALLOWED={'/':'index.html','/index.html':'index.html','/styles.css':'styles.css','/app.js':'app.js','/preview-config.json':'preview-config.json','/wallpaper.svg':'wallpaper.svg'}
+ALLOWED={'/':'index.html','/index.html':'index.html','/styles.css':'styles.css','/app.js':'app.js','/account.js':'account.js','/preview-config.json':'preview-config.json','/wallpaper.svg':'wallpaper.svg'}
 FLAGS=['databaseEnabled','customerLoginEnabled','orderWritesEnabled','financialWritesEnabled','telegramEnabled','smsEnabled','externalRequestsEnabled']
 def validate_environment(env,config):
     if any(env.get(k,'').lower()=='production' for k in ['ASPNETCORE_ENVIRONMENT','DOTNET_ENVIRONMENT','APP_ENV']):raise ValueError('Production environment refused')
