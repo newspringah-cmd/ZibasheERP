@@ -55,7 +55,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def read(self, head):
         path = unquote(urlsplit(self.path).path)
-        if path=='/':path='/index.html'
+        if path.endswith('/'):path+='index.html'
         target = ROOT / path.lstrip('/')
         if (not target.resolve().is_relative_to(ROOT.resolve()) or not target.is_file()
                 or target.is_symlink() or target.suffix not in MIME

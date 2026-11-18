@@ -20,6 +20,9 @@ class ExportBoundaryTests(unittest.TestCase):
                 self.assertIn("'sha256-",csp)
                 self.assertNotIn('unsafe-inline',csp)
                 self.assertEqual(response.headers['Cache-Control'],'no-store')
+            with opener.open(base+'/login/') as response:
+                self.assertIn('شماره موبایل',response.read().decode())
+                self.assertIn("connect-src 'none'",response.headers['Content-Security-Policy'])
             with opener.open(urllib.request.Request(base+'/',method='HEAD')) as response:
                 self.assertEqual(response.read(),b'')
             for path in ['/api/me/invoices','/scripts/serve.py','/package.json','/.env','/%2e%2e/package.json']:

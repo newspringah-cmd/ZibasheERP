@@ -24,3 +24,5 @@ python3 docs/web-continuity/render.py --output /tmp/zibashe-handbook-output
 [پیش‌نمایش و دستورهای اجرا](../../web/preview/README.md) و [گزارش حساب مشتریِ نمونه](evidence/p1-account-preview-20261118/status.fa.md)؛ این پیشرفت نمایشی به‌معنای عبور از P0/P2 یا اتصال وب به دادهٔ واقعی نیست.
 
 [پایهٔ رابط اصلی Next.js](../../web/app/README.md) و [شاهد ساخت و آزمون](evidence/p1-next-foundation-20261118/status.fa.md): انتقال تم و حساب نمونه به React/TypeScript و static export مستقل؛ هنوز بدون احراز هویت و اتصال واقعی.
+
+[زیرساخت ورود پیامکی و مراحل فعال‌سازی](sms-login.fa.md): تصمیم مدیر برای SMS و تعویق پنل، فرم موبایل، چالش staging و سیاست اولیهٔ مالکیت؛ ارسال واقعی و نشست هنوز فعال نیستند.
