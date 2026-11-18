@@ -1,0 +1,22 @@
+{
+  "browser_checks": 13,
+  "checks": [
+    "two synthetic sales cards",
+    "all sales write actions disabled",
+    "details open without API",
+    "local sample search filters",
+    "inventory view uses separate synthetic card",
+    "half-ml sample visible",
+    "account is explicitly fictional",
+    "staff layout does not pretend to authorize",
+    "messaging disabled",
+    "no mobile horizontal page overflow",
+    "no browser JavaScript errors",
+    "no external requests",
+    "no ERP API requests"
+  ],
+  "real_data_used": false,
+  "production_modified": false,
+  "http_safety_tests": 4,
+  "stage": "independent non-production preview; P0 gate still open"
+}

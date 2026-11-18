@@ -1,0 +1,11 @@
+{
+  "mode": "isolated-preview",
+  "syntheticDataOnly": true,
+  "databaseEnabled": false,
+  "customerLoginEnabled": false,
+  "orderWritesEnabled": false,
+  "financialWritesEnabled": false,
+  "telegramEnabled": false,
+  "smsEnabled": false,
+  "externalRequestsEnabled": false
+}
