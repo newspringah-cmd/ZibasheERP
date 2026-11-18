@@ -3,6 +3,7 @@
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {catalog,rooms,type Room,type CatalogItem} from '../lib/catalog-fixture';
 import {CustomerAccount,InvoiceDetail,ParcelDetail,type AccountFilter} from './account';
+import type {CustomerInvoicesRead} from '../lib/invoice-read-contract';
 
 type Detail={title:string;body:ReactNode};
 
@@ -18,7 +19,7 @@ function SampleMessages() {
  <div className="welcome incoming"><span className="sender-name">زیبا | زیباشی</span><p>در بخش «حساب من»، وضعیت سفارش و فاکتورها نمایش داده می‌شود.</p><div className="message-meta">پیام نمونه · ۱۰:۲۲</div></div><div className="preview-notice">این گفتگو ساختگی است؛ ارسال پیام و رسید در پیش‌نمایش غیرفعال است.</div></>;
 }
 
-export function TelegramShell() {
+export function TelegramShell({invoicePage}: {invoicePage: CustomerInvoicesRead}) {
  const [activeRoom,setRoom]=useState<Room>('sales');
  const [query,setQuery]=useState('');
  const [showChatList,setShowChatList]=useState(false);
@@ -44,7 +45,7 @@ export function TelegramShell() {
  <div className="pinned-message"><span className="pin-icon">⌖</span><div><b>پیام سنجاق‌شده</b><p>اطلاعات نمونه‌اند؛ خرید و عملیات مالی در این محیط غیرفعال است.</p></div></div>
  <div className="conversation" id="conversation" ref={conversation}><div className="day-chip">امروز · گفتگوهای نمونه</div><div id="room-content" aria-live="polite">
  {(activeRoom==='sales'||activeRoom==='inventory')&&<><div className="welcome"><b>به فضای آزمایشی زیباشی خوش آمدی 🌿</b><br/>این چیدمان اولیهٔ سایت است؛ کارت‌ها و اعداد نمونه‌اند و سفارش واقعی ثبت نمی‌شود.</div>{items.length?items.map(item=><ProductCard key={item.id} item={item} onDetail={()=>setDetail({title:item.name,body:<p>{item.description}</p>})}/>):<div className="empty">در داده‌های نمونه نتیجه‌ای پیدا نشد.</div>}</>}
- {activeRoom==='account'&&<CustomerAccount filter={filter} onFilter={setFilter} onInvoice={invoice=>setDetail({title:`فاکتور نمونه ${invoice.number}`,body:<InvoiceDetail invoice={invoice}/>})} onParcel={parcel=>setDetail({title:parcel.title,body:<ParcelDetail parcel={parcel}/>})}/>}
+ {activeRoom==='account'&&<CustomerAccount invoicePage={invoicePage} filter={filter} onFilter={setFilter} onInvoice={invoice=>setDetail({title:`فاکتور نمونه ${invoice.number}`,body:<InvoiceDetail invoice={invoice}/>})} onParcel={parcel=>setDetail({title:parcel.title,body:<ParcelDetail parcel={parcel}/>})}/>}
  {activeRoom==='messages'&&<SampleMessages/>}
  {activeRoom==='staff'&&<section className="card"><div className="card-body"><span className="eyebrow">طرح چیدمان کارکنان</span><h2>کارهای روز، در یک نگاه</h2><p className="description">نمونهٔ صف‌های کاری؛ تعدادها واقعی نیستند و عملیاتی اجرا نمی‌شود.</p><div className="sample-row">درخواست‌های موجودی<small>نمونه · ۳ درخواست برای بررسی</small></div><div className="sample-row">رسیدهای پرداخت<small>نمونه · ۲ رسید برای بررسی</small></div><div className="sample-row">آماده‌سازی بسته<small>نمونه · ۴ بسته</small></div><div className="callout">این نما احراز هویت یا مجوز واقعی مدیر و حسابدار ندارد؛ همهٔ دکمه‌های عملیاتی غیرفعال‌اند.</div></div></section>}
  </div></div><footer className="composer"><span aria-hidden="true">☺</span><input disabled placeholder="پیام بنویسید · پیش‌نمایش غیرفعال" aria-label="ورودی غیرفعال پیام"/><button disabled aria-label="ارسال غیرفعال">➤</button></footer></main></div>

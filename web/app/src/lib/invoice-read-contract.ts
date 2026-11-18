@@ -40,9 +40,12 @@ export function parseCustomerInvoicesRead(value:unknown):CustomerInvoicesRead{
  return {schemaVersion:1,currency:'IRT',asOf:date(o.asOf),summary,page,pageSize,totalCount,hasMore:o.hasMore,invoices};
 }
 
-export function formatExactToman(value:ExactDecimal):string{
+export function formatExactDecimal(value:ExactDecimal, decimalSeparator = '٫'):string{
  const canonical=decimal(value);const [whole,fraction]=canonical.split('.');
  const amount=new Intl.NumberFormat('fa-IR').format(BigInt(whole));
  const digits=fraction?.replace(/[0-9]/g,c=>String.fromCharCode('۰'.charCodeAt(0)+c.charCodeAt(0)-48));
- return `${amount}${digits?'٫'+digits:''} تومان`;
+ return `${amount}${digits?decimalSeparator+digits:''}`;
+}
+export function formatExactToman(value:ExactDecimal):string{
+ return `${formatExactDecimal(value)} تومان`;
 }
