@@ -3,14 +3,40 @@ name: Isolated web preview
 on:
   push:
     branches: [master, main]
-    paths: ['web/preview/**', '.github/workflows/web-preview.yml']
+    paths: ['web/**', '.github/workflows/web-preview.yml']
   pull_request:
-    paths: ['web/preview/**', '.github/workflows/web-preview.yml']
+    paths: ['web/**', '.github/workflows/web-preview.yml']
 
 permissions:
   contents: read
 
 jobs:
+  next-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    defaults:
+      run:
+        working-directory: web/app
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/app/package-lock.json
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      - run: npm test
+      - run: npm run build
+      - run: npm run typecheck
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: python3 scripts/package_export.py --output "$RUNNER_TEMP/next-preview"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-next-preview
+          path: ${{ runner.temp }}/next-preview/zibashe-next-preview.zip
+          retention-days: 7
   synthetic-preview:
     runs-on: ubuntu-latest
     timeout-minutes: 5

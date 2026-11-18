@@ -13,3 +13,7 @@ tools/telegram-groups/output
 *.user
 *.suo
 deploy/.env.production
+**/node_modules
+**/.next
+web/app/out
+web/app/.env*
