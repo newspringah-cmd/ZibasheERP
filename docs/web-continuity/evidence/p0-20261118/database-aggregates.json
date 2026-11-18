@@ -1,0 +1,375 @@
+{
+  "SchemaVersion": 1,
+  "StartedUtc": "2026-11-18T07:50:13.0508574Z",
+  "CompletedUtc": "2026-11-18T07:50:13.4274827Z",
+  "Scope": "read-only aggregate snapshot, not a transactionally frozen financial audit",
+  "Database": {
+    "Edition": "Express Edition (64-bit)",
+    "DataAllocatedMiB": 648.0,
+    "LogAllocatedMiB": 4744.0
+  },
+  "Counts": {
+    "Customers": 1738,
+    "Orders": 5846,
+    "Invoices": 5835,
+    "SalesLists": 1844,
+    "OrdersCreatedLast30Days": 2720,
+    "CustomersWithOrdersCreatedLast30Days": 930
+  },
+  "InvoiceStatusCounts": [
+    {
+      "Status": 1,
+      "Count": 664
+    },
+    {
+      "Status": 2,
+      "Count": 5080
+    },
+    {
+      "Status": 3,
+      "Count": 91
+    }
+  ],
+  "OutboxCounts": [
+    {
+      "Channel": "AccountantReplacement",
+      "Status": 2,
+      "Count": 248
+    },
+    {
+      "Channel": "AccountantReplacementBacklog",
+      "Status": 2,
+      "Count": 64
+    },
+    {
+      "Channel": "AccountantReplacementBacklog",
+      "Status": 3,
+      "Count": 3
+    },
+    {
+      "Channel": "AccountantReplyControl",
+      "Status": 2,
+      "Count": 2598
+    },
+    {
+      "Channel": "AdminDebtOverride",
+      "Status": 2,
+      "Count": 9
+    },
+    {
+      "Channel": "AdminGroupReconnect",
+      "Status": 2,
+      "Count": 1
+    },
+    {
+      "Channel": "AlanchandDirhamRate",
+      "Status": 2,
+      "Count": 54
+    },
+    {
+      "Channel": "ChannelReservation",
+      "Status": 2,
+      "Count": 4055
+    },
+    {
+      "Channel": "CompletedListCorrection",
+      "Status": 2,
+      "Count": 3
+    },
+    {
+      "Channel": "CustomerTrackingRequests",
+      "Status": 2,
+      "Count": 33
+    },
+    {
+      "Channel": "DecantListDelivery",
+      "Status": 2,
+      "Count": 143
+    },
+    {
+      "Channel": "FlashSaleMainPriceDisplay",
+      "Status": 1,
+      "Count": 1
+    },
+    {
+      "Channel": "FlashSaleMainPriceDisplay",
+      "Status": 2,
+      "Count": 19
+    },
+    {
+      "Channel": "GiftParcelMembershipRepair",
+      "Status": 2,
+      "Count": 5
+    },
+    {
+      "Channel": "HistoricalRestockBacklogAudit",
+      "Status": 2,
+      "Count": 2
+    },
+    {
+      "Channel": "InventoryPostRetirement",
+      "Status": 2,
+      "Count": 71
+    },
+    {
+      "Channel": "InvoiceCancellationCleanup",
+      "Status": 2,
+      "Count": 44
+    },
+    {
+      "Channel": "InvoiceCancellationCleanup",
+      "Status": 3,
+      "Count": 69
+    },
+    {
+      "Channel": "InvoiceCancellationReceipt",
+      "Status": 2,
+      "Count": 88
+    },
+    {
+      "Channel": "InvoiceMessageReceipt",
+      "Status": 2,
+      "Count": 4043
+    },
+    {
+      "Channel": "InvoicePhotoCorrection",
+      "Status": 2,
+      "Count": 1
+    },
+    {
+      "Channel": "InvoiceRestockTrackingRefresh",
+      "Status": 1,
+      "Count": 4
+    },
+    {
+      "Channel": "InvoiceRestockTrackingRefresh",
+      "Status": 2,
+      "Count": 79
+    },
+    {
+      "Channel": "InvoiceRevisionFollowup",
+      "Status": 2,
+      "Count": 7
+    },
+    {
+      "Channel": "InvoiceTransferAllocation",
+      "Status": 2,
+      "Count": 2
+    },
+    {
+      "Channel": "InvoiceTransferFollowup",
+      "Status": 2,
+      "Count": 3
+    },
+    {
+      "Channel": "InvoiceTransferFollowup",
+      "Status": 3,
+      "Count": 1
+    },
+    {
+      "Channel": "InvoiceTransferReceipt",
+      "Status": 2,
+      "Count": 4
+    },
+    {
+      "Channel": "InvoiceVolumeSplitAudit",
+      "Status": 2,
+      "Count": 1
+    },
+    {
+      "Channel": "InvoiceVolumeSplitReceipt",
+      "Status": 2,
+      "Count": 1
+    },
+    {
+      "Channel": "ManualShippingAddressControls",
+      "Status": 2,
+      "Count": 36
+    },
+    {
+      "Channel": "ManualShippingAddressSent",
+      "Status": 2,
+      "Count": 24
+    },
+    {
+      "Channel": "MarketingPromotion",
+      "Status": 2,
+      "Count": 947
+    },
+    {
+      "Channel": "MarketingPromotion",
+      "Status": 3,
+      "Count": 1
+    },
+    {
+      "Channel": "N8n",
+      "Status": 2,
+      "Count": 7595
+    },
+    {
+      "Channel": "N8n",
+      "Status": 3,
+      "Count": 9
+    },
+    {
+      "Channel": "PaidPaymentTrackingCleanup",
+      "Status": 2,
+      "Count": 106
+    },
+    {
+      "Channel": "PaidPaymentTrackingCleanup",
+      "Status": 3,
+      "Count": 231
+    },
+    {
+      "Channel": "PerfumePurchaseReport",
+      "Status": 2,
+      "Count": 8
+    },
+    {
+      "Channel": "ProductionCopyDelivery",
+      "Status": 2,
+      "Count": 106
+    },
+    {
+      "Channel": "ReadyInventoryRefresh",
+      "Status": 2,
+      "Count": 445
+    },
+    {
+      "Channel": "SalesListDecantCompletion",
+      "Status": 2,
+      "Count": 10
+    },
+    {
+      "Channel": "SharedMemberPhotoControls",
+      "Status": 2,
+      "Count": 5
+    },
+    {
+      "Channel": "SharedShippingParcel",
+      "Status": 2,
+      "Count": 7
+    },
+    {
+      "Channel": "SharedShippingRefresh",
+      "Status": 2,
+      "Count": 7
+    },
+    {
+      "Channel": "SharedTrackingTargets",
+      "Status": 2,
+      "Count": 5
+    },
+    {
+      "Channel": "ShippingDecantReferenceSend",
+      "Status": 2,
+      "Count": 3
+    },
+    {
+      "Channel": "ShippingNameWarning",
+      "Status": 2,
+      "Count": 8
+    },
+    {
+      "Channel": "ShippingPackApprovalReceipt",
+      "Status": 2,
+      "Count": 280
+    },
+    {
+      "Channel": "ShippingPackApprovalSend",
+      "Status": 2,
+      "Count": 280
+    },
+    {
+      "Channel": "ShippingPackCustomerResponse",
+      "Status": 2,
+      "Count": 223
+    },
+    {
+      "Channel": "ShippingPackPhotoDraft",
+      "Status": 2,
+      "Count": 306
+    },
+    {
+      "Channel": "ShippingPackRevisionDraft",
+      "Status": 1,
+      "Count": 12
+    },
+    {
+      "Channel": "ShippingPackRevisionDraft",
+      "Status": 2,
+      "Count": 12
+    },
+    {
+      "Channel": "ShippingReferenceContext",
+      "Status": 2,
+      "Count": 409
+    },
+    {
+      "Channel": "ShippingReferenceView",
+      "Status": 2,
+      "Count": 23
+    },
+    {
+      "Channel": "ShippingTrackingAddressNotice",
+      "Status": 2,
+      "Count": 243
+    },
+    {
+      "Channel": "ShippingTrackingAddressNotice",
+      "Status": 3,
+      "Count": 1
+    },
+    {
+      "Channel": "ShippingTrackingParcelRepair",
+      "Status": 2,
+      "Count": 1
+    },
+    {
+      "Channel": "Telegram",
+      "Status": 2,
+      "Count": 20720
+    },
+    {
+      "Channel": "Telegram",
+      "Status": 3,
+      "Count": 141
+    },
+    {
+      "Channel": "TrackingDispatch",
+      "Status": 2,
+      "Count": 332
+    },
+    {
+      "Channel": "TrackingDispatch",
+      "Status": 3,
+      "Count": 1
+    },
+    {
+      "Channel": "TrackingRecipientChoiceAudit",
+      "Status": 2,
+      "Count": 62
+    },
+    {
+      "Channel": "TrackingRecipientSelection",
+      "Status": 2,
+      "Count": 78
+    }
+  ],
+  "Identity": {
+    "Customers": 1738,
+    "SyntacticallyValidIranMobile": 0,
+    "MissingOrNonstandardMobile": 1738,
+    "DuplicateNormalizedMobileGroups": 0,
+    "MobileOwnershipVerified": false,
+    "Note": "Syntax is not ownership proof; no contact values exported"
+  },
+  "Assets": {
+    "SalesListsWithTelegramPhotoReference": 1842,
+    "IndependentArchiveCoverage": "not verified"
+  },
+  "RestoreEvidence": "not verified in this run",
+  "WritesPerformed": false,
+  "CustomerIdentifiersExported": false
+}

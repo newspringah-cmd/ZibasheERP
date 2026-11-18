@@ -14,3 +14,7 @@
 ```bash
 python3 docs/web-continuity/render.py --output /tmp/zibashe-handbook-output
 ```
+
+## اجرای آغازشده
+
+[گزارش مرحلهٔ P0 و شواهد](evidence/p0-20261118/status.fa.md) شامل baseline واقعی و کارهای باز است؛ این مرحله هنوز تأیید عبور ندارد. ابزارهای اجرایی در `tools/web-continuity` قرار دارند.

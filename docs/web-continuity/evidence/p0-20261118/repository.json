@@ -1,0 +1,964 @@
+{
+  "schema_version": 1,
+  "scope": "tracked source declarations; not a runtime route/authorization audit",
+  "source_commit": "d95cc27305fe0d7996ebb474b5a9faa8cb8dcc29",
+  "capabilities": 190,
+  "feature_ids": [
+    "ID-01",
+    "ID-02",
+    "ID-03",
+    "ID-04",
+    "ID-05",
+    "ID-06",
+    "ID-07",
+    "ID-08",
+    "ID-09",
+    "ID-10",
+    "ID-11",
+    "ID-12",
+    "ID-13",
+    "ID-14",
+    "UX-01",
+    "UX-02",
+    "UX-03",
+    "UX-04",
+    "UX-05",
+    "UX-06",
+    "UX-07",
+    "UX-08",
+    "UX-09",
+    "UX-10",
+    "UX-11",
+    "UX-12",
+    "UX-13",
+    "UX-14",
+    "CAT-01",
+    "CAT-02",
+    "CAT-03",
+    "CAT-04",
+    "CAT-05",
+    "CAT-06",
+    "CAT-07",
+    "CAT-08",
+    "CAT-09",
+    "CAT-10",
+    "CAT-11",
+    "CAT-12",
+    "CAT-13",
+    "CAT-14",
+    "CAT-15",
+    "CAT-16",
+    "CAT-17",
+    "CAT-18",
+    "CAT-19",
+    "CAT-20",
+    "INV-01",
+    "INV-02",
+    "INV-03",
+    "INV-04",
+    "INV-05",
+    "INV-06",
+    "INV-07",
+    "INV-08",
+    "INV-09",
+    "INV-10",
+    "INV-11",
+    "INV-12",
+    "INV-13",
+    "INV-14",
+    "INV-15",
+    "INV-16",
+    "INV-17",
+    "INV-18",
+    "INV-19",
+    "INV-20",
+    "INV-21",
+    "INV-22",
+    "BILL-01",
+    "BILL-02",
+    "BILL-03",
+    "BILL-04",
+    "BILL-05",
+    "BILL-06",
+    "BILL-07",
+    "BILL-08",
+    "BILL-09",
+    "BILL-10",
+    "BILL-11",
+    "BILL-12",
+    "BILL-13",
+    "BILL-14",
+    "BILL-15",
+    "BILL-16",
+    "BILL-17",
+    "BILL-18",
+    "BILL-19",
+    "BILL-20",
+    "BILL-21",
+    "BILL-22",
+    "BILL-23",
+    "BILL-24",
+    "BILL-25",
+    "BILL-26",
+    "PROM-01",
+    "PROM-02",
+    "PROM-03",
+    "PROM-04",
+    "PROM-05",
+    "PROM-06",
+    "PROM-07",
+    "PROM-08",
+    "PROM-09",
+    "PROM-10",
+    "PROM-11",
+    "PROM-12",
+    "PROM-13",
+    "PROM-14",
+    "PACK-01",
+    "PACK-02",
+    "PACK-03",
+    "PACK-04",
+    "PACK-05",
+    "PACK-06",
+    "PACK-07",
+    "PACK-08",
+    "PACK-09",
+    "PACK-10",
+    "PACK-11",
+    "PACK-12",
+    "PACK-13",
+    "PACK-14",
+    "PACK-15",
+    "PACK-16",
+    "PACK-17",
+    "PACK-18",
+    "PACK-19",
+    "PACK-20",
+    "PACK-21",
+    "PACK-22",
+    "PACK-23",
+    "PACK-24",
+    "PACK-25",
+    "PACK-26",
+    "PACK-27",
+    "PACK-28",
+    "PACK-29",
+    "PACK-30",
+    "PACK-31",
+    "PACK-32",
+    "TRACK-01",
+    "TRACK-02",
+    "TRACK-03",
+    "TRACK-04",
+    "TRACK-05",
+    "TRACK-06",
+    "TRACK-07",
+    "TRACK-08",
+    "TRACK-09",
+    "TRACK-10",
+    "TRACK-11",
+    "TRACK-12",
+    "TRACK-13",
+    "TRACK-14",
+    "REP-01",
+    "REP-02",
+    "REP-03",
+    "REP-04",
+    "REP-05",
+    "REP-06",
+    "REP-07",
+    "REP-08",
+    "REP-09",
+    "REP-10",
+    "REP-11",
+    "REP-12",
+    "OPS-01",
+    "OPS-02",
+    "OPS-03",
+    "OPS-04",
+    "OPS-05",
+    "OPS-06",
+    "OPS-07",
+    "OPS-08",
+    "OPS-09",
+    "OPS-10",
+    "OPS-11",
+    "OPS-12",
+    "OPS-13",
+    "OPS-14",
+    "OPS-15",
+    "OPS-16",
+    "OPS-17",
+    "OPS-18",
+    "OPS-19",
+    "OPS-20",
+    "OPS-21",
+    "OPS-22"
+  ],
+  "controllers": [
+    {
+      "file": "ZibasheERP.API/Controllers/AddressesController.cs",
+      "sha256": "86d54f268624247507430921bc843d8bea71b4930f89f2e97f118cb7d6f6f722",
+      "routes": [
+        "api/addresses"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 4,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/BatchesController.cs",
+      "sha256": "f61f1db781179539082ff5cc4b4ad4e5a2c8c2c1e5e7edea34f4d59bf86e5250",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 2,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/BottlesController.cs",
+      "sha256": "d37a61420dddda2eb20d86691e88e2725e0846960be75e49823d7cf300078f07",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 3,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/CustomersController.cs",
+      "sha256": "d32924722b9052478f24a9d23daa4f57cd98bce095b7a71d77f446fd8b4801ff",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin,TelegramBot",
+        "Admin,TelegramBot",
+        "Admin",
+        "Admin",
+        "Admin"
+      ],
+      "http_action_attributes": 11,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/FlashSalesController.cs",
+      "sha256": "8516a49249251986bcda55b7f79eea8dd5369a53b3983b082444241f6e09aced",
+      "routes": [
+        "api/flash-sales"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 4,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/InventoryController.cs",
+      "sha256": "3d9d1c3ce81411471600e314522650ec2c442f5eb40ccf9ca181a0a7585542de",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 1,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/InventoryOffersController.cs",
+      "sha256": "4d069b8905a7aae0b5ac8e36ccdea46709ad9117046077e718665edd0ce6fb72",
+      "routes": [],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 2,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/InvoicesController.cs",
+      "sha256": "a60e791d603f54f7e63417870eb5f3bae6c58d504253e553eaf6f4f3227566d6",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin,TelegramBot",
+        "Admin"
+      ],
+      "http_action_attributes": 2,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/MarketingPromotionsController.cs",
+      "sha256": "7951e3ba8f91843baaaaea0d99ab78454f45552b7eff3bd7a903302b957be303",
+      "routes": [
+        "api/marketing-promotions"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 2,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/N8nIntegrationsController.cs",
+      "sha256": "3f2c26810b671267f244d05f8b2df7511256deb99dd97b46ec00514fffba7778",
+      "routes": [
+        "api/integrations/n8n"
+      ],
+      "roles": [
+        "N8n"
+      ],
+      "http_action_attributes": 3,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/NotificationsController.cs",
+      "sha256": "002b16e12a8d6bef10a76f4c0a8a2bca75038bf52cea2f266251d077f3e23bad",
+      "routes": [
+        "api/notifications"
+      ],
+      "roles": [
+        "Admin",
+        "TelegramBot",
+        "TelegramBot",
+        "TelegramBot",
+        "Admin",
+        "Admin"
+      ],
+      "http_action_attributes": 6,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/OrdersController.cs",
+      "sha256": "bcc35de950b1b9215426b1d72e756691ef420002aedaa08deab930a749a7e672",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin,TelegramBot",
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin",
+        "Admin"
+      ],
+      "http_action_attributes": 10,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/PaymentsController.cs",
+      "sha256": "289e7badeb58277c4cc8f35df8127ac8d350fa8754ea1f1c8a27bed94635152b",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin",
+        "Admin,TelegramBot",
+        "Admin",
+        "Admin",
+        "Admin"
+      ],
+      "http_action_attributes": 5,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/PerfumesController.cs",
+      "sha256": "e37806b497fd1d33428e02826800f5079f51fcdd32236ae4398a58f3af958a9d",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 4,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/ReportsController.cs",
+      "sha256": "355a459564e7aff607c950e21062c238bdcca0818d14d08565c71b1979d7d333",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 1,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/SalesListsController.cs",
+      "sha256": "698bc91a22baa09c927daecfcff83206697d0b5e84709602d666ab1dd96a501f",
+      "routes": [
+        "api/sales-lists"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 3,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/ShipmentsController.cs",
+      "sha256": "77c9a087dafe90f8438ae434aedcb4efcef91a5c49b3b7187655dddb474967c2",
+      "routes": [
+        "api/[controller]"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 2,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/SystemReadinessController.cs",
+      "sha256": "2e98eaea9187c0f2a276c5928230ad9cc62ef94c67b4ba4b24f3cc2a989b7de6",
+      "routes": [
+        "api/system/readiness"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 1,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramGroupsController.cs",
+      "sha256": "d6372f1c629b8408e12716cf2bf0c76b9dd84d5ce515dce3597c7202e4746596",
+      "routes": [
+        "api/telegram-groups"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 7,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramSalesListImportsController.cs",
+      "sha256": "8c327ac10610aeaf4778e1ab4b25571e6fb83ed3e35bcc2580ba11ff29e27ff0",
+      "routes": [
+        "api/telegram-sales-list-imports"
+      ],
+      "roles": [
+        "Admin"
+      ],
+      "http_action_attributes": 1,
+      "telegram_partial": false
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.AccountantLearning.cs",
+      "sha256": "a2b987623cfc9ee96c3bc5e471320197534b897901b4421313ca40137043d17d",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.AccountantQueue.cs",
+      "sha256": "4dc48f63a57a15a6f7e68cc8a171501d9df0e1b96bdf8cf9a915199239405991",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.AddressReadyItems.cs",
+      "sha256": "85580111ee61eaf83b24dba0f09f67f4c157b1677d9f9a4b8105a4b863897bda",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.AdminActivity.cs",
+      "sha256": "3e85391b6369cbf1a6f5cb3bef8948a8936edbfbd2e27f9a460533326d739a4d",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.BlockedUsernames.cs",
+      "sha256": "673624f8e39e0a66369efb0c17d8941e0b1fc3bf6e5fbfcaab4fac0a1c2aac81",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.BottleReports.cs",
+      "sha256": "264bd2e0aa70356fa3ddcd7ded8f49712be91db41cd8d8ec08570ebaf90fd515",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.BottleUpgrade.cs",
+      "sha256": "cd023dc04a6b92edf6ac3642124ea2ab1b98657994e4865b094225989f4127e9",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ChannelSalesList.cs",
+      "sha256": "03c759fa14c9181920c485b6dcab48a82f333788c480b929d45411db296106ee",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.CustomerFinance.cs",
+      "sha256": "6c59fa96dc7e5f39f75c780ec96f520966ad92f4ea1bacc866ed7b14d01cd0b4",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.CustomerQuestions.cs",
+      "sha256": "cbb0604ebeadae5cf2f52b13089ded26a88f216e8d14c5912a05df8ff32a64e8",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.CustomerTrackingGroup.cs",
+      "sha256": "2171b83aee55abe0e50f180697adbbfc9f3374f2461ad47bb15e9414588a7683",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.DecantPhoto.cs",
+      "sha256": "e9a4984311334f99f20770c8b825df864c31444b7e71dab7f74a78f30a52d48f",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.FlashSaleMainPrice.cs",
+      "sha256": "50e4074984fcc037572e5461cdcc7a74ae74165d5b91d67c4a21a026f14ffdf2",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.GroupChatReply.cs",
+      "sha256": "7dbf18762733100fb73b2413ad41f3a25c8a36d0c0443d9d5b9968dc1944ad30",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.GroupConnectionReports.cs",
+      "sha256": "3208bcbfa889469503e35d00c43a4d213ee06414a230cb427234fd31f0e3a733",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.GroupMessage.cs",
+      "sha256": "5f69e206e00cc356e9d6c02e4e5fdbc012fc382527b16f911e6d3f2f2af0cf10",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.GroupShippingStatus.cs",
+      "sha256": "be7f5af33d8f71296ecafdbd6396172e9834eaa83f962d0189b87e030d08e98b",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.HourlyPromotion.cs",
+      "sha256": "bc7e485d2a0e08a6008d8cacf7528efbe4ce6dc4c674f2680e0aa2cb8836f64a",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InventoryLocation.cs",
+      "sha256": "12f5f7de3499ffc0c205f7960ac580c37e41ba78238137e171b1a08e516f874f",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InventoryPurchase.cs",
+      "sha256": "273ec131165598545e1f15d7e9c1a2e9c79d065e8f6a340ccf7cb7c759018fe9",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InvoiceAdmin.cs",
+      "sha256": "e3a6e2b6788cc662e41b3ff70de8a99a581920fc297f40b3e7ba822ad3a9c6e0",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InvoiceCancellation.cs",
+      "sha256": "772e9eaa96c1f8a29c454212401ea07c4427cd93d6cd0427b10455cddfbea476",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InvoiceRevision.cs",
+      "sha256": "9992fcf4a8333616faee675eee24eb3abfc48d0f22f094c074063aac018c85f5",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InvoiceTransfer.cs",
+      "sha256": "be9635ba318cbb64fc47ce09ede6a1d608241a16be054836525c8d72220a2bb9",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InvoiceTransferDelivery.cs",
+      "sha256": "389360ca7d6710f19298eb3c5f09d3cc454e1377a9618a9e8375d9c52219de64",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.InvoicedListReport.cs",
+      "sha256": "18c765161ec07ac02747fe4f46e92f17adbaa0db9579bc8de70b476afef6ab55",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ManualInvoicePhotos.cs",
+      "sha256": "b044b032b1b7aac43ba7a8bd04728f176ab617fd4d1362ed9917d54059e8cab6",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ManualShippingSent.cs",
+      "sha256": "bba604b7c45236064fe03b6abdf2b0af13718e957329097d87e138a16033dbaa",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.Marketing.cs",
+      "sha256": "a62cde8d8d43cbd507d2b8a586815ee103b4b20f59f866c6f1a5d6241a3d8370",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.MarketingCopy.cs",
+      "sha256": "64616cf837b1089a156c191568faa98b0bb451dfa69e6475c002ccf0777a682d",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.OrderFlow.cs",
+      "sha256": "615baf085716c643febd5e8d79e4fd13690b6a3dcd8d0b8b37ad65d20fe42d44",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.PaymentReminders.cs",
+      "sha256": "4510f2f5c40625487de51d27718b78a74446e70e1248206ee7218e933c99213e",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.PerfumeLabels.cs",
+      "sha256": "b631010bd8cc3aa348902b5d7a09e367dc56bd04f7260fe86cec2266aa8e19e6",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.PerfumePurchaseReport.cs",
+      "sha256": "1f58cc136c21ba67bd2ced598a7ac693a415ff6a96298e555ea01f454cde25ec",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.PreparedAddressReport.cs",
+      "sha256": "a6aa573dd9095d68af289a7d8a8547326b9bfba23d3519366735108bb8f733cc",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.PurchaseCosts.cs",
+      "sha256": "b1e4922cd9faf149ae1cc873155c75c45c74605bf4eff4e7ed26280cda1f8dc2",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ReadyInventory.cs",
+      "sha256": "d8560dd058f58cc5263ae3a2ed62174257b9d7bd756fe472582e7329d9088c24",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.RegistrationDebt.cs",
+      "sha256": "a9155d5610b657120d2123415809398329776b70351fd8f65c6a0fcf649cc1e7",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.SalesListAdmin.cs",
+      "sha256": "91ac2d767b5194a05bd2fbbed536571bf1b6c1d2b70d0f10f24d2fddd6751fac",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.SharedMemberPhotos.cs",
+      "sha256": "1b6d6e48386f8dfee88a71421a442fac85661c6438099ac3aaea7d93aee20669",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.SharedShipping.cs",
+      "sha256": "f6f74b408ac18ff7be4c20959a4434068e9241766930218692a68c300beb1cfa",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.SharedShippingTracking.cs",
+      "sha256": "7b3ef0976ec20571b65dffde97d2366c080ae475ef0114f02964f68cd90a88d8",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingDecantStream.cs",
+      "sha256": "9aef3bd1c9ebfb29119dac5d4424b919ac93cb7a3e88fe8679d02d04fc589608",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackAppend.cs",
+      "sha256": "62ae2e29ffe17a1ed6c82765e59b8bfe0cc6f43e829e8a717dc512d7a833baa7",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackCleanup.cs",
+      "sha256": "752943e7bfa8e166b1d896c0ede8acf631eee91ae51b716aa78028f43b32073a",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackCustomerFeedback.cs",
+      "sha256": "9b07f356f67a41fa85bb53a43005e974d4fb0415eae9b50041f88c700d3a3793",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackDelivery.cs",
+      "sha256": "1e5151f7e4e151927c6160d5ce77846c4a9682be403c33c1c049e432e64373eb",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackLegacyPhotos.cs",
+      "sha256": "102331547001fb5c0765bdf616713a33ec3b0f0e7af9646fbe881625ba92342b",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackPhotos.cs",
+      "sha256": "7aa1883dc0b8a79e06cde3f835d93addf8bab461c3ff6b851d61c4883e413ecf",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPackResponseDelivery.cs",
+      "sha256": "7c755472d83e918e621b686bc5bec765e4592c3ed9e68ce7febe5fa35731154a",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingPaymentWarning.cs",
+      "sha256": "e8a94316440139d5653c6041fa554b346ac84b08611d714842d1cc97abb75757",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingReferenceViews.cs",
+      "sha256": "e1429f36c51bc86f05b086f49e23e18e1d21e0764eaf677677439c59ba35c88f",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingReferences.cs",
+      "sha256": "ff2d8ca43da909b986a9eacf552729120a1486d64a81691f3069f289f9326896",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.ShippingRequest.cs",
+      "sha256": "1159183ce171323f636653ad7cbb7e6a7f56a906bbb6b8abb73b3977d9c10b6f",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.TrackingAddressButton.cs",
+      "sha256": "6d11ddf1304457b94a22fb10ea2459361d2ac651d54deea4ecf82827e1aef4fa",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.TrackingAddressNotice.cs",
+      "sha256": "1fe6d5927491f20b97f937cb83140a6dc6c916c058da2b0e76a9440cf6b85b0f",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.TrackingImport.cs",
+      "sha256": "cb079bc89f13143131552f07f43c4071cc12c79b0b616cf84589c83bc32d9014",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.TrackingRecipientSelection.cs",
+      "sha256": "7cb99bc45787b5a02b815f1438766f556f40753e6e1d3be6a4dc2b38dccdb766",
+      "routes": [],
+      "roles": [],
+      "http_action_attributes": 0,
+      "telegram_partial": true
+    },
+    {
+      "file": "ZibasheERP.API/Controllers/TelegramWebhookController.cs",
+      "sha256": "42327ac250c68d9149298b90065ad6f840f0f130e54b635ca76c19a0b92e1838",
+      "routes": [
+        "api/telegram/webhook"
+      ],
+      "roles": [],
+      "http_action_attributes": 1,
+      "telegram_partial": true
+    }
+  ],
+  "hosted_service_declarations": [
+    "AccountantReplyWorker",
+    "AutomaticDirhamRateWorker",
+    "FlashSaleMainPriceWorker",
+    "GroupChatReplyWorker",
+    "InvoiceTransferWorker",
+    "ManualShippingAddressWorker",
+    "N8nOutboxWorker",
+    "PaidPaymentTrackingCleanupWorker",
+    "PerfumePurchaseReportWorker",
+    "ReadyInventoryMaintenanceWorker",
+    "SharedShippingWorker",
+    "ShippingDecantReferenceWorker",
+    "ShippingNameWarningWorker",
+    "ShippingPackApprovalWorker",
+    "ShippingPackFeedbackWorker",
+    "ShippingTrackingNoticeWorker",
+    "TelegramBotMenuInitializer",
+    "TelegramBottlePriceSyncWorker",
+    "TelegramImportedNextBottleBackfillWorker",
+    "TelegramOutboxWorker",
+    "TelegramReservationCompletionWorker",
+    "TrackingDispatchWorker"
+  ],
+  "runtime_verified": false,
+  "financial_writes": false
+}
