@@ -108,6 +108,11 @@ if(args.Contains("--legacy-pack-photos"))
     Console.WriteLine("Legacy pack photo tests passed.");
     return;
 }
+if (args.Contains("--completed-list-reopen"))
+{
+    await CompletedListReopenTests.Run(Check);
+    return;
+}
 if(args.Contains("--customer-finance"))
 {
     await CustomerInvoiceFinanceTests.Run(Check);
@@ -355,6 +360,7 @@ await LegacyPackPhotoTests.Run(Check);
 await GiftShippingStatisticsTests.Run(Check);
 await ShippingPromptIsolationTests.Run(Check);
 await ShippingPaymentWarningTests.Run(Check);
+await CompletedListReopenTests.Run(Check);
 await CustomerInvoiceFinanceTests.Run(Check);
 await RegistrationDebtTests.Run(Check);
 await ShippingReferenceTests.Run(Check);

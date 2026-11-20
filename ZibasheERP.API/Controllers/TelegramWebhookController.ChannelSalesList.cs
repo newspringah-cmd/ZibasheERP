@@ -473,7 +473,8 @@ public sealed partial class TelegramWebhookController
     private async Task RefreshChannelSalesListAsync(
         Guid salesListId,
         CancellationToken cancellationToken,
-        bool includeCompletedRequests = false)
+        bool includeCompletedRequests = false,
+        bool sendRemainingAlerts = true)
     {
         SalesListRefreshVersions.AddOrUpdate(salesListId, 1, (_, version) => version + 1);
         var refreshLock = SalesListRefreshLocks.GetOrAdd(salesListId, _ => new SemaphoreSlim(1, 1));
@@ -529,7 +530,8 @@ public sealed partial class TelegramWebhookController
                 var captions = FormatPromotionChannelSalesListPages(salesList, requests, quote);
                 await SynchronizeContinuationPostAsync(salesList, captions.Continuation, cancellationToken);
                 await RefreshMainChannelPostAsync(salesList, captions.Main, cancellationToken);
-                await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
+                if (sendRemainingAlerts)
+                    await SendRemainingVolumeAlertsAsync(salesList, cancellationToken);
                 if (salesList.Status == SalesListStatus.Full)
                     await CompleteAndRollSalesListAsync(salesList, requests, cancellationToken);
                 if (SalesListRefreshVersions[salesListId] == version)

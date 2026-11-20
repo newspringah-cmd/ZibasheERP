@@ -15,7 +15,10 @@ internal sealed class CompletedListEditDraft
 {
     public Guid SalesListId { get; set; }
     public int PublicCode { get; set; }
-    public List<Guid> RequestIds { get; } = [];
+    public Dictionary<Guid, byte[]> RequestVersions { get; } = new();
+    public (Guid Token, string Text)? PendingReopen { get; set; }
+    public bool Reopened { get; set; }
+    public SemaphoreSlim ReopenGate { get; } = new(1, 1);
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -622,6 +625,11 @@ public sealed partial class TelegramWebhookController
                 queued
                     ? "⏳ ارسال همهٔ لیست‌های چاپ در پس‌زمینه شروع شد. این فرایند تا آخرین لیست ادامه دارد و پس از پایان گزارش کامل ارسال می‌شود."
                     : "⏳ ارسال همهٔ لیست‌های چاپ از قبل در حال اجرا است؛ تا دریافت گزارش پایان صبر کنید.", ct);
+            return true;
+        }
+        if (callback.Data.StartsWith(CompletedListReopenPrefix, StringComparison.Ordinal))
+        {
+            await HandleCompletedListReopenAsync(callback, ct);
             return true;
         }
         if (callback.Data == "invoiceadmin:edit-completed-list")
@@ -2278,7 +2286,8 @@ public sealed partial class TelegramWebhookController
 
     private async Task<bool> TryHandleCompletedListEditMessageAsync(
         TelegramMessage message,
-        CancellationToken ct)
+        CancellationToken ct,
+        CompletedListEditDraft? confirmReopen = null)
     {
         if (message.From is null ||
             !CompletedListEditDrafts.TryGetValue((message.Chat.Id, message.From.Id), out var draft))
@@ -2294,7 +2303,11 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id, "دسترسی مدیریت ندارید.", ct);
             return true;
         }
+        if (confirmReopen is not null && !ReferenceEquals(draft, confirmReopen))
+            return false;
         var input = message.Text?.Trim();
+        if (confirmReopen is null && !string.IsNullOrWhiteSpace(input))
+            draft.PendingReopen = null;
         if (string.Equals(input, "/cancel", StringComparison.OrdinalIgnoreCase))
         {
             CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
@@ -2341,13 +2354,12 @@ public sealed partial class TelegramWebhookController
             }
             draft.SalesListId = list.Id;
             draft.PublicCode = list.DisplayCode;
-            draft.RequestIds.AddRange(requests.Select(value => value.Id));
+            foreach (var request in requests)
+                draft.RequestVersions.Add(request.Id, request.RowVersion);
             draft.UpdatedAt = DateTime.UtcNow;
             var lines = requests.Select(value =>
             {
-                var bottle = value.IsBottleOwner ? "صاحب باتل" :
-                    value.IsComplimentaryBottle ? "شیشه رایگان" : value.Bottle?.Name ?? "شیشه نامشخص";
-                return $"{QueueOrderIdentity(value)} | {value.VolumeMl:0.#} میل | {bottle}";
+                return $"{QueueOrderIdentity(value)} | {value.VolumeMl:0.#} میل | {CompletedListBottleName(value)}";
             });
             var editable = string.Join("\n", lines);
             foreach (var part in SplitTelegramMessage(
@@ -2375,6 +2387,8 @@ public sealed partial class TelegramWebhookController
             }
             parsed.Add((parts[0], volume, parts[2]));
         }
+        await using var transaction = await _db.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, ct);
         var listForEdit = await _db.SalesLists.FirstOrDefaultAsync(value =>
             value.Id == draft.SalesListId && !value.IsDeleted, ct);
         if (listForEdit is null || listForEdit.Status is SalesListStatus.Open or
@@ -2385,10 +2399,17 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(message.Chat.Id, "وضعیت لیست تغییر کرده و دیگر قابل ویرایش نیست.", ct);
             return true;
         }
-        if (parsed.Sum(value => value.Volume) != listForEdit.TotalVolume)
+        var submittedVolume = parsed.Sum(value => (decimal)value.Volume);
+        if (submittedVolume > listForEdit.TotalVolume)
         {
             await ReplyAsync(message.Chat.Id,
-                $"مجموع خطوط باید دقیقاً {listForEdit.TotalVolume:0.#} میل باشد؛ مجموع فعلی {parsed.Sum(value => value.Volume)} میل است.", ct);
+                $"مجموع خطوط نمی‌تواند بیشتر از {listForEdit.TotalVolume:0.#} میل باشد؛ مجموع فعلی {submittedVolume:0.#} میل است.", ct);
+            return true;
+        }
+        var reopen = submittedVolume < listForEdit.TotalVolume;
+        if (confirmReopen is not null && !reopen)
+        {
+            await ReplyAsync(message.Chat.Id, "ظرفیت لیست تغییر کرده است؛ دوباره وارد ویرایش شوید.", ct);
             return true;
         }
         if (parsed.Count(value => value.Bottle.Contains("صاحب باتل", StringComparison.OrdinalIgnoreCase)) > 1)
@@ -2403,7 +2424,8 @@ public sealed partial class TelegramWebhookController
                 value.Status == SalesListRequestStatus.Confirmed)
             .OrderBy(value => value.ConfirmedAt).ThenBy(value => value.CreatedAt).ThenBy(value => value.Id)
             .ToArrayAsync(ct);
-        if (current.Length != draft.RequestIds.Count || current.Select(value => value.Id).Except(draft.RequestIds).Any())
+        if (current.Length != draft.RequestVersions.Count || current.Any(value =>
+            !draft.RequestVersions.TryGetValue(value.Id, out var version) || !value.RowVersion.SequenceEqual(version)))
         {
             CompletedListEditDrafts.TryRemove((message.Chat.Id, message.From.Id), out _);
             await ReplyAsync(message.Chat.Id, "لیست هم‌زمان تغییر کرده است؛ دوباره وارد ویرایش شوید.", ct);
@@ -2424,8 +2446,11 @@ public sealed partial class TelegramWebhookController
                 return true;
             }
             var canonical = CanonicalQueueIdentity(line.Identity);
-            var request = remaining.FirstOrDefault(value =>
-                CanonicalQueueIdentity(QueueOrderIdentity(value)) == canonical);
+            var candidates = remaining.Where(value =>
+                CanonicalQueueIdentity(QueueOrderIdentity(value)) == canonical).ToArray();
+            var request = candidates.FirstOrDefault(value => value.VolumeMl == line.Volume &&
+                string.Equals(CompletedListBottleName(value), line.Bottle, StringComparison.OrdinalIgnoreCase))
+                ?? candidates.FirstOrDefault();
             if (request is not null)
                 remaining.Remove(request);
             else
@@ -2463,7 +2488,10 @@ public sealed partial class TelegramWebhookController
             var owner = line.Bottle.Contains("صاحب باتل", StringComparison.OrdinalIgnoreCase);
             var free = !owner && (line.Bottle.Contains("رایگان", StringComparison.OrdinalIgnoreCase));
             Bottle? bottle = null;
-            if (!owner && !free)
+            var unchangedUnknownBottle = reopen && current.Contains(request) && request.BottleId is null &&
+                request.VolumeMl == line.Volume && !request.IsBottleOwner && !request.IsComplimentaryBottle &&
+                line.Bottle == CompletedListBottleName(request);
+            if (!owner && !free && !unchangedUnknownBottle)
             {
                 bottle = bottles.FirstOrDefault(value => value.VolumeMl == line.Volume &&
                     string.Equals(value.Name.Trim(), line.Bottle.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -2474,13 +2502,17 @@ public sealed partial class TelegramWebhookController
                     return true;
                 }
             }
+            var existing = current.Contains(request);
+            var keepBottlePrice = reopen && existing && request.BottleId == bottle?.Id &&
+                request.IsBottleOwner == owner && request.IsComplimentaryBottle == free;
             request.VolumeMl = line.Volume;
             request.IsBottleOwner = owner;
             request.IsComplimentaryBottle = free;
             request.BottleId = bottle?.Id;
             request.Bottle = bottle;
-            request.BottlePrice = owner || free ? 0 : bottle!.SalePrice;
-            if (!request.FlashSalePromotionId.HasValue)
+            if (!keepBottlePrice)
+                request.BottlePrice = owner || free ? 0 : bottle!.SalePrice;
+            if (!request.FlashSalePromotionId.HasValue && (!reopen || !existing))
             {
                 request.PerfumePricePerMl = listForEdit.PricePerMl;
                 request.ConfirmedAt = now.AddTicks(index);
@@ -2489,14 +2521,58 @@ public sealed partial class TelegramWebhookController
             ordered.Add(request);
         }
 
+        if (reopen)
+        {
+            if (remaining.Count == 0)
+            {
+                await ReplyAsync(message.Chat.Id,
+                    "برای بازگشایی، دست‌کم یک خط آیتم را کامل حذف کنید.", ct);
+                return true;
+            }
+            var plan = await FindCompletedListReopenPostAsync(listForEdit, ct);
+            if (plan.Error is not null)
+            {
+                await ReplyAsync(message.Chat.Id, plan.Error, ct);
+                return true;
+            }
+            if (confirmReopen is null)
+            {
+                var token = Guid.NewGuid();
+                draft.PendingReopen = (token, input);
+                draft.UpdatedAt = now;
+                await transaction.RollbackAsync(ct);
+                await _sender.SendInlineKeyboardAsync(message.Chat.Id.ToString(),
+                    $"با این ویرایش {listForEdit.TotalVolume - submittedVolume:0.#} میل آزاد می‌شود. برای ثبت حذف و بازگشایی، دکمهٔ زیر را بزنید.",
+                    CompletedListReopenButtons(token), ct);
+                return true;
+            }
+
+            if (plan.Successor is { } next)
+            {
+                var post = (next.TelegramChannelId, next.TelegramMessageId,
+                    next.TelegramDiscussionMessageId, next.TelegramContinuationMessageId);
+                next.Status = SalesListStatus.Cancelled;
+                next.ClosedDate = now;
+                next.UpdatedAt = now;
+                next.TelegramChannelId = null;
+                next.TelegramMessageId = null;
+                next.TelegramDiscussionMessageId = null;
+                next.TelegramContinuationMessageId = null;
+                // Release the unique post reference before assigning it to this cycle.
+                await _db.SaveChangesAsync(ct);
+                (listForEdit.TelegramChannelId, listForEdit.TelegramMessageId,
+                    listForEdit.TelegramDiscussionMessageId, listForEdit.TelegramContinuationMessageId) = post;
+            }
+            listForEdit.Status = SalesListStatus.Open;
+            listForEdit.ClosedDate = null;
+        }
         var destination = string.IsNullOrWhiteSpace(_options.CompletedSalesListsChatId)
             ? _options.AdminChatId : _options.CompletedSalesListsChatId;
-        if (string.IsNullOrWhiteSpace(destination))
+        if (!reopen && string.IsNullOrWhiteSpace(destination))
         {
             await ReplyAsync(message.Chat.Id, "گروه لیست‌های تکمیل‌شده تنظیم نشده است.", ct);
             return true;
         }
-        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         foreach (var removed in remaining)
         {
             removed.Status = SalesListRequestStatus.Cancelled;
@@ -2510,6 +2586,13 @@ public sealed partial class TelegramWebhookController
         listForEdit.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+
+        if (reopen)
+        {
+            draft.Reopened = true;
+            await PublishReopenedCompletedListAsync(message.Chat.Id, message.From.Id, draft, ct);
+            return true;
+        }
 
         var pages = FormatChannelSalesListPages(listForEdit, ordered);
         var caption = "✅ لیست فروش تکمیل شد — نسخه نهایی ویرایش‌شده\n\n" + pages.Main;
