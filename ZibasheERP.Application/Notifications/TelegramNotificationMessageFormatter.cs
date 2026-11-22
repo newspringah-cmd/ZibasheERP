@@ -200,12 +200,13 @@ public static class TelegramNotificationMessageFormatter
         if (string.IsNullOrWhiteSpace(englishTitle)) englishTitle = "آیتم دستی";
         if (string.IsNullOrWhiteSpace(persianName)) persianName = "آیتم دستی";
 
+        var miscellaneous = ReadBoolean(item, "IsMiscellaneous");
         var lines = new[]
         {
             $"نام انگلیسی: {englishTitle}",
             $"نام فارسی: {persianName}",
-            $"مقدار: {ReadDecimal(item, "RequestedVolumeMl").ToString("0.#", CultureInfo.InvariantCulture)} میلی‌لیتر",
-            $"مبلغ عطر و شیشه: {FormatAmount(ReadDecimal(item, "LineTotal"))} تومان"
+            miscellaneous ? "تعداد: ۱ عدد" : $"مقدار: {ReadDecimal(item, "RequestedVolumeMl").ToString("0.#", CultureInfo.InvariantCulture)} میلی‌لیتر",
+            $"{(miscellaneous ? "مبلغ کالا" : "مبلغ عطر و شیشه")}: {FormatAmount(ReadDecimal(item, "LineTotal"))} تومان"
         };
         foreach (var line in lines)
         {
@@ -227,6 +228,7 @@ public static class TelegramNotificationMessageFormatter
         var builder = new StringBuilder();
         if (ReadBoolean(root, "IsInventory"))
             builder.AppendLine("🔴🔴موجودی🔴🔴").AppendLine();
+        var miscellaneous = ReadBoolean(root, "IsMiscellaneous");
         return builder
             .AppendLine("🎁 فاکتور هدیه زیباشی")
             .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
@@ -234,10 +236,12 @@ public static class TelegramNotificationMessageFormatter
             .AppendLine()
             .AppendLine($"نام انگلیسی: {ReadString(root, "PerfumeEnglishName") ?? "عطر"}")
             .AppendLine($"نام فارسی: {ReadString(root, "PerfumePersianName") ?? "عطر"}")
-            .AppendLine($"مقدار: {ReadDecimal(root, "RequestedVolumeMl").ToString("0.#", CultureInfo.InvariantCulture)} میلی‌لیتر")
+            .AppendLine(miscellaneous ? "تعداد: ۱ عدد" :
+                $"مقدار: {ReadDecimal(root, "RequestedVolumeMl").ToString("0.#", CultureInfo.InvariantCulture)} میلی‌لیتر")
             .AppendLine("مبلغ قابل پرداخت: ۰ تومان")
             .AppendLine()
-            .Append("این عطر از طرف هدیه‌دهنده برای شما ثبت شده است 🌹")
+            .Append(miscellaneous ? "این کالا از طرف هدیه‌دهنده برای شما ثبت شده است 🌹" :
+                "این عطر از طرف هدیه‌دهنده برای شما ثبت شده است 🌹")
             .ToString();
     }
 

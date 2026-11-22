@@ -11,7 +11,7 @@ namespace ZibasheERP.Infrastructure.Services;
 public sealed class InvoiceCancellationService(AppDbContext db)
 {
     public sealed record Line(Guid ItemId,string Name,decimal Volume,decimal InvoicePrice,decimal CurrentPrice,decimal BottlePrice,string BottleName,
-        Guid? ReferenceId,Guid? BottleId,string Photo,string Position,string? Description);
+        Guid? ReferenceId,Guid? BottleId,string Photo,string Position,string? Description,bool IsMiscellaneous=false);
     public sealed record Preview(Guid InvoiceId,string Number,string Customer,decimal Amount,string Fingerprint,Line[] Lines,
         Guid[]? SelectedItems=null,decimal RemainingAmount=0,bool Partial=false,bool RestockOnly=false);
     public sealed record Result(Guid InvoiceId,decimal ReversedAmount,Guid[] Offers,int[] Codes,bool Returned,
@@ -110,7 +110,9 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         foreach(var x in active.OrderBy(x=>x.RowNumber).ThenBy(x=>x.Id))
         {
             var source=x.SalesList;var reference=source?.IsInventoryOffer==true?source.InventoryReferenceListId:source?.Id;
-            if(reference is null&&x.PerfumeId!=null)reference=await db.SalesLists.AsNoTracking().Where(l=>!l.IsDeleted&&!l.IsInventoryOffer&&l.PerfumeId==x.PerfumeId&&l.TelegramPhotoFileId!=null).OrderByDescending(l=>l.OpenDate).Select(l=>(Guid?)l.Id).FirstOrDefaultAsync(ct);
+            var miscellaneous=x.BottleId==SalesList.MiscellaneousInventoryPackingId;
+            if(miscellaneous)reference=null;
+            else if(reference is null&&x.PerfumeId!=null)reference=await db.SalesLists.AsNoTracking().Where(l=>!l.IsDeleted&&!l.IsInventoryOffer&&l.PerfumeId==x.PerfumeId&&l.TelegramPhotoFileId!=null).OrderByDescending(l=>l.OpenDate).Select(l=>(Guid?)l.Id).FirstOrDefaultAsync(ct);
             var price=reference.HasValue?await InventoryReferencePricing.ReferencePriceAsync(db,reference.Value,ct):null;
             price=price>0?price:x.Perfume?.PricePerMl>0?x.Perfume.PricePerMl:source?.PricePerMl;
             var photo=source?.TelegramPhotoFileId;
@@ -120,7 +122,7 @@ public sealed class InvoiceCancellationService(AppDbContext db)
             if(returning&&deferred&&!await InvoiceRestockTracking.IsReadyAsync(db,x,ct))throw new InvalidOperationException("این عطر هنوز دکانت‌شده و آمادهٔ ارسال نیست؛ پس از آماده‌شدن به موجودی منتقل کنید.");
             if(returning&&(price is not >0||string.IsNullOrWhiteSpace(photo)||x.Bottle is not {IsDeleted:false,IsActive:true}||x.Bottle.VolumeMl<x.RequestedVolumeMl||x.RequestedVolumeMl is <0.5m or >1000||x.RequestedVolumeMl*2!=decimal.Truncate(x.RequestedVolumeMl*2)))throw new InvalidOperationException("عکس، قیمت روز، حجم نیم‌میل یا شیشهٔ مناسبِ یکی از آیتم‌های انتخاب‌شده کامل نیست؛ پیش از انتقال به موجودی اصلاح کنید. هنوز فاکتور لغو نشده است.");
             if(returning&&await db.SalesLists.AnyAsync(l=>l.SourceOrderItemId==x.Id,ct))throw new InvalidOperationException("یکی از آیتم‌ها قبلاً به موجودی منتقل شده است.");
-            lines.Add(new(x.Id,source?.PersianName is {Length:>0}?source.PersianName:x.Perfume?.Name??source?.EnglishName??x.ManualDescription??"عطر",x.RequestedVolumeMl,x.PerfumePricePerMl,price??0,x.BottlePrice,x.Bottle?.Name??"ثبت نشده",reference,x.BottleId,photo??"",source?.StoragePosition??"جایگاه ثبت نشده",source?.InventoryPublicDescription));
+            lines.Add(new(x.Id,source?.PersianName is {Length:>0}?source.PersianName:x.Perfume?.Name??source?.EnglishName??x.ManualDescription??"عطر",x.RequestedVolumeMl,x.PerfumePricePerMl,price??0,x.BottlePrice,x.Bottle?.Name??"ثبت نشده",reference,x.BottleId,photo??"",source?.StoragePosition??"جایگاه ثبت نشده",source?.InventoryPublicDescription,miscellaneous));
         }
         var data=JsonSerializer.Serialize(new{invoice.Id,InvoiceStatus=invoice.Status,invoice.TotalAmount,OrderStatus=order.Status,order.FinalAmount,Lines=lines,
             Items=order.Items.Where(x=>!x.IsDeleted).OrderBy(x=>x.Id).Select(x=>new{x.Id,x.LineTotal,x.FulfillmentStatus,x.ShippedAt,x.ShippingRequestId,x.SourceSalesListRequestId,RequestVersion=x.SourceSalesListRequest?.RowVersion}),Returned=returned,Selected=selected?.Order().ToArray()});
@@ -209,6 +211,7 @@ public sealed class InvoiceCancellationService(AppDbContext db)
         if(prices.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!prices.TryGetValue(l.ItemId,out var p)||p<=0||p>1000000000000m||decimal.Round(p,2)!=p))throw new InvalidOperationException("قیمت هر میل همهٔ آیتم‌ها باید مشخص و مثبت باشد.");
         if(positions is not null&&(positions.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!positions.TryGetValue(l.ItemId,out var position)||string.IsNullOrWhiteSpace(position)||position.Trim().Length>150||position.Trim() is "ثبت نشده" or "جایگاه ثبت نشده" or "نامشخص" or "-")))throw new InvalidOperationException("جایگاه فیزیکی معتبر همهٔ موجودی‌های انتخاب‌شده باید مشخص باشد.");
         if(volumes is not null&&(volumes.Count!=fresh.Lines.Length||fresh.Lines.Any(l=>!volumes.TryGetValue(l.ItemId,out var v)||v<0.5m||v>1000m||v*2!=decimal.Truncate(v*2))))throw new InvalidOperationException("مقدار میل هر موجودی باید مثبت و با گام نیم‌میل باشد.");
+        if(fresh.Lines.Any(l=>l.IsMiscellaneous&&(volumes?.GetValueOrDefault(l.ItemId)??l.Volume)!=1))throw new InvalidOperationException("موجودی متفرقه فقط به صورت یک عدد به موجودی برمی‌گردد.");
         var bottleIds=fresh.Lines.Select(l=>l.BottleId!.Value).Distinct().ToArray();
         var capacities=await db.Bottles.AsNoTracking().Where(b=>bottleIds.Contains(b.Id)&&!b.IsDeleted&&b.IsActive).ToDictionaryAsync(b=>b.Id,b=>b.VolumeMl,ct);
         if(fresh.Lines.Any(l=>!capacities.TryGetValue(l.BottleId!.Value,out var capacity)||capacity<(volumes?.GetValueOrDefault(l.ItemId)??l.Volume)))throw new InvalidOperationException("مقدار میل از ظرفیت شیشه بیشتر است؛ مقدار یا نوع شیشه باید اصلاح شود.");

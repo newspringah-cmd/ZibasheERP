@@ -27,7 +27,7 @@ public sealed record InvoiceCaptionIdentity(string? Username,string? Number,deci
         if((!user.Success&&!number.Success)||!amount.Success||!decimal.TryParse(amount.Groups[1].Value.Replace(",","").Replace("٬","").Trim(),NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out var total)||total<=0)
             throw new InvalidOperationException("کپشن باید شمارهٔ فاکتور یا آیدی مشتری و «مبلغ قابل پرداخت» مثبت داشته باشد؛ رسید هدیهٔ صفرمبلغ فاکتور مالی نیست.");
         var names=Regex.Matches(text,@"(?:🧴|نام\s+فارسی\s*[:：])\s*([^\n]+)").Select(m=>Normalize(m.Groups[1].Value)).ToArray();
-        var volumes=Regex.Matches(text,@"مقدار\s*[:：]\s*([0-9.٫]+)\s*میل").Select(m=>decimal.Parse(m.Groups[1].Value.Replace('٫','.'),CultureInfo.InvariantCulture)).ToArray();
+        var volumes=Regex.Matches(text,@"(?:مقدار\s*[:：]\s*([0-9.٫]+)\s*میل|تعداد\s*[:：]\s*(1)\s*عدد)").Select(m=>decimal.Parse((m.Groups[1].Success?m.Groups[1]:m.Groups[2]).Value.Replace('٫','.'),CultureInfo.InvariantCulture)).ToArray();
         DateTime? from=null,until=null;
         if(!number.Success)
         {

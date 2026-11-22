@@ -43,7 +43,8 @@ public class BottleRepository : IBottleRepository
         CancellationToken cancellationToken = default)
     {
         return await _dbContext.Bottles
-            .Where(x => x.IsActive && !x.IsDeleted && x.Id != ZibasheERP.Infrastructure.Services.ReadyInventoryService.OriginalBottleId)
+            .Where(x => x.IsActive && !x.IsDeleted && x.Id != ZibasheERP.Infrastructure.Services.ReadyInventoryService.OriginalBottleId &&
+                x.Id != SalesList.MiscellaneousInventoryPackingId)
             .OrderBy(x => x.VolumeMl)
             .ToListAsync(cancellationToken);
     }
@@ -54,7 +55,8 @@ public class BottleRepository : IBottleRepository
         CancellationToken cancellationToken = default) =>
         await _dbContext.Bottles
             .AsNoTracking()
-            .Where(bottle => !bottle.IsDeleted && (includeInactive || bottle.IsActive))
+            .Where(bottle => !bottle.IsDeleted && bottle.Id != SalesList.MiscellaneousInventoryPackingId &&
+                (includeInactive || bottle.IsActive))
             .OrderBy(bottle => bottle.VolumeMl)
             .ThenBy(bottle => bottle.Type)
             .ThenBy(bottle => bottle.Name)
@@ -63,7 +65,7 @@ public class BottleRepository : IBottleRepository
 
     public Task<Bottle?> GetForAdminByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
         _dbContext.Bottles.FirstOrDefaultAsync(
-            bottle => bottle.Id == id && !bottle.IsDeleted,
+            bottle => bottle.Id == id && !bottle.IsDeleted && bottle.Id != SalesList.MiscellaneousInventoryPackingId,
             cancellationToken);
 
     public Task<bool> ExistsAsync(

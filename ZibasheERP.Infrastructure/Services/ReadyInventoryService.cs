@@ -11,13 +11,17 @@ public sealed class ReadyInventoryService(AppDbContext db)
     // Dedicated stock packaging, never a customer-selectable decant bottle.
     public static readonly Guid OriginalBottleId = new("5a30c683-3c4b-42b3-978a-ec26ca239d02");
     public const string OriginalBottleName = "باتل اصلی رایگان";
+    private const string MiscellaneousPackingName = "کالای بسته‌بندی‌شده";
     public sealed record Create(Guid Id, Guid? ReferenceId, string Name, string Photo, decimal PricePerMl,
         decimal Volume, Guid BottleId, decimal BottlePrice, string Position, long Actor,string? Description=null);
     public async Task<SalesList> CreateAsync(Create input, CancellationToken ct=default)
     {
+        var miscellaneous = input.BottleId == SalesList.MiscellaneousInventoryPackingId;
+        var position = input.Position?.Trim() ?? string.Empty;
         if(input.Id==Guid.Empty || input.Actor<=0 || string.IsNullOrWhiteSpace(input.Name) || input.Name.Length>200 ||
             string.IsNullOrWhiteSpace(input.Photo) || input.Photo.Length>500 || input.PricePerMl<=0 || input.PricePerMl>1000000000000m || input.Volume is <0.5m or >1000 || input.Volume*2!=decimal.Truncate(input.Volume*2) ||
-            input.BottlePrice<0 || input.BottlePrice>1000000000000m || string.IsNullOrWhiteSpace(input.Position) || input.Position.Trim().Length>150 ||
+            input.BottlePrice<0 || input.BottlePrice>1000000000000m || (!miscellaneous && position.Length==0) || position.Length>150 ||
+            (miscellaneous && (input.ReferenceId.HasValue || input.Volume!=1 || input.BottlePrice!=0)) ||
             (input.Description?.Trim().Length??0)>400 ||
             decimal.Round(input.PricePerMl,2)!=input.PricePerMl || decimal.Round(input.BottlePrice,2)!=input.BottlePrice)
             throw new InvalidOperationException("اطلاعات موجودی معتبر نیست.");
@@ -27,7 +31,7 @@ public sealed class ReadyInventoryService(AppDbContext db)
         var existing=await db.SalesLists.SingleOrDefaultAsync(v=>v.Id==input.Id,ct);
         if(existing is not null)
         {
-            if(!existing.IsInventoryOffer || existing.InventoryCreatedByUserId!=input.Actor || existing.InventoryReferenceListId!=input.ReferenceId || existing.TotalVolume!=input.Volume || existing.PricePerMl!=input.PricePerMl || existing.FixedBottleId!=input.BottleId || existing.FixedBottlePrice!=input.BottlePrice || existing.TelegramPhotoFileId!=input.Photo || existing.StoragePosition!=input.Position.Trim() || existing.InventoryPublicDescription!=(string.IsNullOrWhiteSpace(input.Description)?null:input.Description.Trim()))throw new InvalidOperationException("درخواست تکراری نامعتبر است.");
+            if(!existing.IsInventoryOffer || existing.InventoryCreatedByUserId!=input.Actor || existing.InventoryReferenceListId!=input.ReferenceId || existing.TotalVolume!=input.Volume || existing.PricePerMl!=input.PricePerMl || existing.FixedBottleId!=input.BottleId || existing.FixedBottlePrice!=input.BottlePrice || existing.TelegramPhotoFileId!=input.Photo || (existing.StoragePosition??"")!=position || (miscellaneous && existing.PersianName!=input.Name.Trim()) || existing.InventoryPublicDescription!=(string.IsNullOrWhiteSpace(input.Description)?null:input.Description.Trim()))throw new InvalidOperationException("درخواست تکراری نامعتبر است.");
             if(tx is not null)await tx.CommitAsync(ct);return existing;
         }
         Bottle bottle;
@@ -40,6 +44,15 @@ public sealed class ReadyInventoryService(AppDbContext db)
             if (db.Entry(bottle).State == EntityState.Detached) db.Bottles.Add(bottle);
             if (bottle.IsDeleted || !bottle.IsActive || bottle.Name != OriginalBottleName || bottle.SalePrice != 0 || bottle.VolumeMl < input.Volume)
                 throw new InvalidOperationException("تنظیمات باتل اصلی موجودی نیازمند بررسی است.");
+        }
+        else if (miscellaneous)
+        {
+            bottle = await db.Bottles.SingleOrDefaultAsync(v => v.Id == input.BottleId, ct)
+                ?? new Bottle { Id=input.BottleId, Name=MiscellaneousPackingName, VolumeMl=1001,
+                    Type=BottleType.Normal, SalePrice=0, IsActive=true, CreatedAt=DateTime.UtcNow };
+            if (db.Entry(bottle).State == EntityState.Detached) db.Bottles.Add(bottle);
+            if (bottle.IsDeleted || !bottle.IsActive || bottle.Name != MiscellaneousPackingName || bottle.SalePrice != 0)
+                throw new InvalidOperationException("تنظیمات بسته‌بندی موجودی متفرقه نیازمند بررسی است.");
         }
         else
             bottle=await db.Bottles.SingleOrDefaultAsync(v=>v.Id==input.BottleId&&!v.IsDeleted&&v.IsActive&&v.VolumeMl>=input.Volume,ct)
@@ -60,12 +73,14 @@ public sealed class ReadyInventoryService(AppDbContext db)
         if(referencePrice<=0)referencePrice=null;
         var now=DateTime.UtcNow;
         var list=new SalesList{Id=input.Id,CreatedAt=now,OpenDate=now,PublicCode=internalCode+1,InventoryCode=code,
-            InventoryReferenceListId=reference?.Id,InventoryReferencePricePerMl=referencePrice,InventoryCreatedByUserId=input.Actor,StoragePosition=input.Position.Trim(),
+            InventoryReferenceListId=reference?.Id,InventoryReferencePricePerMl=referencePrice,InventoryCreatedByUserId=input.Actor,StoragePosition=position.Length==0?null:position,
             InventoryPublicDescription=string.IsNullOrWhiteSpace(input.Description)?null:input.Description.Trim(),
             EnglishName=reference is not null && !string.IsNullOrWhiteSpace(reference.EnglishName) ? reference.EnglishName : input.Name.Trim(),PersianName=input.Name.Trim(),DisplayBrand=reference?.DisplayBrand??"",
             PerfumeId=perfumeId,PricePerMl=input.PricePerMl,TotalVolume=input.Volume,MinimumRequestVolumeMl=input.Volume,
             IsInventoryOffer=true,FixedBottleId=bottle.Id,FixedBottlePrice=input.BottlePrice,TelegramPhotoFileId=input.Photo,Status=SalesListStatus.Open};
-        db.SalesLists.Add(list);db.InventoryPositionChanges.Add(new(){Id=Guid.NewGuid(),SalesListId=list.Id,Position=list.StoragePosition,AdminUserId=input.Actor,CreatedAt=now});
+        db.SalesLists.Add(list);
+        if (position.Length>0)
+            db.InventoryPositionChanges.Add(new(){Id=Guid.NewGuid(),SalesListId=list.Id,Position=position,AdminUserId=input.Actor,CreatedAt=now});
         await db.SaveChangesAsync(ct);if(tx is not null)await tx.CommitAsync(ct);return list;
     }
     public Task SetPositionAsync(Guid id,string position,long actor,CancellationToken ct=default)=>SavePositionAsync(id,position,actor,false,ct);

@@ -41,6 +41,19 @@ const event = {
 
 const run = new Function('$input', '$env', code);
 const [result] = run({ first: () => ({ json: event }) });
+const mixedInventory = structuredClone(event);
+mixedInventory.data.IsInventory = true;
+mixedInventory.data.Items.push({
+  RowNumber: 2, PerfumePersianName: 'سمپل بسته‌بندی‌شده', IsMiscellaneous: true,
+  RequestedVolumeMl: 1, PerfumePricePerMl: 500, BottlePrice: 0, LineTotal: 500
+});
+const [mixedResult] = run({ first: () => ({ json: mixedInventory }) });
+if (!mixedResult.json.telegramCaption.includes('سمپل بسته‌بندی‌شده\nتعداد: ۱ عدد\nمبلغ کالا:') ||
+    !mixedResult.json.telegramCaption.includes('مقدار: ۱۰ میل') ||
+    !mixedResult.json.invoiceHtml.includes('<span>نام کالا</span>') ||
+    !mixedResult.json.invoiceHtml.includes('<span>—</span><span>۱</span>')) {
+  throw new Error('Mixed inventory invoice must render packaged items as units and perfume lines as millilitres.');
+}
 if (!result.json.invoiceHtml.includes('&lt;script&gt;') ||
     result.json.invoiceHtml.includes('<script>مشتری')) {
   throw new Error('Invoice renderer did not escape customer input.');

@@ -59,7 +59,7 @@ public sealed partial class TelegramWebhookController
                 throw new InvalidOperationException("این موجودی قبلاً رزرو یا فاکتور شده است؛ کد موجودی دیگری وارد کنید.");
             InventoryDrafts[key]=draft with{Step="buy-identity",PurchaseList=list.Id};
             var role = draft.IsGiftPurchase ? "هدیه‌دهنده" : "درخواست‌دهنده";
-            await InvPrompt(chat,$"موجودی {list.DisplayCode} — {list.PersianName}\nحجم بسته: {list.TotalVolume:0.#} میل\nآیدی {role} را به صورت @username یا شناسهٔ عددی تلگرام وارد کنید.",ct);
+            await InvPrompt(chat,$"موجودی {list.DisplayCode} — {list.PersianName}\nمقدار بسته: {InventoryPackageQuantity(list)}\nآیدی {role} را به صورت @username یا شناسهٔ عددی تلگرام وارد کنید.",ct);
             return true;
         }
         if(draft.Step=="buy-identity")
@@ -108,7 +108,9 @@ public sealed partial class TelegramWebhookController
         var parties = recipient is null ? $"مشتری: {buyer.Identity}" :
             $"🎁 هدیه‌دهنده: {buyer.Identity}\nهدیه‌گیرنده: {recipient.Identity}\nمبلغ قابل پرداخت هدیه‌گیرنده: صفر";
         var delivery = recipient is null ? buyer.Destination : InventoryGiftDeliveryText(buyer, recipient);
-        await _sender.SendInlineKeyboardAsync(key.Chat.ToString(),$"🛍 ثبت خرید موجودی {list.DisplayCode}\n{next.Name}\n{parties}\nحجم کامل بسته: {next.Volume:0.#} میل\nمبلغ عطر: {next.Volume*next.Price:N0} تومان\nهزینهٔ شیشه: {next.BottlePrice:N0} تومان\nجمع فاکتور: {next.Volume*next.Price+next.BottlePrice:N0} تومان\n\n{delivery}",
+        var breakdown = list.IsMiscellaneousInventory ? "تعداد: ۱ عدد\n"
+            : $"حجم کامل بسته: {next.Volume:0.#} میل\nمبلغ عطر: {next.Volume*next.Price:N0} تومان\nهزینهٔ شیشه: {next.BottlePrice:N0} تومان\n";
+        await _sender.SendInlineKeyboardAsync(key.Chat.ToString(),$"🛍 ثبت خرید موجودی {list.DisplayCode}\n{next.Name}\n{parties}\n{breakdown}جمع فاکتور: {next.Volume*next.Price+next.BottlePrice:N0} تومان\n\n{delivery}",
             [[new TelegramInlineButton("✅ ثبت و صدور فاکتور",InvAction("buy-save:"+next.Token))],
              [new TelegramInlineButton(recipient is null ? "✏️ اصلاح آیدی مشتری" : "✏️ اصلاح آیدی‌ها",InvAction("buy-identity"))],
              [new TelegramInlineButton("❌ انصراف",InvAction("menu"))]],ct);

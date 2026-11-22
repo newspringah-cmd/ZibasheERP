@@ -92,16 +92,20 @@ public sealed partial class TelegramWebhookController
             var groupItems = group.ToArray();
             var personalItems = groupItems.Where(item => !Gift(item)).ToArray();
             var giftItems = groupItems.Where(Gift).ToArray();
+            var miscellaneous = groupItems.All(item => item.BottleId == SalesList.MiscellaneousInventoryPackingId);
+            string Quantity(OrderItem[] rows) => miscellaneous
+                ? $"{rows.Sum(item => item.Quantity)} عدد"
+                : $"{FormatShippingVolume(rows.Sum(item => item.RequestedVolumeMl))} میل";
             var components = new List<string>();
             if (personalItems.Length > 0)
             {
                 var identity = OrderCustomerLabel(personalItems[0].Order?.Customer);
-                components.Add($"{FormatShippingVolume(personalItems.Sum(item => item.RequestedVolumeMl))} میل آیتم خودش ({identity})");
+                components.Add($"{Quantity(personalItems)} آیتم خودش ({identity})");
             }
             if (giftItems.Length > 0)
-                components.Add($"{FormatShippingVolume(giftItems.Sum(item => item.RequestedVolumeMl))} میل هدیه دریافتی");
+                components.Add($"{Quantity(giftItems)} هدیه دریافتی");
 
-            var bottleDetails = groupItems
+            var bottleDetails = miscellaneous ? [] : groupItems
                 .GroupBy(item => FormatShippingBottleAndLabel(item, GetPreviouslySelectedFancyModels(item, selectedFancyModels)))
                 .Select(bottleGroup =>
                     $"{FormatShippingVolume(bottleGroup.Sum(item => item.RequestedVolumeMl))} میل {bottleGroup.Key}")
@@ -117,6 +121,12 @@ public sealed partial class TelegramWebhookController
             var bottleText = bottleDetails.Length == 0
                 ? string.Empty
                 : $" | جزئیات شیشه: {string.Join("؛ ", bottleDetails)}";
+            if (miscellaneous)
+            {
+                var positions = groupItems.Select(item => item.SalesList?.StoragePosition)
+                    .Where(position => !string.IsNullOrWhiteSpace(position)).Distinct().ToArray();
+                if (positions.Length > 0) bottleText = $" | جایگاه: {string.Join("، ", positions)}";
+            }
             return $"{index + 1}. {ShippingItemName(groupItems[0]).Trim()} — {string.Join(" + ", components)}{bottleText}{listCodeText}";
         }).ToArray();
 

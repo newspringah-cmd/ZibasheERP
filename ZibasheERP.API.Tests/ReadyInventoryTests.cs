@@ -51,6 +51,7 @@ public static class ReadyInventoryTests
         var reference=new SalesList{Id=Guid.NewGuid(),PerfumeId=await db.Perfumes.Select(v=>v.Id).FirstAsync(),PublicCode=Random.Shared.Next(6000000,7000000),EnglishName=marker,PersianName="عطر مرجع",TotalVolume=100,PricePerMl=10000,TelegramMessageId=Random.Shared.Next(30000000,40000000),TelegramChannelId="-1001236168661",TelegramPhotoFileId="fixture-photo",CreatedAt=DateTime.UtcNow,OpenDate=DateTime.UtcNow};db.SalesLists.Add(reference);await db.SaveChangesAsync();
         var ids=new List<Guid>{reference.Id};var perfumes=new List<Guid>();
         var originalBottleExisted=await db.Bottles.AnyAsync(v=>v.Id==ReadyInventoryService.OriginalBottleId);
+        var miscellaneousPackingExisted=await db.Bottles.AnyAsync(v=>v.Id==SalesList.MiscellaneousInventoryPackingId);
         var sender=DispatchProxy.Create<ITelegramMessageSender,MarketingSender>();var sent=(MarketingSender)(object)sender;
         var controller=(TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));
         foreach(var f in typeof(TelegramWebhookController).GetFields(BindingFlags.Instance|BindingFlags.NonPublic))if(f.Name.EndsWith("Drafts")&&f.FieldType.GetConstructor(Type.EmptyTypes)is not null)f.SetValue(controller,Activator.CreateInstance(f.FieldType));
@@ -549,6 +550,36 @@ public static class ReadyInventoryTests
             var originalItem=await db.OrderItems.AsNoTracking().Include(v=>v.Bottle).SingleAsync(v=>v.SalesListId==original.Id);
             check(originalItem.BottlePrice==0&&originalItem.LineTotal==150000&&originalItem.Bottle?.Name==ReadyInventoryService.OriginalBottleName,
                 "stock with original bottle invoices successfully with perfume-only amount and preserved bottle name");
+
+            var miscName=marker+" makeup";
+            await Select("menu");
+            check(sent.ButtonLabels.Contains("📦 ثبت موجودی متفرقه"),"inventory menu exposes the separate miscellaneous entry");
+            await Select("misc"); await Input(miscName+"\n۱۲۳٬۴۵۶ تومان"); await Input(null,true);
+            check(sent.Texts.Last().Contains("123,456")&&sent.Texts.Last().Contains("۱ عدد")&&
+                !await db.SalesLists.AnyAsync(l=>l.PersianName==miscName),
+                "two-line miscellaneous input and photo preview show a fixed price and never publish before confirmation");
+            var miscSave=sent.Buttons.Last(v=>v.StartsWith("invoiceadmin:ready:misc-save:"))["invoiceadmin:ready:".Length..];
+            await Select(miscSave); await Select(miscSave);
+            var misc=await db.SalesLists.SingleAsync(v=>v.PersianName==miscName);ids.Add(misc.Id);perfumes.Add(misc.PerfumeId);
+            var miscCaption=ReadyInventoryPresentation.Caption(misc);
+            check(misc.IsMiscellaneousInventory&&misc.StoragePosition is null&&misc.FixedBottlePrice==0&&
+                misc.CanReserveVolume(1)&&!misc.CanReserveVolume(0.5m,true)&&
+                miscCaption.Contains("123,456")&&!miscCaption.Contains("میل")&&
+                await db.NotificationOutbox.CountAsync(v=>v.Id==misc.Id&&v.EventType=="ReadyInventoryPublication")==1,
+                "miscellaneous inventory queues exactly one standard channel publication and can be reserved only as one whole item");
+            var miscRequest=await Request(misc,"misc");miscRequest.BottleId=misc.FixedBottleId;miscRequest.BottlePrice=0;await db.SaveChangesAsync();
+            await new SalesListRequestRepository(db).ConfirmCurrentBottleAsync(miscRequest.Id,miscRequest.TelegramUserId);
+            await service.RejectAsync(misc.Id);
+            db.ChangeTracker.Clear();
+            misc=await db.SalesLists.SingleAsync(l=>l.Id==misc.Id);
+            check(misc.Status==SalesListStatus.Open&&misc.CanReserveVolume(1),"rejecting a miscellaneous purchase releases the same channel offer");
+            var nextMisc=await Request(misc,"misc2");nextMisc.BottleId=misc.FixedBottleId;nextMisc.BottlePrice=0;await db.SaveChangesAsync();
+            await new SalesListRequestRepository(db).ConfirmCurrentBottleAsync(nextMisc.Id,nextMisc.TelegramUserId);
+            await billing.IssueCompletedListsAsync([misc.Id],Owner.ToString());
+            var miscItem=await db.OrderItems.AsNoTracking().SingleAsync(v=>v.SalesListId==misc.Id);
+            check(miscItem.LineTotal==123456&&miscItem.BottlePrice==0&&miscItem.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&
+                await db.NotificationOutbox.AnyAsync(n=>n.OrderId==miscItem.OrderId&&n.EventType=="InvoiceIssued"&&n.Payload.Contains("\"IsMiscellaneous\":true")),
+                "miscellaneous purchase invoices the exact total, enters normal shipping and carries the item unit to PDF rendering");
         }
         finally
         {
@@ -567,6 +598,7 @@ public static class ReadyInventoryTests
             await db.InventoryPositionChanges.Where(v=>ids.Contains(v.SalesListId)).ExecuteDeleteAsync();await db.SalesLists.Where(v=>ids.Contains(v.Id)).ExecuteDeleteAsync();
             await db.Perfumes.Where(v=>perfumes.Contains(v.Id)).ExecuteDeleteAsync();await db.Bottles.Where(v=>v.Id==bottle.Id).ExecuteDeleteAsync();
             if(!originalBottleExisted)await db.Bottles.Where(v=>v.Id==ReadyInventoryService.OriginalBottleId).ExecuteDeleteAsync();
+            if(!miscellaneousPackingExisted)await db.Bottles.Where(v=>v.Id==SalesList.MiscellaneousInventoryPackingId).ExecuteDeleteAsync();
         }
     }
 }

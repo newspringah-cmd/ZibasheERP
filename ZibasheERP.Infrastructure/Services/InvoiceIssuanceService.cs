@@ -520,9 +520,9 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     {
         if (request.IsBottleOwner || request.IsComplimentaryBottle)
             return 0m;
-        if (request.SalesList?.IsInventoryOffer == true &&
-            request.SalesList.FixedBottleId == ReadyInventoryService.OriginalBottleId &&
-            request.BottleId == ReadyInventoryService.OriginalBottleId && request.SalesList.FixedBottlePrice == 0)
+        if (request.SalesList?.IsInventoryOffer == true && request.BottleId == request.SalesList.FixedBottleId &&
+            (request.SalesList.FixedBottleId == ReadyInventoryService.OriginalBottleId || request.SalesList.IsMiscellaneousInventory) &&
+            request.SalesList.FixedBottlePrice == 0)
         {
             request.BottlePrice = 0;
             return 0m;
@@ -636,6 +636,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                     GiverTelegramId = request.TelegramUserId,
                     PerfumePersianName = InvoicePersianName(item),
                     PerfumeEnglishName = InvoiceEnglishName(item),
+                    IsMiscellaneous = item.BottleId == SalesList.MiscellaneousInventoryPackingId,
                     item.RequestedVolumeMl,
                     TotalAmount = 0
                 })
@@ -670,6 +671,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                             PerfumePersianName = InvoicePersianName(item),
                             PerfumeEnglishName = InvoiceEnglishName(item),
                             PerfumeBrand = item.Perfume?.Brand,
+                            IsMiscellaneous = item.BottleId == SalesList.MiscellaneousInventoryPackingId,
                             item.RequestedVolumeMl,
                             item.PerfumePricePerMl,
                             PerfumeAmount = 0m,

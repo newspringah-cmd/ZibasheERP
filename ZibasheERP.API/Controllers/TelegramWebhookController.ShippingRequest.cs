@@ -1556,7 +1556,10 @@ public sealed partial class TelegramWebhookController
         item.SalesList?.PersianName ?? item.Perfume?.Name ?? item.ManualDescription ?? "عطر";
 
     private static string FormatShippingItemLine(OrderItem item, int index)
-        => $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل" +
+        => item.BottleId == SalesList.MiscellaneousInventoryPackingId
+            ? $"{index + 1}. {ShippingItemName(item)} — {item.Quantity} عدد | کد موجودی: {item.SalesList?.DisplayCode}" +
+              (string.IsNullOrWhiteSpace(item.SalesList?.StoragePosition) ? "" : $" | جایگاه: {item.SalesList.StoragePosition}")
+            : $"{index + 1}. {ShippingItemName(item)} — {item.RequestedVolumeMl} میل" +
            $" | {FormatShippingBottleAndLabel(item)}";
 
     private static string FormatShippingBottleAndLabel(

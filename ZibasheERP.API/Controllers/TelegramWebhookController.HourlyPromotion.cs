@@ -165,7 +165,8 @@ public sealed partial class TelegramWebhookController
 
     private async Task QueueFlashAsync(Guid id, MarketingPromotionJob payload, CancellationToken ct)
     {
-        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        await using var transaction = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct) : null;
         if (!await _db.NotificationOutbox.AnyAsync(value => value.Id == id, ct))
         {
             _db.NotificationOutbox.Add(new NotificationOutbox { Id = id, CustomerId = Guid.Empty, Channel = MarketingPromotionJob.Channel,
@@ -173,7 +174,7 @@ public sealed partial class TelegramWebhookController
                 Recipient = payload.AdminChatId.ToString(CultureInfo.InvariantCulture), Payload = JsonSerializer.Serialize(payload), CreatedAt = DateTime.UtcNow });
             await _db.SaveChangesAsync(ct);
         }
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
     private Task SendFlashStatusAsync(long chat, Guid id, string text, CancellationToken ct) => _sender.SendInlineKeyboardAsync(chat.ToString(), text,
         [[new TelegramInlineButton("🔄 وضعیت درخواست", FlashAction("status:" + id.ToString("N")))],

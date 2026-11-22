@@ -159,6 +159,11 @@ public class SalesList : BaseEntity
     // موجودی برگشتی از یک ردیف فاکتور پرداخت‌نشده.
     public bool IsInventoryOffer { get; set; }
 
+    public static readonly Guid MiscellaneousInventoryPackingId = new("044fe6cd-5898-4f3a-84f8-80ab7e6ea973");
+
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool IsMiscellaneousInventory => IsInventoryOffer && FixedBottleId == MiscellaneousInventoryPackingId;
+
     public Guid? SourceOrderItemId { get; set; }
 
     public Guid? FixedBottleId { get; set; }

@@ -33,7 +33,8 @@ public sealed partial class TelegramWebhookController
                 ??throw new InvalidOperationException("موجودی پیدا نشد؛ دوباره جست‌وجو کنید.");
             var token=Guid.NewGuid().ToString("N")[..12];
             InventoryDrafts[key]=draft with{Step="location-info",PositionList=id,Name=InventoryReferenceName(list.PersianName,list.Perfume?.Name,list.EnglishName,list.DisplayCode),ExpectedPosition=list.StoragePosition,Token=token};
-            var text=$"📍 مشخصات موجودی\n{InventoryReferenceName(list.PersianName,list.Perfume?.Name,list.EnglishName,list.DisplayCode)}\nکد موجودی: {list.DisplayCode}\nحجم: {list.TotalVolume:0.#} میل\nشیشه: {list.FixedBottle?.Name??"ثبت نشده"}\nمبلغ بسته: {list.PricePerMl*list.TotalVolume+(list.FixedBottlePrice??0):N0} تومان\nجایگاه فعلی: {(HasInventoryLocation(list.StoragePosition)?list.StoragePosition:"ثبت نشده")}\n\nاین موجودی را تأیید می‌کنید؟";
+            var quantity = list.IsMiscellaneousInventory ? "تعداد: ۱ عدد" : $"حجم: {list.TotalVolume:0.#} میل\nشیشه: {list.FixedBottle?.Name??"ثبت نشده"}";
+            var text=$"📍 مشخصات موجودی\n{InventoryReferenceName(list.PersianName,list.Perfume?.Name,list.EnglishName,list.DisplayCode)}\nکد موجودی: {list.DisplayCode}\n{quantity}\nمبلغ بسته: {list.PricePerMl*list.TotalVolume+(list.FixedBottlePrice??0):N0} تومان\nجایگاه فعلی: {(HasInventoryLocation(list.StoragePosition)?list.StoragePosition:"ثبت نشده")}\n\nاین موجودی را تأیید می‌کنید؟";
             IReadOnlyCollection<TelegramInlineButton>[] buttons=[[new("✅ تأیید اطلاعات",InvAction("locok:"+token))],[new("❌ انصراف",InvAction("menu"))]];
             var shown=!string.IsNullOrWhiteSpace(list.TelegramPhotoFileId)&&
                 (await _sender.SendPhotoWithKeyboardAsync(chat.ToString(),list.TelegramPhotoFileId,Html(text),buttons,ct)).IsSuccessful;

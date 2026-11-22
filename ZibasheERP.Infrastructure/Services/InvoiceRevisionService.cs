@@ -72,7 +72,7 @@ public static class InvoiceRevisionService
             PaymentAccounts=accounts.Select(a=>new{a.CardNumber,a.AccountHolder,a.BankName}),
             Items=retained.OrderBy(x=>x.RowNumber).ThenBy(x=>x.Id).Select(x=>new{x.RowNumber,
                 PerfumePersianName=Name(x),PerfumeEnglishName=x.SalesList?.EnglishName??x.Perfume?.EnglishName,PerfumeBrand=x.Perfume?.Brand,
-                x.RequestedVolumeMl,x.PerfumePricePerMl,x.PerfumeAmount,x.IsBottleOwner,IsGift=x.SourceSalesListRequest?.IsGift==true,
+                x.RequestedVolumeMl,x.PerfumePricePerMl,x.PerfumeAmount,x.IsBottleOwner,IsMiscellaneous=x.BottleId==SalesList.MiscellaneousInventoryPackingId,IsGift=x.SourceSalesListRequest?.IsGift==true,
                 GiftRecipientUsername=x.SourceSalesListRequest?.GiftRecipientTelegramUsername,GiftRecipientTelegramId=x.SourceSalesListRequest?.GiftRecipientTelegramUserId,
                 BottleName=x.Bottle?.Name,x.BottlePrice,x.LineTotal})};
         var delivery=group is null?N8nIntegrationEventFactory.Create(order,"InvoiceIssued",payload,now):

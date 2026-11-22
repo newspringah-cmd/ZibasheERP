@@ -76,7 +76,7 @@ const giftCaptionLines = items
     const recipient = itemUsername ? `@${itemUsername}` : itemTelegramId;
     if (!recipient) return [];
     return [
-      `🎁 ${number(item.RequestedVolumeMl, 1)} میل — ${money(item.LineTotal)}`,
+      `🎁 ${item.IsMiscellaneous === true ? '۱ عدد' : `${number(item.RequestedVolumeMl, 1)} میل`} — ${money(item.LineTotal)}`,
       `هدیه به ${recipient}`
     ];
   });
@@ -87,8 +87,8 @@ const renderRows = (pageItems) => pageItems.map((item) => {
   const englishTitle = [item.PerfumeBrand, englishName].filter(Boolean).join(' ');
   return `<div class="invoice-row"><span>${number(item.RowNumber)}</span>
     <span class="item-name"><strong>${escapeHtml(persianName)}</strong><small dir="ltr">${escapeHtml(englishTitle)}</small></span>
-    <span>${number(item.RequestedVolumeMl, 1)}</span><span>${number(item.Quantity ?? 1)}</span>
-    <span>${number(item.PerfumePricePerMl ?? 0)}</span><span>${number(item.BottlePrice ?? 0)}</span>
+    <span>${item.IsMiscellaneous === true ? '—' : number(item.RequestedVolumeMl, 1)}</span><span>${number(item.Quantity ?? 1)}</span>
+    <span>${number(item.PerfumePricePerMl ?? 0)}</span><span>${item.IsMiscellaneous === true ? '—' : number(item.BottlePrice ?? 0)}</span>
     <span>${number(item.LineTotal)}</span></div>`;
 }).join('');
 
@@ -119,8 +119,8 @@ if (isManualReview) {
 items.forEach((item) => {
   const name = item.PerfumePersianName ?? item.PerfumeEnglishName ?? item.PerfumeName ?? 'آیتم دستی';
   captionLines.push(`🧴 ${name}`);
-  captionLines.push(`مقدار: ${number(item.RequestedVolumeMl, 1)} میل`);
-  captionLines.push(`مبلغ عطر و شیشه: ${money(item.LineTotal)}`);
+  captionLines.push(item.IsMiscellaneous === true ? 'تعداد: ۱ عدد' : `مقدار: ${number(item.RequestedVolumeMl, 1)} میل`);
+  captionLines.push(`${item.IsMiscellaneous === true ? 'مبلغ کالا' : 'مبلغ عطر و شیشه'}: ${money(item.LineTotal)}`);
   captionLines.push('');
 });
 if (isTransferredInvoice) {
@@ -158,7 +158,7 @@ const pagesHtml = pages.map((pageItems, pageIndex) => {
     <div class="field customer"${username ? ' dir="ltr"' : ''}>${escapeHtml(customerName)}</div>
     <div class="field invoice-number">${escapeHtml(invoice.InvoiceNumber)}</div>
     <div class="field mobile">${escapeHtml(customer.Mobile ?? '-')}</div>
-    <div class="table-head"><span>ردیف</span><span>نام عطر</span><span>مقدار (میل)</span><span>تعداد</span><span>قیمت واحد</span><span>قیمت شیشه</span><span>قیمت کل</span></div>
+    <div class="table-head"><span>ردیف</span><span>${items.some(item => item.IsMiscellaneous === true) ? 'نام کالا' : 'نام عطر'}</span><span>مقدار (میل)</span><span>تعداد</span><span>قیمت واحد</span><span>قیمت شیشه</span><span>قیمت کل</span></div>
     <section class="rows">${renderRows(pageItems)}</section>
     ${isLastPage ? `<div class="total subtotal">${money(invoice.TotalAmount)}</div>
     <div class="shipping-mask"></div>

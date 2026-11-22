@@ -121,6 +121,7 @@ public sealed partial class TelegramWebhookController
             }
             if(await TryHandleInventoryPurchaseCallbackAsync(callback,action,ct))return;
             if(await TryHandleInventoryLocationCallbackAsync(callback,action,ct))return;
+            if(await TryHandleMiscellaneousInventoryCallbackAsync(callback,action,ct))return;
             if(action=="sold-position")
             {
                 ClearAdminWorkflowDrafts(chat,callback.From.Id);
@@ -247,7 +248,7 @@ public sealed partial class TelegramWebhookController
                 if(pending.Length==0)throw new InvalidOperationException("درخواست‌ها تغییر کرده‌اند؛ دوباره بررسی کنید.");
                 var token=Guid.NewGuid().ToString("N")[..16];
                 InventoryDrafts[key]=new(Guid.NewGuid(),"invoice-bundle",DateTime.UtcNow.AddMinutes(30),Token:token,InvoiceLists:pending.Select(v=>v.SalesListId).ToArray(),InvoiceRequests:pending.Select(v=>v.Id).ToArray());
-                var lines=pending.Select(v=>$"کد موجودی {v.SalesList!.DisplayCode} — {(string.IsNullOrWhiteSpace(v.SalesList.PersianName)?v.SalesList.EnglishName:v.SalesList.PersianName)}\n{v.VolumeMl:0.#} میل | {v.PerfumePricePerMl*v.VolumeMl+v.BottlePrice:N0} تومان\nجایگاه داخلی: {v.SalesList.StoragePosition??"ثبت نشده"}");
+                var lines=pending.Select(v=>$"کد موجودی {v.SalesList!.DisplayCode} — {(string.IsNullOrWhiteSpace(v.SalesList.PersianName)?v.SalesList.EnglishName:v.SalesList.PersianName)}\n{InventoryPackageQuantity(v.SalesList)} | {v.PerfumePricePerMl*v.VolumeMl+v.BottlePrice:N0} تومان\nجایگاه داخلی: {v.SalesList.StoragePosition??"ثبت نشده"}");
                 var text=$"🧾 بررسی فاکتور تجمیعی موجودی\nمشتری: @{request.TelegramUsername??request.TelegramUserId}\nتعداد آیتم: {pending.Length}\n\n"+string.Join("\n\n",lines)+$"\n\nمبلغ کل: {pending.Sum(v=>v.PerfumePricePerMl*v.VolumeMl+v.BottlePrice):N0} تومان\nبا تأیید، همهٔ آیتم‌های بالا در یک فاکتور صادر می‌شوند. درخواست‌های جدید پس از این پیش‌نمایش در فاکتور دیگری بررسی می‌شوند.";
                 // Send the full item breakdown in bounded messages, keeping approval after every item.
                 for(var offset=0;offset<text.Length;offset+=3500)await InvPrompt(chat,text.Substring(offset,Math.Min(3500,text.Length-offset)),ct);
@@ -266,6 +267,7 @@ public sealed partial class TelegramWebhookController
             await _sender.SendInlineKeyboardAsync(chat.ToString(),"📦 موجودی آماده\nهمهٔ بسته‌ها آمادهٔ ارسال هستند؛ پرداخت جداگانه بررسی می‌شود.",
                 [[new TelegramInlineButton("🛍 ثبت خرید برای مشتری",InvAction("buy"))],
                  [new TelegramInlineButton("➕ ثبت از لیست کانال",InvAction("new"))],[new TelegramInlineButton("✍️ ثبت دستی",InvAction("manual"))],
+                 [new TelegramInlineButton("📦 ثبت موجودی متفرقه",InvAction("misc"))],
                  [new TelegramInlineButton("📦 ثبت موجودی فروش‌رفته",InvAction("sold-position"))],
                  [new TelegramInlineButton("📍 ثبت جایگاه موجودی",InvAction("register-position"))],
                  [new TelegramInlineButton("📍 جست‌وجوی جایگاه / مدیریت موجودی",InvAction("position"))],[new TelegramInlineButton("🧾 موجودی‌های درخواست‌شده",InvAction("requests"))],
@@ -305,6 +307,7 @@ public sealed partial class TelegramWebhookController
         var numeric=NormalizeNumber(text).Replace("٬","").Replace(",","").Replace('٫','.');
         try
         {
+            if(d.Step.StartsWith("misc-",StringComparison.Ordinal))return await HandleMiscellaneousInventoryMessageAsync(message,d,text,ct);
             if(d.Step.StartsWith("buy-",StringComparison.Ordinal))return await HandleInventoryPurchaseMessageAsync(message,d,ct);
             if(d.Step.StartsWith("location-",StringComparison.Ordinal))return await HandleInventoryLocationMessageAsync(message,d,ct);
             if(d.Step is "search" or "position-search" or "sold-search")
@@ -356,7 +359,7 @@ public sealed partial class TelegramWebhookController
             {
                 if(!decimal.TryParse(numeric,NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out var volume)||volume is <0.5m or >1000||volume*2!=decimal.Truncate(volume*2))throw new InvalidOperationException("حجم را از ۰.۵ تا ۱۰۰۰ میل، با گام نیم‌میل وارد کنید؛ مثلاً ۱.۵ یا ۲ میل.");
                 d=d with{Volume=volume,Step="bottle",Bottle=Guid.Empty};InventoryDrafts[key]=d;
-                var bottles=await _db.Bottles.AsNoTracking().Where(v=>!v.IsDeleted&&v.IsActive&&v.Id!=ReadyInventoryService.OriginalBottleId&&v.VolumeMl>=volume).OrderBy(v=>v.VolumeMl).ThenBy(v=>v.SalePrice).Take(30).ToArrayAsync(ct);
+                var bottles=await _db.Bottles.AsNoTracking().Where(v=>!v.IsDeleted&&v.IsActive&&v.Id!=ReadyInventoryService.OriginalBottleId&&v.Id!=SalesList.MiscellaneousInventoryPackingId&&v.VolumeMl>=volume).OrderBy(v=>v.VolumeMl).ThenBy(v=>v.SalePrice).Take(30).ToArrayAsync(ct);
                 await _sender.SendInlineKeyboardAsync(chat.ToString(),"شیشهٔ همین بستهٔ آماده را انتخاب کنید:",bottles.Select(v=>(IReadOnlyCollection<TelegramInlineButton>)new[]{new TelegramInlineButton($"{v.Name} — {v.VolumeMl} میل — {v.SalePrice:N0} تومان",InvAction("bottle:"+v.Id.ToString("N")))}).Prepend(new[]{new TelegramInlineButton("🧴 باتل اصلی رایگان",InvAction("original-bottle"))}).ToArray(),ct);return true;
             }
             else if(d.Step=="bottle-price"){if(!decimal.TryParse(numeric,NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out var value)||value<0||value!=decimal.Round(value,2))throw new InvalidOperationException("مبلغ غیرمنفی شیشه را به تومان وارد کنید.");d=d with{BottlePrice=value,Step="position"};}
