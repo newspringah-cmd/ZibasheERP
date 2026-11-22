@@ -224,7 +224,10 @@ public static class TelegramNotificationMessageFormatter
         giver = string.IsNullOrWhiteSpace(giver)
             ? ReadString(root, "GiverTelegramId") ?? "کاربر زیباشی"
             : $"@{giver.Trim().TrimStart('@')}";
-        return new StringBuilder()
+        var builder = new StringBuilder();
+        if (ReadBoolean(root, "IsInventory"))
+            builder.AppendLine("🔴🔴موجودی🔴🔴").AppendLine();
+        return builder
             .AppendLine("🎁 فاکتور هدیه زیباشی")
             .AppendLine($"تاریخ شمسی: {FormatPersianDate(ReadDateTime(root, "IssuedAt"))}")
             .AppendLine($"از طرف: {giver}")

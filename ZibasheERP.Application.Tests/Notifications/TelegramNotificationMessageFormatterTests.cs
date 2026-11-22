@@ -187,7 +187,19 @@ public sealed class TelegramNotificationMessageFormatterTests
         Assert.Contains("از طرف: @gift_giver", message);
         Assert.Contains("5 میلی‌لیتر", message);
         Assert.Contains("۰ تومان", message);
+        Assert.False(message.Contains("🔴🔴موجودی🔴🔴", StringComparison.Ordinal));
         Assert.False(message.Contains("شماره کارت", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Format_InventoryGiftInvoiceIssued_PutsInventoryOnFirstLine()
+    {
+        var message = TelegramNotificationMessageFormatter.Format("GiftInvoiceIssued",
+            """{"IsInventory":true,"GiverUsername":"gift_giver","RequestedVolumeMl":1.5}""");
+
+        Assert.True(message.StartsWith("🔴🔴موجودی🔴🔴" + Environment.NewLine, StringComparison.Ordinal));
+        Assert.Contains("1.5 میلی‌لیتر", message);
+        Assert.Contains("مبلغ قابل پرداخت: ۰ تومان", message);
     }
 
     [Fact]

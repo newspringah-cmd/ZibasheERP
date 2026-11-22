@@ -631,6 +631,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                 {
                     InvoiceNumber = invoiceNumber,
                     IssuedAt = now,
+                    order.IsInventory,
                     GiverUsername = NormalizeCustomerUsername(request.TelegramUsername),
                     GiverTelegramId = request.TelegramUserId,
                     PerfumePersianName = InvoicePersianName(item),
@@ -844,7 +845,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             Channel = "Telegram", EventType = "GiftInvoiceIssued", Recipient = chatId,
             Payload = System.Text.Json.JsonSerializer.Serialize(new
             {
-                invoice.InvoiceNumber, invoice.IssuedAt,
+                invoice.InvoiceNumber, invoice.IssuedAt, order.IsInventory,
                 GiverUsername = order.Customer?.Username,
                 GiverTelegramId = order.Customer?.TelegramId,
                 PerfumePersianName = string.Join("، ", invoice.Items.Select(item => item.PerfumeName)),
@@ -857,6 +858,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             invoice.InvoiceNumber, invoice.IssuedAt, PerfumeTotal = 0m, BottleTotal = 0m, TotalAmount = 0m,
             Customer = new { recipient.Id, recipient.FullName, recipient.Mobile, recipient.TelegramId, recipient.Username },
             PaymentDeadlineHours = 0,
+            order.IsInventory,
             GiftDeliveryRole = "Recipient",
             GiverUsername = order.Customer?.Username,
             GiverTelegramId = order.Customer?.TelegramId,

@@ -110,6 +110,11 @@ const [giftRecipientResult] = run({ first: () => ({ json: giftRecipientEvent }) 
 if (!giftRecipientResult.json.telegramCaption.includes('هدیه از طرف @gift_giver')) {
   throw new Error('Gift-recipient invoice caption did not name the gift giver.');
 }
+giftRecipientEvent.data.IsInventory = true;
+const [inventoryGiftRecipientResult] = run({ first: () => ({ json: giftRecipientEvent }) });
+if (!inventoryGiftRecipientResult.json.telegramCaption.startsWith('🔴🔴موجودی🔴🔴\n')) {
+  throw new Error('Gift-recipient inventory caption must begin with the inventory heading.');
+}
 
 const combinedGiftEvent = structuredClone(event);
 combinedGiftEvent.data.Items.push({

@@ -323,6 +323,7 @@ public sealed class TelegramGroupMembershipTracker(
                 Recipient = chat.Id.ToString(), Payload = JsonSerializer.Serialize(new
                 {
                     InvoiceNumber = invoice!.InvoiceNumber, IssuedAt = invoice.IssuedAt,
+                    order.IsInventory,
                     GiverUsername = request.TelegramUsername, GiverTelegramId = request.TelegramUserId,
                     PerfumePersianName = InvoiceDisplayName(item, false),
                     PerfumeEnglishName = InvoiceDisplayName(item, true),
@@ -342,6 +343,7 @@ public sealed class TelegramGroupMembershipTracker(
                     TotalAmount = 0m,
                     Customer = new { customer.Id, customer.FullName, customer.Mobile, customer.TelegramId, customer.Username },
                     PaymentDeadlineHours = 0,
+                    order.IsInventory,
                     GiftDeliveryRole = "Recipient",
                     GiverUsername = request.TelegramUsername,
                     GiverTelegramId = request.TelegramUserId,
