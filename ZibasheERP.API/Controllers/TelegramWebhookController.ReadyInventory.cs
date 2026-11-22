@@ -14,7 +14,8 @@ public sealed partial class TelegramWebhookController
     private sealed record InventoryDraft(Guid Id,string Step,DateTime Until,Guid? Reference=null,string Name="",string Photo="",
         decimal Price=0,decimal Volume=0,Guid Bottle=default,decimal BottlePrice=0,string Position="",string? Token=null,string Search="",Guid? PositionList=null,string? PhotoReturnStep=null,
         Guid? PurchaseList=null,string BuyerIdentity="",string BuyerUserId="",string? BuyerUsername=null,Guid? BuyerCustomerId=null,Guid? PromotionId=null,Guid[]? InvoiceLists=null,Guid[]? InvoiceRequests=null,
-        string Description="",bool DescriptionCollected=false,bool SoldPosition=false,string? ExpectedPosition=null,Guid[]? PositionChoices=null);
+        string Description="",bool DescriptionCollected=false,bool SoldPosition=false,string? ExpectedPosition=null,Guid[]? PositionChoices=null,
+        bool IsGiftPurchase=false,InventoryBuyer? GiftRecipient=null);
     private static readonly ConcurrentDictionary<(long Chat,long User),InventoryDraft> InventoryDrafts=new();
     private static string InvAction(string action)=>"invoiceadmin:ready:"+action;
     internal static string ReadyInventoryCaption(SalesList list)=>ReadyInventoryPresentation.Caption(list);

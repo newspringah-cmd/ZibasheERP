@@ -319,7 +319,7 @@ public static class ReadyInventoryTests
             db.ChangeTracker.Clear();
             var purchaseId=Guid.NewGuid();ids.Add(purchaseId);
             var purchase=await service.CreateAsync(new(purchaseId,null,marker+"adminbuy","fixture-photo",100000,1.5m,bottle.Id,2000,"buy-shelf",admin));perfumes.Add(purchase.PerfumeId);
-            await Select("buy",admin);await Input(purchase.InventoryCode.ToString(),user:admin);await Input("@"+buyerUsername,user:admin);
+            await Select("buy",admin);await Select("buy-type:no",admin);await Input(purchase.InventoryCode.ToString(),user:admin);await Input("@"+buyerUsername,user:admin);
             check(sent.Texts.Last().Contains("152,000")&&sent.Texts.Last().Contains("گروه حسابداری متصل")&&!await db.SalesListRequests.AnyAsync(v=>v.SalesListId==purchase.Id),
                 "accounting admin can preview an inventory purchase for a named customer without creating a reservation or invoice");
             var purchaseSave=sent.Buttons.Last(v=>v.StartsWith("invoiceadmin:ready:buy-save:"));
@@ -332,10 +332,67 @@ public static class ReadyInventoryTests
                 check(purchaseItem.RequestedVolumeMl==1.5m&&purchaseItem.LineTotal==152000&&payload.RootElement.GetProperty("Delivery").GetProperty("ChatId").GetString()==customerChat.ToString()&&
                     (await db.SalesListRequests.SingleAsync(v=>v.SalesListId==purchase.Id)).CreatedByAdmin,
                     "confirmed admin inventory purchase invoices the selected customer group with exact half-ml amount and a single order despite replay");
+            var giftRecipient = new Customer
+            {
+                Id = Guid.NewGuid(), FullName = marker + "gift recipient",
+                Username = "gift_" + Guid.NewGuid().ToString("N")[..18],
+                TelegramId = Random.Shared.NextInt64(10000000000L, 90000000000L).ToString(),
+                Mobile = Guid.NewGuid().ToString("N")[..18], CreatedAt = DateTime.UtcNow
+            };
+            db.Customers.Add(giftRecipient);
+            var recipientGroup = new CustomerTelegramGroup
+            {
+                Id = Guid.NewGuid(), CustomerId = giftRecipient.Id, Title = marker,
+                ChatId = (-1000000000000L - Random.Shared.Next(100000000,900000000)).ToString(),
+                IsActive = true, CreatedAt = DateTime.UtcNow
+            };
+            db.CustomerTelegramGroups.Add(recipientGroup);
+            await db.SaveChangesAsync();
+            var giftOfferId = Guid.NewGuid();
+            ids.Add(giftOfferId);
+            var gift = await service.CreateAsync(new(giftOfferId,null,marker+"gift","fixture-photo",100000,1.5m,bottle.Id,2000,"gift-shelf",admin));
+            perfumes.Add(gift.PerfumeId);
+            await Select("buy",admin);
+            check(sent.Texts.Last().Contains("هدیه است") && sent.Buttons.Contains("invoiceadmin:ready:buy-type:no") &&
+                sent.Buttons.Contains("invoiceadmin:ready:buy-type:yes"), "inventory purchase opens with a gift choice");
+            await Select("buy-type:yes",admin);
+            await Input(gift.InventoryCode.ToString(),user:admin);
+            await Input("@"+buyerUsername,user:admin);
+            await Input("@"+buyerUsername,user:admin);
+            check(sent.Texts.Last().Contains("متفاوت") && !await db.SalesListRequests.AnyAsync(r=>r.SalesListId==gift.Id),
+                "inventory gift refuses the same giver and recipient without reserving the package");
+            await Input(giftRecipient.TelegramId,user:admin);
+            var giftSave = sent.Buttons.Last(v=>v.StartsWith("invoiceadmin:ready:buy-save:"));
+            check(sent.Texts.Last().Contains("هدیه‌گیرنده") && sent.Texts.Last().Contains("152,000") &&
+                !await db.SalesListRequests.AnyAsync(r=>r.SalesListId==gift.Id), "gift preview shows both parties and the exact price before writing");
+            var giftAction = giftSave["invoiceadmin:ready:".Length..];
+            await Select(giftAction,admin);
+            await Select(giftAction,admin);
+            var giftItem = await db.OrderItems.AsNoTracking().Include(i=>i.Order).Include(i=>i.SourceSalesListRequest)
+                .SingleAsync(i=>i.SalesListId==gift.Id);
+            var expectedGiver = await db.Orders.Where(o=>o.Id==purchaseItem.OrderId).Select(o=>o.CustomerId).SingleAsync();
+            check(giftItem.Order!.CustomerId==expectedGiver && giftItem.LineTotal==152000 &&
+                giftItem.SourceSalesListRequest is { IsGift:true } reservation && reservation.GiftRecipientTelegramUserId==giftRecipient.TelegramId &&
+                await db.Invoices.CountAsync(i=>i.OrderId==giftItem.OrderId)==1,
+                "the giver owns the only payable invoice and replay cannot issue a second invoice");
+            var giftEvents = await db.NotificationOutbox.Where(e=>e.OrderId==giftItem.OrderId&&e.Channel=="N8n"&&e.EventType=="InvoiceIssued").ToArrayAsync();
+            using (var receiverDoc = System.Text.Json.JsonDocument.Parse(giftEvents.Single(e=>e.CustomerId==giftRecipient.Id).Payload))
+            {
+                var receiver = receiverDoc.RootElement;
+                check(giftEvents.Length==2 && receiver.GetProperty("TotalAmount").GetDecimal()==0 &&
+                    receiver.GetProperty("IsInventory").GetBoolean() && receiver.GetProperty("GiftDeliveryRole").GetString()=="Recipient" &&
+                    receiver.GetProperty("Delivery").GetProperty("ChatId").GetString()==recipientGroup.ChatId,
+                    "the stock gift queues its zero-price copy for the recipient's connected group");
+            }
+            var giverCustomer = await db.Customers.AsNoTracking().SingleAsync(c=>c.Id==giftItem.Order.CustomerId);
+            check(await ShippingPackageService.CustomerItems(db,giftRecipient).AnyAsync(i=>i.Id==giftItem.Id) &&
+                  !await ShippingPackageService.CustomerItems(db,giverCustomer).AnyAsync(i=>i.Id==giftItem.Id) &&
+                  giftItem.ShippingRequestId!=waitingParcel,
+                "the ready gift belongs to the recipient for shipping and never joins the giver's open parcel");
             var numericId=(9000000000L+Random.Shared.Next(100000000,900000000)).ToString();
             var numericOfferId=Guid.NewGuid();ids.Add(numericOfferId);
             var numericOffer=await service.CreateAsync(new(numericOfferId,null,marker+"numeric","fixture-photo",100000,0.5m,bottle.Id,2000,"buy-shelf",admin));perfumes.Add(numericOffer.PerfumeId);
-            await Select("buy",admin);await Input(numericOffer.InventoryCode.ToString(),user:admin);await Input(numericId,user:admin);
+            await Select("buy",admin);await Select("buy-type:no",admin);await Input(numericOffer.InventoryCode.ToString(),user:admin);await Input(numericId,user:admin);
             check(sent.Texts.Last().Contains("متصل نیست")&&sent.Texts.Last().Contains(numericId),"numeric buyer with no connected customer group receives an explicit delivery warning before admin approval");
             var numericSave=sent.Buttons.Last(v=>v.StartsWith("invoiceadmin:ready:buy-save:"));await Select(numericSave["invoiceadmin:ready:".Length..],admin);
             var numericItem=await db.OrderItems.AsNoTracking().Include(v=>v.Order).ThenInclude(v=>v!.Customer).SingleAsync(v=>v.SalesListId==numericOffer.Id);
@@ -397,7 +454,7 @@ public static class ReadyInventoryTests
                 "consolidated inventory invoice queues removal of each sold public offer");
             var staleId=Guid.NewGuid();ids.Add(staleId);
             var stale=await service.CreateAsync(new(staleId,null,marker+"stale","fixture-photo",100000,1.5m,bottle.Id,2000,"buy-shelf",admin));perfumes.Add(stale.PerfumeId);
-            await Select("buy",admin);await Input(stale.InventoryCode.ToString(),user:admin);await Input("@"+buyerUsername,user:admin);
+            await Select("buy",admin);await Select("buy-type:no",admin);await Input(stale.InventoryCode.ToString(),user:admin);await Input("@"+buyerUsername,user:admin);
             var staleSave=sent.Buttons.Last(v=>v.StartsWith("invoiceadmin:ready:buy-save:"));
             await Select("buy-identity",admin);await Select(staleSave["invoiceadmin:ready:".Length..],admin);
             check(!await db.SalesListRequests.AnyAsync(v=>v.SalesListId==stale.Id),"editing the buyer invalidates the prior inventory purchase confirmation");
@@ -504,7 +561,7 @@ public static class ReadyInventoryTests
             await db.Payments.Where(v=>orders.Contains(v.OrderId)).ExecuteDeleteAsync();await db.Invoices.Where(v=>orders.Contains(v.OrderId)).ExecuteDeleteAsync();await db.OrderItems.Where(v=>orders.Contains(v.OrderId)).ExecuteDeleteAsync();await db.Orders.Where(v=>orders.Contains(v.Id)).ExecuteDeleteAsync();
             await db.InvoiceIssuanceBatchSalesLists.Where(v=>ids.Contains(v.SalesListId)).ExecuteDeleteAsync();await db.InvoiceIssuanceBatches.Where(v=>batches.Contains(v.Id)).ExecuteDeleteAsync();
             await db.CustomerTelegramGroups.Where(v=>v.Title==marker||customerIds.Contains(v.CustomerId)).ExecuteDeleteAsync();
-            await db.Customers.Where(v=>customerIds.Contains(v.Id)||(v.TelegramId!=null&&v.TelegramId.StartsWith(marker))).ExecuteDeleteAsync();
+            await db.Customers.Where(v=>customerIds.Contains(v.Id)||v.FullName==marker+"gift recipient"||(v.TelegramId!=null&&v.TelegramId.StartsWith(marker))).ExecuteDeleteAsync();
             await db.SalesListRequests.Where(v=>ids.Contains(v.SalesListId)).ExecuteDeleteAsync();await db.FlashSalePromotions.Where(v=>ids.Contains(v.SalesListId)).ExecuteDeleteAsync();
             await db.TelegramSalesListImports.Where(v=>v.SalesListId!=null&&ids.Contains(v.SalesListId.Value)).ExecuteDeleteAsync();
             await db.InventoryPositionChanges.Where(v=>ids.Contains(v.SalesListId)).ExecuteDeleteAsync();await db.SalesLists.Where(v=>ids.Contains(v.Id)).ExecuteDeleteAsync();

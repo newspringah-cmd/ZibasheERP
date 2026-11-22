@@ -383,14 +383,17 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             }
         }
 
+        var readyRecipients = new HashSet<Guid>();
         foreach (var order in orders)
         {
             var invoice = await _sender.Send(new IssueInvoiceCommand(order.Id, IsInventory: order.IsInventory), cancellationToken);
             invoiceNumbers.Add(invoice.InvoiceNumber);
+            if (order.IsInventory && order.Items.Any(item => item.SourceSalesListRequest?.IsGift != true))
+                readyRecipients.Add(order.CustomerId);
             await QueueGiftRecipientNotificationsAsync(
-                order, invoice.InvoiceNumber, queuedRecipientListPhotos, cancellationToken);
+                order, invoice.InvoiceNumber, queuedRecipientListPhotos, readyRecipients, cancellationToken);
         }
-        foreach(var customerId in orders.Where(o=>o.IsInventory).Select(o=>o.CustomerId).Distinct())
+        foreach(var customerId in readyRecipients.Order())
             await ShippingPackageService.AttachInventoryAsync(_db,customerId,cancellationToken);
         foreach (var list in lists)
         {
@@ -549,6 +552,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
         Order order,
         string invoiceNumber,
         HashSet<string> queuedRecipientListPhotos,
+        HashSet<Guid> readyRecipients,
         CancellationToken cancellationToken)
     {
         var giftItems = order.Items
@@ -565,8 +569,13 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
             var request = item.SourceSalesListRequest!;
             var recipientTelegramId = request.GiftRecipientTelegramUserId?.Trim();
             var recipientUsername = request.GiftRecipientTelegramUsername?.Trim().TrimStart('@');
+            // New inventory gifts carry the stable Telegram ID when the recipient has one.
+            var lookupUsername = order.IsInventory && long.TryParse(recipientTelegramId, out var id) && id > 0
+                ? null : recipientUsername;
             var recipient = await ResolveGiftRecipientAsync(
-                recipientUsername, recipientTelegramId, cancellationToken);
+                lookupUsername, recipientTelegramId, cancellationToken);
+            if (order.IsInventory && recipient is not null)
+                readyRecipients.Add(recipient.Id);
             var group = recipient?.TelegramGroup;
             var hasGroup = group is not null && !group.IsDeleted && group.IsActive &&
                            !string.IsNullOrWhiteSpace(group.ChatId);
@@ -647,6 +656,7 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
                         recipient.TelegramId, recipient.Username
                     },
                     PaymentDeadlineHours = 0,
+                    order.IsInventory,
                     GiftDeliveryRole = "Recipient",
                     GiverUsername = NormalizeCustomerUsername(request.TelegramUsername),
                     GiverTelegramId = request.TelegramUserId,
@@ -1006,19 +1016,22 @@ public sealed class InvoiceIssuanceService : IInvoiceIssuanceService
     {
         var telegramId = request.TelegramUserId.Trim();
         var normalizedUsername = NormalizeCustomerUsername(request.TelegramUsername);
+        var useUsername = !string.IsNullOrWhiteSpace(normalizedUsername) &&
+            !(request.IsGift && request.SalesList?.IsInventoryOffer == true &&
+              long.TryParse(telegramId, out var stableId) && stableId > 0);
 
         // A batch can contain legacy requests for the same username with different
         // TelegramUserId values. Include newly tracked customers in the lookup so a
         // second group in the same SaveChanges does not create a duplicate username.
         var customer = _db.Customers.Local.FirstOrDefault(value => !value.IsDeleted &&
             (value.TelegramId == telegramId ||
-             (!string.IsNullOrWhiteSpace(normalizedUsername) &&
+             (useUsername &&
               NormalizeCustomerUsername(value.Username) == normalizedUsername)));
         if (customer is not null) return customer;
 
         var usernameWithAt = string.IsNullOrWhiteSpace(normalizedUsername) ? null : $"@{normalizedUsername}";
         customer = await _db.Customers.FirstOrDefaultAsync(value => !value.IsDeleted &&
-            (value.TelegramId == telegramId || (!string.IsNullOrWhiteSpace(normalizedUsername) &&
+            (value.TelegramId == telegramId || (useUsername &&
                                                  (value.Username!.ToLower() == normalizedUsername ||
                                                   value.Username.ToLower() == usernameWithAt))), cancellationToken);
         if (customer is not null) return customer;
