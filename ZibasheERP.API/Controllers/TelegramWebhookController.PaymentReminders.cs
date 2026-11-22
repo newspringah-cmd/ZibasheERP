@@ -282,7 +282,7 @@ public sealed partial class TelegramWebhookController
         try
         {
             var now = DateTime.UtcNow;
-            var candidates = (await LoadPaymentReminderCandidatesAsync(ct, trackEntities: true))
+            var candidates = (await LoadPaymentReminderCandidatesAsync(ct))
                 .Where(value => IsInPaymentReminderBucket(value.IssuedAt, draft.Bucket, now))
                 .GroupBy(value => value.CustomerId)
                 .ToArray();
@@ -295,7 +295,19 @@ public sealed partial class TelegramWebhookController
 
             foreach (var customerInvoices in candidates)
             {
-                var first = customerInvoices.First();
+                var customerId = customerInvoices.Key;
+                var candidateIds = customerInvoices.Select(value => value.InvoiceId).ToArray();
+                await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                // Cancellation and inventory return lock this same customer before changing invoices.
+                await _db.Customers.FromSqlInterpolated(
+                        $"SELECT * FROM Customers WITH (UPDLOCK,HOLDLOCK) WHERE Id={customerId}")
+                    .AsNoTracking().SingleAsync(ct);
+                var current = (await LoadPaymentReminderCandidatesAsync(ct, candidateIds))
+                    .Where(value => IsInPaymentReminderBucket(value.IssuedAt, draft.Bucket, now))
+                    .ToArray();
+                var first = current.FirstOrDefault();
+                if (first is null)
+                    continue;
                 if (!first.HasActiveDestination || string.IsNullOrWhiteSpace(first.DestinationChatId))
                 {
                     missingGroups++;
@@ -303,7 +315,7 @@ public sealed partial class TelegramWebhookController
                     continue;
                 }
 
-                var message = BuildCustomerPaymentReminder(draft.MessageText, customerInvoices, now);
+                var message = BuildCustomerPaymentReminder(draft.MessageText, current, now);
                 TelegramSendResult result = new(false, "پیامی ارسال نشد.");
                 var allPartsSent = true;
                 foreach (var part in SplitTelegramMessage(message))
@@ -321,18 +333,15 @@ public sealed partial class TelegramWebhookController
                     continue;
                 }
 
-                var ids = customerInvoices.Select(value => value.InvoiceId).ToArray();
-                var invoices = await _db.Invoices
-                    .Where(value => ids.Contains(value.Id))
-                    .ToArrayAsync(ct);
-                foreach (var invoice in invoices)
-                    invoice.LastPaymentReminderSentAt = now;
-                var customer = await _db.Customers.FirstAsync(value => value.Id == first.CustomerId, ct);
-                customer.LastPaymentReminderSentAt = now;
-                await _db.SaveChangesAsync(ct);
+                var ids = current.Select(value => value.InvoiceId).ToArray();
+                var updated = await _db.Invoices.Where(value => ids.Contains(value.Id))
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(value => value.LastPaymentReminderSentAt, now), ct);
+                await _db.Customers.Where(value => value.Id == customerId)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(value => value.LastPaymentReminderSentAt, now), ct);
+                await transaction.CommitAsync(ct);
 
                 sentCustomers++;
-                sentInvoices += invoices.Length;
+                sentInvoices += updated;
             }
 
             PaymentReminderDrafts.TryRemove((reportChatId, userId), out _);
@@ -354,30 +363,39 @@ public sealed partial class TelegramWebhookController
         }
     }
 
-    private async Task<IReadOnlyCollection<PaymentReminderCandidate>> LoadPaymentReminderCandidatesAsync(
-        CancellationToken ct,
-        bool trackEntities = false)
-    {
-        var today = DateTime.UtcNow.Date;
-        var query = _db.Invoices
-            .Include(value => value.Order)!.ThenInclude(value => value!.Customer)!.ThenInclude(value => value!.TelegramGroup)
-            .Include(value => value.Order)!.ThenInclude(value => value!.Payments)
+    private IQueryable<Invoice> UnpaidInvoicesForReminders() =>
+        _db.Invoices.AsNoTracking()
             .Where(value =>
                 !value.IsDeleted &&
                 value.Status == InvoiceStatus.Issued &&
-                value.IssuedAt <= DateTime.UtcNow.AddHours(-48) &&
-                (value.LastPaymentReminderSentAt == null || value.LastPaymentReminderSentAt < today) &&
                 value.Order != null &&
                 !value.Order.IsDeleted &&
                 value.Order.Status != OrderStatus.Cancelled &&
                 value.Order.Customer != null &&
-                (value.Order.Customer.LastPaymentReminderSentAt == null ||
-                 value.Order.Customer.LastPaymentReminderSentAt < today) &&
+                !value.Order.Customer.IsDeleted &&
                 !value.Order.Payments.Any(payment =>
-                    !payment.IsDeleted && payment.Status == PaymentStatus.Confirmed));
+                    !payment.IsDeleted && payment.Status == PaymentStatus.Confirmed))
+            // The source item remains linked even when the inventory offer has since sold.
+            // A reduced invoice is valid only if the moved items are removed and the new total matches.
+            .Where(value => !value.Order!.Items.Any(item =>
+                (!item.IsDeleted || value.Order.Items.Where(active => !active.IsDeleted).Sum(active => active.LineTotal) != value.TotalAmount) &&
+                _db.SalesLists.Any(stock => stock.IsInventoryOffer && stock.SourceOrderItemId == item.Id)));
 
-        if (!trackEntities)
-            query = query.AsNoTracking();
+    private async Task<IReadOnlyCollection<PaymentReminderCandidate>> LoadPaymentReminderCandidatesAsync(
+        CancellationToken ct, Guid[]? invoiceIds = null)
+    {
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+        var maximumIssuedAt = now.AddHours(-48);
+        var query = UnpaidInvoicesForReminders()
+            .Include(value => value.Order)!.ThenInclude(value => value!.Customer)!.ThenInclude(value => value!.TelegramGroup)
+            .Where(value =>
+                value.IssuedAt <= maximumIssuedAt &&
+                (value.LastPaymentReminderSentAt == null || value.LastPaymentReminderSentAt < today) &&
+                (value.Order!.Customer!.LastPaymentReminderSentAt == null ||
+                 value.Order.Customer.LastPaymentReminderSentAt < today));
+        if (invoiceIds is not null)
+            query = query.Where(value => invoiceIds.Contains(value.Id));
 
         var invoices = await query.ToArrayAsync(ct);
         return invoices.Select(invoice =>
@@ -470,22 +488,12 @@ public sealed partial class TelegramWebhookController
     {
         var fifteenDaysAgo = now.AddDays(-15);
         var thirtyDaysAgo = now.AddDays(-30);
-        var query = _db.Invoices.AsNoTracking()
+        IQueryable<Invoice> query = UnpaidInvoicesForReminders()
             .Include(value => value.Order)!.ThenInclude(value => value!.Customer)
-            .Include(value => value.Order)!.ThenInclude(value => value!.Payments)
             .Include(value => value.Order)!.ThenInclude(value => value!.Items)
                 .ThenInclude(value => value.Perfume)
             .Include(value => value.Order)!.ThenInclude(value => value!.Items)
-                .ThenInclude(value => value.SalesList)
-            .Where(value =>
-                !value.IsDeleted &&
-                value.Status == InvoiceStatus.Issued &&
-                value.Order != null &&
-                !value.Order.IsDeleted &&
-                value.Order.Status != OrderStatus.Cancelled &&
-                value.Order.Customer != null &&
-                !value.Order.Payments.Any(payment =>
-                    !payment.IsDeleted && payment.Status == PaymentStatus.Confirmed));
+                .ThenInclude(value => value.SalesList);
 
         query = bucket == "d15_30"
             ? query.Where(value => value.IssuedAt < fifteenDaysAgo && value.IssuedAt >= thirtyDaysAgo)

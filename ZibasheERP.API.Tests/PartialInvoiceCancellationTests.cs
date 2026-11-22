@@ -109,6 +109,9 @@ public static class PartialInvoiceCancellationTests
             var controller=(TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));
             foreach(var (name,value) in new(string,object)[]{("_db",db),("_sender",sender),("_options",new TelegramOptions{NewPaymentsChatId="-1007773002",InvoiceFailureChatId="-1007773003"})})
                 typeof(TelegramWebhookController).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(controller,value);
+            IQueryable<Invoice> ReminderInvoices() => (IQueryable<Invoice>)typeof(TelegramWebhookController)
+                .GetMethod("UnpaidInvoicesForReminders", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(controller, null)!;
             Task<int?> Follow(NotificationOutbox job)=>(Task<int?>)typeof(TelegramWebhookController).GetMethod("ProcessInvoiceRevisionAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(controller,[job,CancellationToken.None])!;
             Task<int?> Revision()=>Follow(work);
             check(await Revision()==5&&captured.Deleted.Count==0,"old invoice bundle stays intact while its corrected PDF has not been delivered");
@@ -166,6 +169,39 @@ public static class PartialInvoiceCancellationTests
             check(captured.Edits.Last().Text.Contains("44,000")&&captured.Edits.Last().Text.Contains(InvoiceRestockTracking.Caption)&&
                 (await InvoiceRestockTracking.PublishedInvoiceIdsAsync(db,[stockOrder])).Contains(stock.InvoiceId),
                 "successful publication updates only the cancelled portion to stock-transferred while retaining the active invoice balance");
+            check(!await ReminderInvoices().AnyAsync(i => i.Id == stock.InvoiceId) &&
+                await ReminderInvoices().AnyAsync(i => i.Id == gift.Invoice.Id && i.TotalAmount == 44000),
+                "payment reminders exclude the returned invoice portion and retain only the corrected balance");
+
+            // Simulate older records where the inventory exists but the original invoice stayed issued.
+            var originalOffer = stock.Offers.Single();
+            var remainingItem = gift.Items[0].Id;
+            await db.SalesLists.Where(l => l.Id == originalOffer).ExecuteUpdateAsync(s => s
+                .SetProperty(l => l.SourceOrderItemId, remainingItem)
+                .SetProperty(l => l.IsDeleted, true));
+            try
+            {
+                check(!await ReminderInvoices().AnyAsync(i => i.Id == gift.Invoice.Id),
+                    "a stale active invoice cannot be reminded after a linked inventory offer is archived");
+                await db.OrderItems.Where(i => i.Id == remainingItem)
+                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.IsDeleted, true));
+                check(!await ReminderInvoices().AnyAsync(i => i.Id == gift.Invoice.Id),
+                    "an old invoice with removed stock but an uncorrected balance is excluded from reminders");
+                await db.Invoices.Where(i => i.Id == gift.Invoice.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.TotalAmount, gift.Items[2].LineTotal));
+                check(await ReminderInvoices().AnyAsync(i => i.Id == gift.Invoice.Id && i.TotalAmount == gift.Items[2].LineTotal),
+                    "after a partial return an accurate balance for retained items is still eligible");
+            }
+            finally
+            {
+                await db.Invoices.Where(i => i.Id == gift.Invoice.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.TotalAmount, 44000));
+                await db.OrderItems.Where(i => i.Id == remainingItem)
+                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.IsDeleted, false));
+                await db.SalesLists.Where(l => l.Id == originalOffer).ExecuteUpdateAsync(s => s
+                    .SetProperty(l => l.SourceOrderItemId, gift.Items[1].Id)
+                    .SetProperty(l => l.IsDeleted, false));
+            }
             check(await Rejected(async()=>{await service.ResolveAsync(Caption(await db.Invoices.AsNoTracking().SingleAsync(i=>i.Id==gift.Invoice.Id)),false);}),
                 "another accounting change waits until corrected invoice delivery and cleanup finish");
             var giftWork=await db.NotificationOutbox.AsNoTracking().SingleAsync(n=>n.OrderId==gift.Invoice.OrderId&&n.Channel==InvoiceRevisionService.Channel);
