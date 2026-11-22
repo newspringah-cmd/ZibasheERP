@@ -44,7 +44,7 @@ Check((decimal)priceController.GetMethod("AdjustedPrice",BindingFlags.NonPublic|
     "bulk percentage pricing always rounds upward without discarding a fractional-toman increase");
 if(args.Contains("--production-recipient-totals"))
 {
-    ProductionGiftGroupingTests.Run(Check);
+    ProductionGiftGroupingTests.Run(Check, args.Length == 3 ? args[1] : null, args.Length == 3 ? args[2] : null);
     Console.WriteLine("Production recipient total tests passed.");
     return;
 }

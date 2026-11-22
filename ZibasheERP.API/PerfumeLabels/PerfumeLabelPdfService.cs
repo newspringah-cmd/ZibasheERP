@@ -62,16 +62,22 @@ public sealed class PerfumeLabelPdfService : IPerfumeLabelPdfService
 
     private static void ComposeCell(IContainer container, byte[] logo, PerfumeLabelEntry? entry)
     {
-        var caption = entry?.VolumeMl.HasValue == true
-            ? $"{entry.VolumeMl.Value:0.#}ml"
+        var hasVolume = entry?.VolumeMl.HasValue == true;
+        var showUsernameAboveVolume = hasVolume && !string.IsNullOrWhiteSpace(entry?.Caption);
+        var caption = hasVolume
+            ? $"{entry!.VolumeMl:0.#}ml"
             : entry?.Caption ?? string.Empty;
-        var captionFontSize = entry?.VolumeMl.HasValue == true ? 13 : 9;
+        var captionFontSize = hasVolume ? 13 : 9;
 
         container.Column(column =>
         {
             column.Spacing(1);
-            column.Item().Height(18, Unit.Millimetre).AlignCenter().AlignMiddle()
+            column.Item().Height(showUsernameAboveVolume ? 14 : 18, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Image(logo).FitArea();
+            if (showUsernameAboveVolume)
+                column.Item().Height(4, Unit.Millimetre).ScaleToFit().AlignCenter().AlignMiddle()
+                    .Row(row => row.AutoItem().Text(entry!.Caption)
+                        .FontFamily(Fonts.Arial).FontSize(9).SemiBold());
             column.Item().Height(6, Unit.Millimetre).AlignCenter().AlignMiddle()
                 .Text(caption)
                 .FontFamily(Fonts.Arial).FontSize(captionFontSize).SemiBold();

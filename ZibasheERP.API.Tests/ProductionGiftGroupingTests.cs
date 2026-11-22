@@ -7,7 +7,7 @@ using ZibasheERP.Infrastructure.Services;
 
 public static class ProductionGiftGroupingTests
 {
-    public static void Run(Action<bool, string> check)
+    public static void Run(Action<bool, string> check, string? logoPath = null, string? pdfPath = null)
     {
         var list = new SalesList { Id = Guid.NewGuid(), PublicCode = 123, EnglishName = "Test perfume", TotalVolume = 30 };
         var sequence = 0;
@@ -46,8 +46,31 @@ public static class ProductionGiftGroupingTests
             .GetMethod("BuildPerfumeLabelEntries", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [list])!;
         check(pdfEntries.Count == 1 && pdfEntries.Single().VolumeMl == 3, "PDF prints one three-ml label rather than three one-ml labels");
 
+        var fancyGift = Gift("gift_sender", " @gift_receiver ", 4);
+        fancyGift.Bottle = new Bottle { Type = BottleType.Fancy };
+        var fancyPurchase = Gift(" @WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW ", volume: 5);
+        fancyPurchase.IsGift = false;
+        fancyPurchase.Bottle = fancyGift.Bottle;
+        var anonymousFancy = Gift("hidden_label", volume: 6);
+        anonymousFancy.IsGift = false;
+        anonymousFancy.Bottle = fancyGift.Bottle;
+        anonymousFancy.OmitIdentityOnLabel = true;
+        var regular = Gift("ordinary_customer", volume: 7);
+        regular.IsGift = false;
+
         var owner = new SalesListRequest { Id = Guid.NewGuid(), SalesListId = list.Id, TelegramUserId = "owner-id",
-            TelegramUsername = "owner", IsBottleOwner = true, VolumeMl = 10, Status = SalesListRequestStatus.Confirmed };
+            TelegramUsername = "@owner", IsBottleOwner = true, VolumeMl = 10, Status = SalesListRequestStatus.Confirmed };
+        list.Requests = [fancyGift, fancyPurchase, anonymousFancy, regular, owner];
+        var printEntries = (IReadOnlyCollection<PerfumeLabelEntry>)typeof(TelegramWebhookController)
+            .GetMethod("BuildPerfumeLabelEntries", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [list])!;
+        check(printEntries.SequenceEqual(new PerfumeLabelEntry[]
+        {
+            new(null, "owner"), new(7), new(6),
+            new(5, new string('W', 32)), new(4, "gift_receiver")
+        }), "fancy labels include the customer or gift recipient without @ and respect the no-identity option");
+        if (logoPath is not null && pdfPath is not null)
+            File.WriteAllBytes(pdfPath, new PerfumeLabelPdfService().Create(File.ReadAllBytes(logoPath), printEntries));
+
         var ownerGift = Gift("owner-donor", "@OWNER", 2);
         combined = SalesListProductionGrouping.Build(gifts.Concat([owner, ownerGift]));
         check(combined.Count == 2 && combined.Single(row => row.Request.IsBottleOwner).VolumeMl == 12 &&
