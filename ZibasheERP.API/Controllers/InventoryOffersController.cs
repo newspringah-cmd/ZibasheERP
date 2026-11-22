@@ -7,6 +7,7 @@ using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
+using ZibasheERP.Infrastructure.Services;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -31,7 +32,8 @@ public sealed class InventoryOffersController(AppDbContext db,IOptions<TelegramO
         if(string.IsNullOrWhiteSpace(options.Value.ReadyInventoryChannelId))return Conflict();
         if(list.Status is not(SalesListStatus.Open or SalesListStatus.Full))return Conflict();
         if(list.Status!=SalesListStatus.Open&&!list.TelegramMessageId.HasValue)return Conflict();
-        return Ok(new{Id=id,Code=list.DisplayCode,ChatId=options.Value.ReadyInventoryChannelId,Text=ReadyInventoryPresentation.Caption(list),
+        var quote=await FlashSalePricing.QuoteAsync(db,list,DateTime.UtcNow,ct);
+        return Ok(new{Id=id,Code=list.DisplayCode,ChatId=options.Value.ReadyInventoryChannelId,Text=ReadyInventoryPresentation.Caption(list,quote),
             Photo=list.TelegramPhotoFileId,MessageId=list.TelegramMessageId,PhotoMessageId=(long?)null,
             Callback=$"slv:{Convert.ToBase64String(list.Id.ToByteArray()).TrimEnd('=').Replace('+','-').Replace('/','_')}:{list.TotalVolume}"});
     }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Telegram;
+using ZibasheERP.API.Inventory;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Services;
 
@@ -13,10 +14,21 @@ public sealed partial class TelegramWebhookController
         {
             var list=await _salesListRepository.GetByIdAsync(id,ct)??throw new InvalidOperationException("Sales list missing");
             await _db.Entry(list).ReloadAsync(ct);
-            if(list.IsDeleted||list.IsInventoryOffer||list.TelegramMessageId is null||string.IsNullOrWhiteSpace(list.TelegramChannelId))return;
+            if(list.IsDeleted||list.TelegramMessageId is null||string.IsNullOrWhiteSpace(list.TelegramChannelId))return;
+            if(list.IsInventoryOffer && (list.TelegramChannelId!=_options.ReadyInventoryChannelId.Trim() ||
+                list.Status is not (SalesListStatus.Open or SalesListStatus.Full))) return;
             if(await _db.SalesLists.AsNoTracking().AnyAsync(l=>!l.IsDeleted&&l.Id!=list.Id&&l.TelegramChannelId==list.TelegramChannelId&&
                 l.TelegramMessageId==list.TelegramMessageId&&l.OpenDate>list.OpenDate&&(l.Status==SalesListStatus.Open||l.Status==SalesListStatus.Full),ct))return;
             var quote=await FlashSalePricing.QuoteAsync(_db,list,DateTime.UtcNow,ct);
+            if(list.IsInventoryOffer)
+            {
+                var inventoryResult=await _temporaryMessageCleaner.UpdatePostAsync(list.TelegramChannelId,list.TelegramMessageId.Value,
+                    ()=>_sender.EditPhotoCaptionAsync(list.TelegramChannelId,list.TelegramMessageId.Value,
+                        ReadyInventoryPresentation.Caption(list,quote),BuildChannelVolumeButtons(list),ct),ct);
+                if(!inventoryResult.IsSuccessful&&!IsTelegramMessageUnchanged(inventoryResult.Error))
+                    throw new FlashSalePriceRetryException(Math.Max(30,inventoryResult.RetryAfterSeconds??30));
+                return;
+            }
             var confirmed=await _salesListRequestRepository.GetConfirmedAsync(id,ct);
             var requests=list.Status is SalesListStatus.Open or SalesListStatus.Full?confirmed:
                 (await _salesListRequestRepository.GetForLabelAdministrationAsync(id,ct)).Concat(confirmed.Where(r=>r.Kind==SalesListRequestKind.NextBottle)).DistinctBy(r=>r.Id).ToArray();

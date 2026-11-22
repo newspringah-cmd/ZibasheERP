@@ -19,7 +19,7 @@ public sealed class FlashSaleMainPriceWorker(IServiceScopeFactory scopes,IOption
                 using var scope=scopes.CreateScope();var db=scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 foreach(var id in await FlashSaleMainPriceDisplay.TargetsAsync(db,DateTime.UtcNow,ct))
                 {
-                    var list=await db.SalesLists.AsNoTracking().SingleOrDefaultAsync(l=>l.Id==id&&!l.IsDeleted,ct);if(list is null||list.IsInventoryOffer)continue;
+                    var list=await db.SalesLists.AsNoTracking().SingleOrDefaultAsync(l=>l.Id==id&&!l.IsDeleted,ct);if(list is null)continue;
                     var key=FlashSaleMainPriceDisplay.Key(id);var job=await db.NotificationOutbox.SingleOrDefaultAsync(n=>n.Id==key,ct);
                     var quote=await FlashSalePricing.QuoteAsync(db,list,DateTime.UtcNow,ct);var payload=JsonSerializer.Serialize(FlashSaleMainPriceDisplay.Snapshot(list,quote));
                     if(job is not null&&job.Payload==payload&&(job.Status==NotificationOutboxStatus.Processed||job.NextAttemptAt>DateTime.UtcNow))continue;

@@ -524,7 +524,8 @@ public sealed partial class TelegramWebhookController
                         await RemoveInvoicedReadyInventoryPostAsync(salesList,cancellationToken);
                         return;
                     }
-                    await RefreshMainChannelPostAsync(salesList, ReadyInventoryCaption(salesList), cancellationToken);
+                    var inventoryQuote = await ZibasheERP.Infrastructure.Services.FlashSalePricing.QuoteAsync(_db,salesList,DateTime.UtcNow,cancellationToken);
+                    await RefreshMainChannelPostAsync(salesList, ZibasheERP.API.Inventory.ReadyInventoryPresentation.Caption(salesList,inventoryQuote), cancellationToken);
                     return; // Ready packages never roll into another bottle or emit production alerts.
                 }
                 var requests = includeCompletedRequests

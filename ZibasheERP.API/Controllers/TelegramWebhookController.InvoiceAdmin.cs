@@ -4546,6 +4546,7 @@ public sealed partial class TelegramWebhookController
         GroupChatReplyDrafts.TryRemove((chatId,userId),out _);
         BottleUpgradeDrafts.TryRemove((chatId,userId),out _);
         FlashDrafts.TryRemove((chatId, userId), out _);
+        InventoryPromotionDrafts.TryRemove((chatId, userId), out _);
         InventoryDrafts.TryRemove((chatId,userId),out _);
         _adminSalesListDrafts.Remove(chatId, userId);
         _ownerPricingDrafts.Remove(chatId, userId);

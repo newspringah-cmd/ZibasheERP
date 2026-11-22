@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ZibasheERP.API.Marketing;
+using ZibasheERP.API.Inventory;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Domain.Entities;
 
@@ -30,6 +31,7 @@ public sealed partial class TelegramWebhookController
         if (!IsPrimaryOwner(callback.From.Id)) { await _sender.AnswerCallbackAsync(callback.Id, FlashDenied, ct, true); return; }
         await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
         var action = callback.Data!["invoiceadmin:flash:".Length..];
+        if (await TryHandleInventoryPromotionBatchCallbackAsync(callback, action, ct)) return;
         if(action=="new")
         {
             ClearAdminWorkflowDrafts(chat,callback.From.Id);
@@ -69,14 +71,19 @@ public sealed partial class TelegramWebhookController
         {
             var promotion = await _db.FlashSalePromotions.AsNoTracking().SingleOrDefaultAsync(value => value.Id == endId && !value.IsDeleted, ct);
             if (promotion is null) { await FlashPromptAsync(chat, "پروموشن پیدا نشد.", ct); return; }
-            await _sender.SendInlineKeyboardAsync(chat.ToString(), "پروموشن همین حالا پایان یابد؟ تخفیف آیتم‌های قبلی حفظ می‌شود و پیام تشکر در گروه و کانال ارسال می‌شود.",
+            var channelOnly = promotion.GroupChatId == InventoryPromotionBatch.ChannelPriceOnly;
+            await _sender.SendInlineKeyboardAsync(chat.ToString(), "پروموشن همین حالا پایان یابد؟ تخفیف آیتم‌های قبلی حفظ می‌شود." +
+                (channelOnly ? "" : " پیام تشکر در گروه و کانال ارسال می‌شود."),
                 [[new TelegramInlineButton("⏹ بله، پایان پروموشن", FlashAction("end-confirm:" + endId.ToString("N")))],
                  [new TelegramInlineButton("↩️ انصراف", FlashAction("menu"))]], ct); return;
         }
         if (action.StartsWith("end-confirm:", StringComparison.Ordinal) && Guid.TryParseExact(action[12..], "N", out var campaignId))
         {
-            if (await ZibasheERP.Infrastructure.Services.FlashSaleLifecycle.EndAsync(_db, campaignId, ct) is null)
+            var ended = await ZibasheERP.Infrastructure.Services.FlashSaleLifecycle.EndAsync(_db, campaignId, ct);
+            if (ended is null)
             { await FlashPromptAsync(chat, "پروموشن پیدا نشد.", ct); return; }
+            if (ended.GroupChatId == InventoryPromotionBatch.ChannelPriceOnly)
+            { await FlashPromptAsync(chat, "✅ پروموشن پایان یافت. قیمت کانال به‌روز می‌شود و تخفیف سفارش‌های قبلی محفوظ است.", ct); return; }
             var jobId = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes("hourly-end:" + campaignId))[..16]);
             await QueueFlashAsync(jobId, new MarketingPromotionJob(Guid.Empty, 0, MarketingPromotionJob.FlashEnd,
                 chat, callback.From.Id, FlashSale: new(campaignId)), ct);
@@ -96,6 +103,8 @@ public sealed partial class TelegramWebhookController
             .OrderBy(value => value.EndsAtUtc).Take(10).Select(value => new { value.Id, value.EndsAtUtc, List = _db.SalesLists.Where(list => list.Id == value.SalesListId)
                 .Select(list => list.InventoryCode ?? list.StablePublicCode ?? list.PublicCode).First() }).ToArrayAsync(ct);
         var buttons = new List<IReadOnlyCollection<TelegramInlineButton>> { new[] { new TelegramInlineButton("➕ پروموشن جدید", FlashAction("new")) } };
+        if (callback.Message.Chat.Type == "private" && chat == callback.From.Id)
+            buttons.Add(new[] { new TelegramInlineButton("📦 پروموشن دسته‌ای موجودی", FlashAction("batch")) });
         foreach (var item in active) buttons.Add(new[] { new TelegramInlineButton($"⏹ پایان زودهنگام لیست {item.List}", FlashAction("end:" + item.Id.ToString("N"))) });
         buttons.Add(new[] { new TelegramInlineButton("↩️ منوی مدیریت", "invoiceadmin:menu:main") });
         await _sender.SendInlineKeyboardAsync(chat.ToString(), "⏳ پروموشن ساعتی\n\nکد لیست، مدت و میزان تخفیف را وارد کنید؛ بعد از پیش‌نمایش و تأیید، در گروه و کانال اجرا می‌شود.\n" +
@@ -108,6 +117,7 @@ public sealed partial class TelegramWebhookController
 
     private async Task<bool> TryHandleFlashMessageAsync(TelegramMessage message, CancellationToken ct)
     {
+        if (await TryHandleInventoryPromotionBatchMessageAsync(message, ct)) return true;
         if (message.From is null || !FlashDrafts.TryGetValue((message.Chat.Id, message.From.Id), out var draft)) return false;
         var key = (message.Chat.Id, message.From.Id); var text = message.Text?.Trim() ?? "";
         if (!IsPrimaryOwner(message.From.Id)) { FlashDrafts.TryRemove(key, out _); await ReplyAsync(message.Chat.Id, FlashDenied, ct); return true; }

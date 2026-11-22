@@ -268,6 +268,8 @@ public sealed partial class TelegramWebhookController
                 [[new TelegramInlineButton("🛍 ثبت خرید برای مشتری",InvAction("buy"))],
                  [new TelegramInlineButton("➕ ثبت از لیست کانال",InvAction("new"))],[new TelegramInlineButton("✍️ ثبت دستی",InvAction("manual"))],
                  [new TelegramInlineButton("📦 ثبت موجودی متفرقه",InvAction("misc"))],
+                 ..(IsPrimaryOwner(callback.From.Id) && chat==callback.From.Id
+                    ? new IReadOnlyCollection<TelegramInlineButton>[] { [new TelegramInlineButton("🏷 پروموشن دسته‌ای",FlashAction("batch"))] } : []),
                  [new TelegramInlineButton("📦 ثبت موجودی فروش‌رفته",InvAction("sold-position"))],
                  [new TelegramInlineButton("📍 ثبت جایگاه موجودی",InvAction("register-position"))],
                  [new TelegramInlineButton("📍 جست‌وجوی جایگاه / مدیریت موجودی",InvAction("position"))],[new TelegramInlineButton("🧾 موجودی‌های درخواست‌شده",InvAction("requests"))],

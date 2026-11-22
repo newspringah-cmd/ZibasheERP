@@ -11,6 +11,11 @@ if (args.Contains("--initialize-test-database"))
 }
 
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
+if (args.Contains("--inventory-batch-promotion"))
+{
+    await InventoryPromotionBatchTests.Run(Check);
+    return;
+}
 if (args.Contains("--invoiced-perfume-status"))
 {
     await InvoicedPerfumeStatusTests.Run(Check);
@@ -345,6 +350,7 @@ SmallRemainderReservationTests.Run(Check);
 await SmallRemainderReservationTests.RunSqlAsync(Check);
 await FlashSaleTests.RunAsync(Check);
 await FlashSaleMainPriceTests.Run(Check);
+await InventoryPromotionBatchTests.Run(Check);
 InvoicedSalesListReportTests.Run(Check);
 await InvoicedPerfumeStatusTests.Run(Check);
 AddressReadyItemsTests.Run(Check);

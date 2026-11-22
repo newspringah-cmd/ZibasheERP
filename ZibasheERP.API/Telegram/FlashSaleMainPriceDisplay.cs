@@ -18,9 +18,9 @@ public static class FlashSaleMainPriceDisplay
             join origin in db.SalesLists.AsNoTracking() on p.SalesListId equals origin.Id
             from list in db.SalesLists.AsNoTracking()
             where !p.IsDeleted&&p.CancelledAtUtc==null&&p.StartsAtUtc<=now&&p.EndsAtUtc>now&&
-                !list.IsDeleted&&!list.IsInventoryOffer&&list.TelegramMessageId!=null&&list.TelegramChannelId!=null&&
+                !list.IsDeleted&&list.TelegramMessageId!=null&&list.TelegramChannelId!=null&&
                 (list.Status==SalesListStatus.Open||list.Status==SalesListStatus.Full)&&
-                (p.SalesListId==list.Id||(!origin.IsInventoryOffer&&origin.PerfumeId==list.PerfumeId&&
+                (p.SalesListId==list.Id||(!list.IsInventoryOffer&&!origin.IsInventoryOffer&&origin.PerfumeId==list.PerfumeId&&
                  (origin.StablePublicCode??origin.PublicCode)==(list.StablePublicCode??list.PublicCode)&&list.OpenDate>=p.StartsAtUtc&&list.OpenDate<p.EndsAtUtc))
             select list.Id).Distinct().ToArrayAsync(ct);
         var old=await db.NotificationOutbox.AsNoTracking().Where(n=>!n.IsDeleted&&n.Channel==Channel&&
