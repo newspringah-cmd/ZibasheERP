@@ -168,10 +168,29 @@ def validate(offer, campaign_id=None, require_media=True):
         raise ValueError('Campaign identity mismatch')
 
 
+def inventory_destination(transport, offer):
+    if not offer.get('isInventoryOffer'):
+        return None
+    # Match the API's TelegramOptions default when Compose has no override.
+    configured = str(getattr(transport, 'cfg', {}).get('Telegram__ReadyInventoryChannelId', '@zibasheperfume_mojodi')).strip()
+    if re.fullmatch(r'-100[0-9]+', configured):
+        return int(configured)
+    return configured if re.fullmatch(r'@[A-Za-z0-9_]+', configured) else None
+
+
+def same_chat(chat, destination):
+    if isinstance(destination, str):
+        return chat.get('type') == 'channel' and ('@' + chat.get('username', '')).lower() == destination.lower()
+    return chat.get('id') == destination
+
+
 def publish(transport, root, campaign_id, now=time.time, destination=GROUP):
-    if destination not in (GROUP, CHANNEL):
-        raise ValueError('Unapproved destination')
     offer = transport.api(campaign_id)
+    inventory = inventory_destination(transport, offer)
+    if destination not in (GROUP, CHANNEL, inventory) or destination is None:
+        raise ValueError('Unapproved destination')
+    if destination == inventory and str(offer.get('listChatId', '')).lower() != str(destination).lower():
+        raise ValueError('Inventory post is not in the configured channel')
     validate(offer, campaign_id)
     receipt, intent = root / 'send-receipt.json', root / 'send-intent.json'
     if receipt.exists():
@@ -185,9 +204,9 @@ def publish(transport, root, campaign_id, now=time.time, destination=GROUP):
         if not offer['isActive'] or now() >= timestamp(offer['endsAtUtc']):
             raise ValueError('Offer is no longer active')
         chat = transport.telegram('getChat', {'chat_id': destination})
-        valid_type = chat.get('type') in ('supergroup', 'group') if destination == GROUP else (
-            chat.get('type') == 'channel' and chat.get('username', '').lower() == 'zibasheperfume')
-        if chat.get('id') != destination or not valid_type:
+        valid_type = (chat.get('type') in ('supergroup', 'group') if destination == GROUP else
+                      chat.get('type') == 'channel' and (destination != CHANNEL or chat.get('username', '').lower() == 'zibasheperfume'))
+        if not same_chat(chat, destination) or not valid_type:
             raise ValueError('Destination identity mismatch')
         text = caption(offer, now())
         if len(text.encode('utf-16-le')) // 2 > 1024:
@@ -200,7 +219,7 @@ def publish(transport, root, campaign_id, now=time.time, destination=GROUP):
             save(root / 'send-rejected.json', {'http_status': error.code, 'at': now()})
             intent.unlink()
             raise
-        if sent.get('chat', {}).get('id') != destination or type(sent.get('message_id')) is not int:
+        if sent.get('chat', {}).get('id') != chat['id'] or type(sent.get('message_id')) is not int:
             raise RuntimeError('Unexpected publication receipt; manual review required')
         sent = {'message_id': sent['message_id'], 'chat': {'id': destination}}
         save(receipt, sent)
@@ -211,9 +230,14 @@ def publish(transport, root, campaign_id, now=time.time, destination=GROUP):
     return sent
 
 
+def publish_inventory(transport, root, campaign_id, offer, now=time.time):
+    destination = inventory_destination(transport, offer)
+    if destination in (None, GROUP, CHANNEL) or not offer['isActive'] or now() >= timestamp(offer['endsAtUtc']):
+        return None
+    return publish(transport, root / 'inventory', campaign_id, now=now, destination=destination)
+
+
 def tick(transport, root, campaign_id, now=time.time, destination=GROUP, bind_message=True):
-    if destination not in (GROUP, CHANNEL):
-        raise ValueError('Unapproved destination')
     if (root / 'finished.json').exists():
         return
     receipt = root / 'send-receipt.json'
@@ -223,6 +247,8 @@ def tick(transport, root, campaign_id, now=time.time, destination=GROUP, bind_me
     if sent.get('chat', {}).get('id') != destination:
         raise ValueError('Saved publication receipt belongs to another destination')
     offer = transport.api(campaign_id)
+    if destination not in (GROUP, CHANNEL, inventory_destination(transport, offer)) or destination is None:
+        raise ValueError('Unapproved destination')
     validate(offer, campaign_id, require_media=now() < timestamp(offer['endsAtUtc']))
     if destination == GROUP and bind_message:
         transport.api(campaign_id + '/message', {'messageId': sent['message_id']})
@@ -324,7 +350,11 @@ def end_thanks(transport, root, campaign_id, now=time.time):
         'از همراهی، اعتماد و خریدهای قشنگتون خیلی ممنونیم 🤍🌷\n'
         'تخفیف آیتم‌های ثبت‌شده در مهلت، در فاکتورشان محفوظ است.\n'
         'ان‌شاءالله در آینده هم از این تخفیف‌های خوش‌عطر خواهیم داشت ✨')
-    for target, destination in [(root, GROUP), (root / 'channel', CHANNEL)]:
+    destinations = [(root, GROUP), (root / 'channel', CHANNEL)]
+    inventory = inventory_destination(transport, offer)
+    if inventory not in (None, GROUP, CHANNEL) and (root / 'inventory' / 'send-receipt.json').exists():
+        destinations.append((root / 'inventory', inventory))
+    for target, destination in destinations:
         if (target / 'send-receipt.json').exists() and not (target / 'finished.json').exists():
             try:
                 tick(transport, target, campaign_id, now=now, destination=destination)
@@ -340,7 +370,7 @@ def end_thanks(transport, root, campaign_id, now=time.time):
         if intent.exists():
             raise UnknownAnnouncement('Closing announcement outcome unknown; manual review required')
         chat = transport.telegram('getChat', {'chat_id': destination})
-        if chat.get('id') != destination:
+        if not same_chat(chat, destination):
             raise ValueError('Closing destination mismatch')
         save(intent, {'at': now(), 'destination': destination})
         try:
@@ -351,7 +381,7 @@ def end_thanks(transport, root, campaign_id, now=time.time):
             raise
         except Exception as error:
             raise UnknownAnnouncement('Closing announcement outcome unknown; manual review required') from None
-        if sent.get('chat', {}).get('id') != destination or type(sent.get('message_id')) is not int:
+        if sent.get('chat', {}).get('id') != chat['id'] or type(sent.get('message_id')) is not int:
             raise UnknownAnnouncement('Closing receipt unavailable; manual review required')
         save(receipt, {'message_id': sent['message_id'], 'chat': {'id': destination}})
     save(root / 'end-announcements-complete.json', {'at': now()})
@@ -397,6 +427,17 @@ def main():
                     # One destination's failure cannot stall the other countdown.
                     save(target / 'last-error.json', {'type': type(error).__name__, 'at': time.time()})
             lifecycle = root / 'automatic-lifecycle.json'
+            inventory = root / 'inventory'
+            if lifecycle.exists() and (root / 'channel' / 'send-receipt.json').exists() and not (root / 'end-announcements-complete.json').exists():
+                try:
+                    transport = transport or Transport()
+                    if not (inventory / 'send-receipt.json').exists() and not (inventory / 'send-intent.json').exists():
+                        publish_inventory(transport, root, campaign_id, transport.api(campaign_id))
+                    if (inventory / 'send-receipt.json').exists() and not (inventory / 'finished.json').exists():
+                        destination = json.loads((inventory / 'send-receipt.json').read_text())['chat']['id']
+                        tick(transport, inventory, campaign_id, destination=destination)
+                except Exception as error:
+                    save(inventory / 'last-error.json', {'type': type(error).__name__, 'at': time.time()})
             if (root / 'send-receipt.json').exists():
                 try:
                     transport = transport or Transport()

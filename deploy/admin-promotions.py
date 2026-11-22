@@ -368,9 +368,11 @@ def flash_job(root, job_id, payload, cfg):
             try:
                 group_receipt = flash.publish(transport, directory, campaign_id)
                 flash.publish(transport, directory / 'channel', campaign_id, destination=flash.CHANNEL)
+                if offer.get('isInventoryOffer'):
+                    flash.publish_inventory(transport, directory, campaign_id, offer)
             except RuntimeError:
                 if any((target / 'send-intent.json').exists() and not (target / 'send-receipt.json').exists()
-                       for target in (directory, directory / 'channel')):
+                       for target in (directory, directory / 'channel', directory / 'inventory')):
                     raise UnknownDelivery() from None
                 raise
             return {'State': 'sent', 'Url': 'https://t.me/c/1283018740/' + str(group_receipt['message_id'])}

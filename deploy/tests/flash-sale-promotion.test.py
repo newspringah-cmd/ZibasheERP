@@ -36,16 +36,18 @@ class Transport:
     def telegram(self, method, payload):
         self.calls.append((method, copy.deepcopy(payload)))
         if method == 'getChat':
+            if payload['chat_id'] == '@zibasheperfume_mojodi':
+                return {'id': -1007654321000, 'type': 'channel', 'username': 'zibasheperfume_mojodi'}
             if payload['chat_id'] == m.CHANNEL:
                 return {'id': m.CHANNEL, 'type': 'channel', 'username': 'zibasheperfume'}
             return {'id': m.GROUP, 'type': 'supergroup'}
         if method == 'sendPhoto':
             if self.fail_send:
                 raise self.fail_send
-            return {'chat': {'id': payload['chat_id']}, 'message_id': 12345}
+            return {'chat': {'id': -1007654321000 if payload['chat_id'] == '@zibasheperfume_mojodi' else payload['chat_id']}, 'message_id': 12345}
         if method == 'sendMessage':
             if self.fail_send:raise self.fail_send
-            return {'chat':{'id':payload['chat_id']},'message_id':20000+len(self.calls)}
+            return {'chat':{'id':-1007654321000 if payload['chat_id'] == '@zibasheperfume_mojodi' else payload['chat_id']},'message_id':20000+len(self.calls)}
         if method == 'editMessageCaption' and self.fail_edit:
             raise self.fail_edit
         return True
@@ -60,6 +62,24 @@ class Tests(unittest.TestCase):
 
     def publish(self):
         return m.publish(self.t, self.root, OFFER['id'], lambda: START)
+
+    def test_inventory_copy_keeps_its_own_receipt_and_countdown(self):
+        destination = '@zibasheperfume_mojodi'
+        self.t.offer.update(isInventoryOffer=True, listChatId=destination,
+                            listUrl='https://t.me/zibasheperfume_mojodi/123', caption='تخفیف ⋅ ⏳')
+        self.publish()
+        m.publish(self.t, self.root/'channel', OFFER['id'], lambda: START, destination=m.CHANNEL)
+        for _ in range(2):
+            m.publish_inventory(self.t, self.root, OFFER['id'], self.t.offer, lambda: START)
+        m.tick(self.t, self.root/'inventory', OFFER['id'], lambda: START+60, destination=destination)
+        self.assertEqual([p['chat_id'] for method,p in self.t.calls if method=='sendPhoto'], [m.GROUP,m.CHANNEL,destination])
+        self.assertEqual([p['chat_id'] for method,p in self.t.calls if method=='editMessageCaption'], [destination])
+        self.assertEqual(self.t.bind_calls, 1)
+        self.assertTrue(m.end_thanks(self.t, self.root, OFFER['id'], lambda: START+7201))
+        self.assertEqual([p['chat_id'] for method,p in self.t.calls if method=='sendMessage'], [m.GROUP,m.CHANNEL,destination])
+        self.t.offer['listChatId']='@other'
+        with self.assertRaises(ValueError):
+            m.publish_inventory(self.t, self.root/'other', OFFER['id'], self.t.offer, lambda: START)
 
     def test_approved_caption(self):
         text = m.caption(OFFER, START)
