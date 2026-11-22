@@ -1785,7 +1785,11 @@ public sealed partial class TelegramWebhookController
                 buttons.Add(new[]{new TelegramInlineButton("🟣 انتقال فاکتور حذف‌شده به موجودی",InvoiceCancelPrefix+"restock-start")});
                 if (IsPrimaryOwner(userId))
                 {
-                    if(chatId==userId)buttons.Add(new[]{new TelegramInlineButton("📊 گزارش مالی مشتری",CustomerFinancePrefix+"start")});
+                    if (chatId == userId)
+                    {
+                        buttons.Add(new[] { new TelegramInlineButton("📊 گزارش مالی مشتری", CustomerFinancePrefix + "start") });
+                        buttons.Add(new[] { new TelegramInlineButton("📋 گزارش وضعیت لیست عطر فاکتورشده", InvoicedStatusReport) });
+                    }
                     buttons.Add(new[]
                     {
                         new TelegramInlineButton(

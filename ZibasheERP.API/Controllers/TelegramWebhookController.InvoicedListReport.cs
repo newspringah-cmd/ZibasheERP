@@ -8,7 +8,8 @@ namespace ZibasheERP.API.Controllers;
 
 public sealed partial class TelegramWebhookController
 {
-    private sealed record InvoicedListReportDraft(bool Persian, DateTime? Start, DateTime UpdatedAt);
+    private sealed record InvoicedListReportDraft(bool Persian, DateTime? Start, DateTime UpdatedAt,
+        bool Fulfillment = false, Guid[]? PerfumeChoices = null);
     private static readonly ConcurrentDictionary<(long Chat, long User), InvoicedListReportDraft> InvoicedListReportDrafts = new();
 
     private bool CanViewInvoicedListReport(long user, long chat, string type) =>
@@ -22,8 +23,30 @@ public sealed partial class TelegramWebhookController
             await _sender.AnswerCallbackAsync(callback.Id, "این گزارش فقط برای مدیر اصلی در گفت‌وگوی خصوصی فعال است.", ct, true);
             return;
         }
-        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
         var key = (chat.Id, callback.From.Id);
+        if (callback.Data!.StartsWith(InvoicedStatusChoice, StringComparison.Ordinal))
+        {
+            if (!Guid.TryParseExact(callback.Data[InvoicedStatusChoice.Length..], "N", out var perfumeId) ||
+                !InvoicedListReportDrafts.TryGetValue(key, out var draft) || !draft.Fulfillment ||
+                draft.UpdatedAt < DateTime.UtcNow.AddMinutes(-15) ||
+                draft.PerfumeChoices?.Contains(perfumeId) != true)
+            {
+                await _sender.AnswerCallbackAsync(callback.Id, "جستجو منقضی شده است؛ گزارش را دوباره باز کنید.", ct, true);
+                return;
+            }
+            InvoicedListReportDrafts.TryRemove(key, out _);
+            await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+            await SendInvoicedPerfumeStatusAsync(chat.Id, perfumeId, ct);
+            return;
+        }
+        await _sender.AnswerCallbackAsync(callback.Id, cancellationToken: ct);
+        if (callback.Data == InvoicedStatusReport)
+        {
+            ClearAdminWorkflowDrafts(chat.Id, callback.From.Id);
+            InvoicedListReportDrafts[key] = new(false, null, DateTime.UtcNow, Fulfillment: true);
+            await ReplyAsync(chat.Id, "نام فارسی یا انگلیسی عطر، یا کد لیست را وارد کنید.\nانصراف: /cancel", ct);
+            return;
+        }
         if (callback.Data == "invoiceadmin:invoiced-lists:persian" || callback.Data == "invoiceadmin:invoiced-lists:gregorian")
         {
             var persian = callback.Data.EndsWith(":persian", StringComparison.Ordinal);
@@ -69,7 +92,12 @@ public sealed partial class TelegramWebhookController
         if (draft.UpdatedAt < DateTime.UtcNow.AddMinutes(-15))
         {
             InvoicedListReportDrafts.TryRemove(key, out _);
-            await ReplyAsync(message.Chat.Id, "مهلت ورود تاریخ تمام شده؛ گزارش را دوباره از منوی مدیر انتخاب کنید.", ct);
+            await ReplyAsync(message.Chat.Id, "مهلت ورود اطلاعات تمام شده؛ گزارش را دوباره از منوی مدیر انتخاب کنید.", ct);
+            return true;
+        }
+        if (draft.Fulfillment)
+        {
+            await SearchInvoicedPerfumeStatusAsync(key, text, draft, ct);
             return true;
         }
         if (!InvoicedSalesListReport.TryParseDate(text, draft.Persian, out var date))
