@@ -103,6 +103,12 @@ public static class InvoicedPerfumeStatusTests
                 capture.Summary.Contains("ارسال‌شده — 1 دکانت (1 × 1 میل)") &&
                 capture.Summary.Contains("ارسال‌شده — 1 باتل اصلی (1 × 40 میل)") && capture.Summary.Contains("تعداد کل اقلام: 9"),
                 "summary totals physical quantities by volume and fulfillment status with original bottles counted separately");
+            var ready = capture.Summary.Split("📦 گیرنده‌های دکانت آمادهٔ ارسال");
+            check(ready.Length == 2 &&
+                ready[1].Contains($"3 میل — 2 دکانت\n• @{receiver.Username} 🎁 × 2") &&
+                ready[1].Contains($"1 میل — 5 دکانت\n• @{donor.Username} × 5") &&
+                !ready[1].Contains("40 میل") && !ready[1].Contains("1 میل — 6 دکانت"),
+                "ready recipient breakdown lists the gift recipient and quantities by volume without shipped items");
         }
         finally
         {

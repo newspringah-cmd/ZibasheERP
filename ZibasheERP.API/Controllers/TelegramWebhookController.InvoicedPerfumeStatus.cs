@@ -107,7 +107,7 @@ public sealed partial class TelegramWebhookController
             await ReplyAsync(chat, part, ct);
 
         var summary = $"📊 جمع وضعیت {title}\nتعداد لیست‌ها: {activeCycles.Length}\nتعداد کل اقلام: {items.Sum(item => item.Quantity)}\n\n" +
-            FormatInvoicedPerfumeTotals(items);
+            FormatInvoicedPerfumeTotals(items) + FormatInvoicedReadyRecipients(items, recipients);
         var summaryParts = SplitTelegramMessage(summary).ToArray();
         foreach (var part in summaryParts.SkipLast(1))
             await ReplyAsync(chat, part, ct);
@@ -138,4 +138,28 @@ public sealed partial class TelegramWebhookController
                 string.Join("، ", group.GroupBy(item => item.RequestedVolumeMl)
                     .OrderByDescending(size => size.Key)
                     .Select(size => $"{size.Sum(item => item.Quantity)} × {FormatShippingVolume(size.Key)} میل")) + ")"));
+
+    private static string FormatInvoicedReadyRecipients(IEnumerable<OrderItem> items,
+        IReadOnlyDictionary<Guid, string> recipients)
+    {
+        var readyByVolume = items.Where(item => !item.IsBottleOwner &&
+                item.FulfillmentStatus == OrderItemFulfillmentStatus.DecantedReadyToShip)
+            .GroupBy(item => item.RequestedVolumeMl).OrderByDescending(group => group.Key).ToArray();
+        if (readyByVolume.Length == 0)
+            return string.Empty;
+
+        return "\n\n📦 گیرنده‌های دکانت آمادهٔ ارسال\n" + string.Join("\n\n", readyByVolume.Select(volume =>
+            $"{FormatShippingVolume(volume.Key)} میل — {volume.Sum(item => item.Quantity)} دکانت\n" +
+            string.Join("\n", volume.GroupBy(item =>
+                {
+                    var label = recipients[item.Id];
+                    return (Label: label, UnresolvedItem: label.StartsWith('@') ? (Guid?)null : item.Id);
+                })
+                .OrderBy(group => group.Key.Label, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var count = group.Sum(item => item.Quantity);
+                    return count > 1 ? $"• {group.Key.Label} × {count}" : $"• {group.Key.Label}";
+                }))));
+    }
 }
