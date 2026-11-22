@@ -969,6 +969,8 @@ public sealed partial class TelegramWebhookController : ControllerBase
         // the message. In group chats an old/stale draft must not make /ad appear broken.
         if (await TryHandleShippingPreparationCommandAsync(message, cancellationToken))
             return;
+        if (await TryHandleInPersonPickupMessageAsync(message, cancellationToken))
+            return;
 
         if (await TryHandleAdminMessageAsync(message, cancellationToken))
             return;

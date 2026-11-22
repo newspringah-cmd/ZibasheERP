@@ -11,6 +11,11 @@ if (args.Contains("--initialize-test-database"))
 }
 
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
+if (args.Contains("--shipping-prompt"))
+{
+    await ShippingPromptIsolationTests.Run(Check);
+    return;
+}
 if (args.Contains("--address-label-print"))
 {
     await AddressLabelPrintTests.Run(Check, args.Length == 2 ? args[1] : null);

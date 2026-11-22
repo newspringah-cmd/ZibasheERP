@@ -3,6 +3,7 @@ using System.Text.Json;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Features.Integrations.TrackTelegramGroupMembership;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Infrastructure.Services;
 
 namespace ZibasheERP.API.Controllers;
 
@@ -734,6 +735,111 @@ public sealed partial class TelegramWebhookController
         }
     }
 
+    private const string InPersonPickupTitle = "❌️❌️❌️تحویل حضوری❌️❌️❌️";
+
+    private async Task<bool> TryHandleInPersonPickupMessageAsync(TelegramMessage message, CancellationToken ct)
+    {
+        if (message.Text is null || message.From is null || !IsAuthorizedShippingOperator(message.From.Id) ||
+            string.Join(' ', message.Text.Replace('ي', 'ی').Replace('\u200C', ' ')
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)) != "تحویل حضوری" ||
+            !_orderFlowDrafts.TryGetShippingPreparation(message.Chat.Id, message.From.Id, out var draft) ||
+            draft.RegistrationOnly)
+            return false;
+
+        if (draft.CustomerId == Guid.Empty)
+        {
+            await ReplyAsync(draft.ChatId, "ابتدا مشتری این گروه را برای تحویل حضوری مشخص کنید.", ct);
+            return true;
+        }
+        if (string.IsNullOrWhiteSpace(_options.ShippingChatId))
+        {
+            await ReplyAsync(draft.ChatId, "گروه آماده‌سازی بسته تنظیم نشده است.", ct);
+            return true;
+        }
+
+        var preparationChat = _options.ShippingChatId.Trim();
+        var sentMessageIds = new List<long>();
+        var recorded = false;
+        string? error = null;
+        await using (var transaction = await _db.Database.BeginTransactionAsync(ct))
+        {
+            try
+            {
+                // Serialize pickup with the inventory and dispatch workflows for this customer.
+                var customer = await _db.Customers.FromSqlInterpolated(
+                        $"SELECT * FROM Customers WITH (UPDLOCK,HOLDLOCK) WHERE Id={draft.CustomerId}")
+                    .AsNoTracking().SingleOrDefaultAsync(c => !c.IsDeleted, ct);
+                var sourceChat = draft.ChatId.ToString();
+                if (customer is null || !await _db.CustomerTelegramGroups.AsNoTracking().AnyAsync(
+                    link => !link.IsDeleted && link.IsActive && link.ChatId == sourceChat &&
+                        link.CustomerId == draft.CustomerId, ct))
+                {
+                    error = "اتصال این گروه به مشتری برای تحویل حضوری معتبر نیست.";
+                }
+                else
+                {
+                    var requestId = Guid.NewGuid();
+                    var now = DateTime.UtcNow;
+                    var claimed = await ReadyShippingItems(customer).Where(item => item.ShippedAt == null)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(item => item.ShippingRequestId, requestId)
+                            .SetProperty(item => item.ShippingRequestedAt, now)
+                            .SetProperty(item => item.UpdatedAt, now), ct);
+                    if (claimed == 0)
+                        error = "آیتم آماده‌ای برای ثبت تحویل حضوری پیدا نشد. اقلامی که قبلاً در بسته‌ای ثبت شده‌اند، در همان درخواست باقی می‌مانند.";
+                    else
+                    {
+                        var items = await ShippingPackageService.CompleteAsync(_db, requestId, customer.Id, ct);
+                        if (items.Length != claimed || items.Any(item => item.FulfillmentStatus != OrderItemFulfillmentStatus.Shipped))
+                            throw new InvalidOperationException("Pickup items changed before dispatch.");
+
+                        var models = await GetSelectedFancyModelsAsync(items, ct);
+                        var report = $"{InPersonPickupTitle}\n📅 تاریخ ثبت: {FormatShippingPersianDate(now)}\n\n" +
+                            $"آیدی: {OrderCustomerLabel(customer)}\n\n{FormatAddressReadyItems(items, models)}";
+                        foreach (var part in SplitTelegramMessage(report))
+                        {
+                            var sent = await _sender.SendAsync(preparationChat, part, ct);
+                            if (!sent.IsSuccessful || sent.MessageId is not > 0)
+                                throw new InvalidOperationException($"In-person pickup report failed: {sent.Error}");
+                            sentMessageIds.Add(sent.MessageId.Value);
+                        }
+
+                        await _db.OrderItems.Where(item => !item.IsDeleted && item.ShippingRequestId == requestId)
+                            .ExecuteUpdateAsync(setters => setters
+                                .SetProperty(item => item.ShippingTelegramMessageId, sentMessageIds[0]), CancellationToken.None);
+                        await transaction.CommitAsync(CancellationToken.None);
+                        recorded = true;
+                    }
+                }
+            }
+            catch (Exception exception) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(exception, "In-person pickup failed for customer {CustomerId}.", draft.CustomerId);
+                error = exception is ShippingRecipientValidationException ? exception.Message :
+                    "ثبت تحویل حضوری کامل نشد؛ دوباره «تحویل حضوری» را بفرستید.";
+            }
+            finally
+            {
+                if (!recorded)
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    _db.ChangeTracker.Clear();
+                    foreach (var messageId in sentMessageIds)
+                    {
+                        var removed = await _sender.DeleteMessageAsync(preparationChat, messageId, CancellationToken.None);
+                        if (!removed.IsSuccessful)
+                            _logger.LogWarning("Could not remove incomplete pickup report {MessageId}: {Error}", messageId, removed.Error);
+                    }
+                }
+            }
+        }
+        if (recorded)
+            _orderFlowDrafts.ClearShippingPreparation(draft.ChatId, draft.UserId);
+        await _sender.SendReplyAsync(draft.ChatId.ToString(), error ?? "جهت آماده سازی ارسال شد",
+            message.MessageId, ct);
+        return true;
+    }
+
     private async Task<bool> EnsureActiveCustomerGroupLinkAsync(TelegramChat chat, CancellationToken ct)
     {
         var chatId = chat.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -1059,8 +1165,10 @@ public sealed partial class TelegramWebhookController
             !value.IsDeleted && value.IsActive && value.ChatId == draft.ChatId.ToString(), ct) > 1;
         if (hasMultipleConnections)
             buttons.Add(new[] { new TelegramInlineButton("⚙️ مدیریت اتصال‌های این گروه", "shipping:manageconnections") });
+        var pickupHint = !draft.AllowUnlinkedChat || draft.LinkGroupOnIdentity
+            ? "\nبرای دریافت حضوری، «تحویل حضوری» را تایپ کنید." : string.Empty;
         await _sender.SendInlineKeyboardAsync(draft.ChatId.ToString(),
-            $"📮 آماده‌سازی پست\nمشتری: {OrderCustomerLabel(customer)}\n\nآدرس را بررسی و انتخاب کنید:", buttons, ct);
+            $"📮 آماده‌سازی پست\nمشتری: {OrderCustomerLabel(customer)}\n\nآدرس را بررسی و انتخاب کنید:{pickupHint}", buttons, ct);
     }
 
     private async Task SendShippingPreparationPreviewAsync(TelegramShippingPreparationDraft draft, CancellationToken ct)

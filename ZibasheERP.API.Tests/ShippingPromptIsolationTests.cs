@@ -16,14 +16,14 @@ public static class ShippingPromptIsolationTests
         var connection=Environment.GetEnvironmentVariable("TRACKING_TEST_DB_CONNECTION");if(string.IsNullOrWhiteSpace(connection))return;
         var cs=new SqlConnectionStringBuilder(connection);if(cs.InitialCatalog!="ZibasheERPCloudDev"||cs.DataSource!="127.0.0.1,14333")throw new InvalidOperationException("Isolated development database required");
         await using var db=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connection).Options);
-        const long owner=771234567,chat=-1004432663999;
+        const long owner=771234567,chat=-1004432663999,preparation=-1004432664000;
         var customer=new Customer{Id=Guid.NewGuid(),CreatedAt=DateTime.UtcNow,FullName="Shipping prompt fixture",Mobile=Guid.NewGuid().ToString("N")[..18],TelegramId=owner.ToString()};
         var group=new CustomerTelegramGroup{Id=Guid.NewGuid(),CustomerId=customer.Id,ChatId=chat.ToString(),Title="Shipping fixture",CreatedAt=DateTime.UtcNow,LinkedAt=DateTime.UtcNow};
         db.Customers.Add(customer);db.CustomerTelegramGroups.Add(group);await db.SaveChangesAsync();
         var sender=DispatchProxy.Create<ITelegramMessageSender,ShippingPromptSender>();var sent=(ShippingPromptSender)(object)sender;
         var drafts=new TelegramOrderFlowDraftStore();
         var controller=(TelegramWebhookController)RuntimeHelpers.GetUninitializedObject(typeof(TelegramWebhookController));
-        foreach(var (name,value) in new(string,object)[]{("_db",db),("_sender",sender),("_options",new TelegramOptions{OwnerUserId=owner.ToString()}),("_orderFlowDrafts",drafts),("_adminActivityContext",new AdminActivityContext()),("_logger",NullLogger<TelegramWebhookController>.Instance)})typeof(TelegramWebhookController).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(controller,value);
+        foreach(var (name,value) in new(string,object)[]{("_db",db),("_sender",sender),("_options",new TelegramOptions{OwnerUserId=owner.ToString(),ShippingChatId=preparation.ToString()}),("_orderFlowDrafts",drafts),("_adminActivityContext",new AdminActivityContext()),("_logger",NullLogger<TelegramWebhookController>.Instance)})typeof(TelegramWebhookController).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(controller,value);
         var draft=new TelegramShippingPreparationDraft{ChatId=chat,UserId=owner,CustomerId=customer.Id,Stage=TelegramShippingPreparationStage.AwaitingNewAddress};drafts.SetShippingPreparation(draft);
         TelegramMessage Message(string text,long? reply=null,bool bot=true)=>new(text,new(chat,"supergroup","Shipping fixture"),new(owner,null),null,MessageId:400,ReplyToMessage:reply.HasValue?new("آدرس کامل را وارد کنید",new(chat,"supergroup"),new(123,null,IsBot:bot),null,MessageId:reply.Value):null);
         Task<bool> Handle(TelegramMessage message)=>(Task<bool>)typeof(TelegramWebhookController).GetMethod("TryHandleShippingPreparationMessageAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(controller,[message,CancellationToken.None])!;
@@ -52,21 +52,96 @@ public static class ShippingPromptIsolationTests
             drafts.ClearShippingPreparation(chat,owner);
             check(await Handle(Message(postalAddress,correct)),"after draft loss an authorized direct bot-prompt reply recovers exact binding and completes address registration");
             check(drafts.TryGetShippingPreparation(chat,owner,out var recovered)&&recovered.Stage==TelegramShippingPreparationStage.Ready&&recovered.InputPromptMessageId==correct,"recovered address draft retains exact prompt ID and advances to confirmation");
+            await VerifyInPersonPickupAsync(db, controller, sent, drafts, customer, Message("/ad"), check);
         }
         finally
         {
             await db.Addresses.Where(a=>a.CustomerId==customer.Id).ExecuteDeleteAsync();await db.CustomerTelegramGroups.Where(g=>g.Id==group.Id).ExecuteDeleteAsync();await db.Customers.Where(c=>c.Id==customer.Id).ExecuteDeleteAsync();
         }
     }
+
+    private static async Task VerifyInPersonPickupAsync(AppDbContext db, TelegramWebhookController controller,
+        ShippingPromptSender sender, TelegramOrderFlowDraftStore drafts, Customer customer, TelegramMessage command,
+        Action<bool, string> check)
+    {
+        const BindingFlags privateMethods = BindingFlags.Instance | BindingFlags.NonPublic;
+        var commandHandler = typeof(TelegramWebhookController).GetMethod("TryHandleShippingPreparationCommandAsync", privateMethods)!;
+        var pickupHandler = typeof(TelegramWebhookController).GetMethod("TryHandleInPersonPickupMessageAsync", privateMethods)!;
+        Task<bool> Pickup(TelegramMessage message) => (Task<bool>)pickupHandler.Invoke(controller, [message, CancellationToken.None])!;
+        var pickup = command with { Text = "  تحويل   حضوری ", MessageId = 401 };
+        var otherCustomer = new Customer { Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, FullName = "Other fixture",
+            Mobile = Guid.NewGuid().ToString("N")[..18] };
+        Order OrderFor(Customer profile) => new()
+        {
+            Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, CustomerId = profile.Id,
+            OrderNumber = Guid.NewGuid().ToString("N")[..20], Status = OrderStatus.ReadyToShip
+        };
+        OrderItem ItemFor(Order order, string name, OrderItemFulfillmentStatus status = OrderItemFulfillmentStatus.DecantedReadyToShip) => new()
+        {
+            Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow, OrderId = order.Id,
+            ManualDescription = name, FulfillmentStatus = status, RequestedVolumeMl = 2
+        };
+        var order = OrderFor(customer);
+        var otherOrder = OrderFor(otherCustomer);
+        var ready = ItemFor(order, "Pickup perfume");
+        var reserved = ItemFor(order, "Already in postal parcel");
+        var openParcel = Guid.NewGuid();
+        reserved.ShippingRequestId = openParcel;
+        var notReady = ItemFor(order, "Still being decanted", OrderItemFulfillmentStatus.DecantQueue);
+        var unrelated = ItemFor(otherOrder, "Other customer's perfume");
+        var orderIds = new[] {order.Id, otherOrder.Id};
+        db.Customers.Add(otherCustomer);
+        db.Orders.AddRange(order, otherOrder);
+        db.OrderItems.AddRange(ready, reserved, notReady, unrelated);
+        await db.SaveChangesAsync();
+        try
+        {
+            check(await (Task<bool>)commandHandler.Invoke(controller, [command, CancellationToken.None])! &&
+                sender.LastKeyboard?.Contains("«تحویل حضوری» را تایپ کنید") == true,
+                "/ad offers a typed in-person pickup in the linked customer group");
+            check(!await Pickup(pickup with { From = new TelegramUser(999, null) }),
+                "a customer message cannot trigger the operator's pickup draft");
+            sender.FailText = true;
+            check(await Pickup(pickup) && (await db.OrderItems.AsNoTracking().SingleAsync(i => i.Id == ready.Id))
+                is { FulfillmentStatus: OrderItemFulfillmentStatus.DecantedReadyToShip, ShippingRequestId: null, ShippedAt: null },
+                "a rejected preparation-group post rolls back the in-person pickup so it can be retried");
+            sender.FailText = false;
+            check(await Pickup(pickup) && sender.LastText is { } report &&
+                report.StartsWith("❌️❌️❌️تحویل حضوری❌️❌️❌️\n", StringComparison.Ordinal) &&
+                report.Contains("Pickup perfume") && !report.Contains("Already in postal parcel") &&
+                !report.Contains("Other customer's perfume") && sender.LastReplyTo == pickup.MessageId &&
+                sender.Replies.Last() == "جهت آماده سازی ارسال شد",
+                "pickup sends the preparation report with the exact header, then replies directly to the operator");
+            var stored = await db.OrderItems.AsNoTracking().Where(i => orderIds.Contains(i.OrderId)).ToDictionaryAsync(i => i.Id);
+            check(stored[ready.Id] is { FulfillmentStatus: OrderItemFulfillmentStatus.Shipped, ShippedAt: not null,
+                      ShippingRequestId: not null, ShippingTelegramMessageId: not null } &&
+                stored[reserved.Id].ShippingRequestId == openParcel && stored[reserved.Id].ShippedAt is null &&
+                stored[notReady.Id].FulfillmentStatus == OrderItemFulfillmentStatus.DecantQueue && stored[unrelated.Id].ShippedAt is null,
+                "only ready unassigned items of the selected customer change to shipped");
+            check(!drafts.TryGetShippingPreparation(command.Chat.Id, command.From!.Id, out _) && !await Pickup(pickup),
+                "a repeated pickup message cannot repost a completed request");
+        }
+        finally
+        {
+            await db.OrderItems.Where(i => orderIds.Contains(i.OrderId)).ExecuteDeleteAsync();
+            await db.Orders.Where(o => orderIds.Contains(o.Id)).ExecuteDeleteAsync();
+            await db.Customers.Where(c => c.Id == otherCustomer.Id).ExecuteDeleteAsync();
+        }
+    }
 }
 public class ShippingPromptSender:DispatchProxy
 {
     public long LastId=1000;public bool FailPrompt;public List<string> Replies=[];
+    public bool FailText;
+    public string? LastText, LastKeyboard;
+    public long LastReplyTo;
     protected override object? Invoke(MethodInfo? method,object?[]? args)
     {
         if(method!.Name is "SendForceReplyAsync" or "SendKeyboardDismissAsync")return Task.FromResult(FailPrompt?new TelegramSendResult(false):new TelegramSendResult(true,MessageId:++LastId));
-        if(method.Name=="SendReplyAsync"){Replies.Add((string)args![1]!);return Task.FromResult(new TelegramSendResult(true,MessageId:++LastId));}
-        if(method.Name is "SendAsync" or "SendInlineKeyboardAsync" or "DeleteMessageAsync")return Task.FromResult(new TelegramSendResult(true,MessageId:++LastId));
+        if(method.Name=="SendReplyAsync"){Replies.Add((string)args![1]!);LastReplyTo=(long)args[2]!;return Task.FromResult(new TelegramSendResult(true,MessageId:++LastId));}
+        if(method.Name=="SendAsync"){LastText=(string)args![1]!;return Task.FromResult(FailText?new TelegramSendResult(false):new TelegramSendResult(true,MessageId:++LastId));}
+        if(method.Name=="SendInlineKeyboardAsync")LastKeyboard=(string)args![1]!;
+        if(method.Name is "SendInlineKeyboardAsync" or "DeleteMessageAsync")return Task.FromResult(new TelegramSendResult(true,MessageId:++LastId));
         if(method.Name=="IsChatAdministratorAsync")return Task.FromResult(true);
         throw new NotSupportedException(method.Name);
     }
