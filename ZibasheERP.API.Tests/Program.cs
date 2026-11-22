@@ -11,6 +11,11 @@ if (args.Contains("--initialize-test-database"))
 }
 
 static void Check(bool value, string name) { if (!value) throw new Exception(name); Console.WriteLine("PASS " + name); }
+if (args.Contains("--address-label-print"))
+{
+    await AddressLabelPrintTests.Run(Check, args.Length == 2 ? args[1] : null);
+    return;
+}
 if(args.Contains("--hourly-promotions"))
 {
     await HourlyPromotionTests.Run(Check);
@@ -333,6 +338,7 @@ await FlashSaleMainPriceTests.Run(Check);
 InvoicedSalesListReportTests.Run(Check);
 AddressReadyItemsTests.Run(Check);
 ShippingAddressDisplayTests.Run(Check);
+await AddressLabelPrintTests.Run(Check);
 ShippingRecipientInvariantTests.Run(Check);
 SharedDecantGroupTests.Run(Check);
 SilentGroupTests.Run(Check);

@@ -34,6 +34,7 @@ public interface IAddressLabelService
 public sealed class AddressLabelService : IAddressLabelService, IDisposable
 {
     private const string FontFamily = "B Nazanin";
+    private const string CompletePhonePattern = @"(?<![0-9+])(?:\+98|0098|0)(?:[\s\p{Pd}()]*[0-9]){10}(?![0-9])";
     private readonly AddressLabelOptions _options;
     private readonly HttpClient _httpClient;
     private readonly ILogger<AddressLabelService> _logger;
@@ -79,12 +80,16 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                     address.ReceiverName.Trim(), address.FullAddress.Trim(), address.Mobile.Trim(),
                     address.PostalCode.Trim(), address.City.Trim(), string.Empty);
 
+            parsed = parsed with
+            {
+                Mobile = NormalizePrintPhones(parsed.Mobile),
+                PostalCode = NormalizePostalCode(parsed.PostalCode)
+            };
             var missing = MissingFields(parsed);
             if (missing.Length > 0)
                 return new AddressLabelResult(false, Error:
                     $"اطلاعات {string.Join("، ", missing)} در متن آدرس پیدا نشد؛ آدرس را کامل‌تر ثبت کنید.");
 
-            parsed = parsed with { PostalCode = NormalizePostalCode(parsed.PostalCode) };
             var document = BuildDocument(parsed);
             var pdf = document.GeneratePdf();
             var preview = document.GenerateImages(new ImageGenerationSettings
@@ -134,7 +139,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                             mobile همه شماره‌های تماس موجود در متن است: هم موبایل‌های ۱۱ رقمی که با 09 یا ۰۹ شروع می‌شوند و هم تلفن‌های ثابت، ترجیحاً همراه کد شهر. شماره‌ای که صریحاً با برچسب «تلفن»، «تلفن ثابت»، «تماس» یا «موبایل» آمده را حفظ کن. اگر بیش از یک شماره وجود دارد همه شماره‌های متمایز را به همان ترتیب متن و با «،» در یک رشته برگردان و هیچ‌کدام را حذف نکن. postalCode فقط کدپستی دقیقاً ۱۰ رقمی است؛ آن را با هیچ شماره تماسی اشتباه نگیر و مقدار بدون قرینه کدپستی را postalCode تلقی نکن.
                             city فقط تقسیمات مقصد پستی را نگه دارد: استان، شهرستان، شهر و در صورت تصریح، بخش یا روستا. اگر استان و شهرستان یا دو شهر مقصد در متن آمده، همه را به ترتیب کلی به جزئی و با «،» برگردان؛ مثال: «فارس، داراب، دولت‌آباد». محله، کوی، منطقه، ناحیه، شهرک، خیابان، بلوار و کوچه هرگز city نیستند؛ حتی وقتی کلمه «محله» قبل از نامشان نوشته نشده باشد. نام‌های شناخته‌شده‌ای مانند تهرانپارس، پونک، سعادت‌آباد، نارمک، جنت‌آباد، معالی‌آباد و قاسم‌آباد را شهر تشخیص نده.
                             neighborhood نام محله، کوی، منطقه، ناحیه یا شهرک است؛ چه با برچسب نوشته شده باشد چه فقط نام آن آمده باشد. مثال: برای «تهران، تهرانپارس، خیابان رشید» مقدار city برابر «تهران» و neighborhood برابر «تهرانپارس» است. برای «تهران، شهرک غرب، بلوار فرحزادی» نیز city برابر «تهران» و neighborhood برابر «شهرک غرب» است. اگر محله وجود ندارد رشته خالی برگردان.
-                            fullAddress فقط ادامه نشانی قابل تحویل را نگه دارد و نام گیرنده، موبایل، کدپستی و نام‌های استان/شهرستان/شهر/بخش/روستایی را که در city قرار داده‌ای از آن حذف کند تا مقصد دوباره داخل آدرس تکرار نشود. محله، کوی، منطقه، ناحیه، شهرک، خیابان، بلوار، کوچه، پلاک و واحد را حتماً حفظ کن و هیچ‌کدام را به city منتقل نکن. وجود neighborhood در fullAddress مجاز و لازم است.
+                            fullAddress ادامهٔ نشانی را با همان ترتیب و نام‌های کامل نگه دارد. نام گیرنده، شماره تماس، کدپستی و بخش‌های مستقلِ معرفی مقصد (مثل خط «شهر: زنجان» یا «زنجان، خیابان …» در ابتدای آدرس) را جدا کن. اگر نام استان یا شهر جزئی از عبارت داخل نشانی است، کل عبارت را عیناً حفظ کن، حتی اگر همان نام در city هم آمده باشد. مثال: «اداره برق آذربایجان شرقی»، «اداره پست زنجان» و «خیابان زنجان» باید کامل بمانند. محله، کوی، منطقه، ناحیه، شهرک، خیابان، بلوار، کوچه، پلاک و واحد را حتماً حفظ کن. وجود neighborhood در fullAddress لازم است.
                             هیچ مقدار مفقودی را حدس نزن و ارقام را حفظ کن. اگر کدپستی موجود نبود postalCode را رشته خالی برگردان؛ برای سایر مقدارهای پیدا نشده نیز رشته خالی برگردان تا سامانه درخواست اصلاح کند.
                             """
                     },
@@ -153,7 +158,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                             properties = new
                             {
                                 receiverName = new { type = "string", description = "نام شخص گیرنده، حتی اگر فقط یک نام خانوادگی تک‌کلمه‌ای باشد، مستقل از محل قرارگیری آن در متن" },
-                                fullAddress = new { type = "string", description = "ادامه نشانی بدون نام گیرنده، تلفن، کدپستی و نام‌های درج‌شده در شهر مقصد" },
+                                fullAddress = new { type = "string", description = "ادامهٔ نشانی بدون فیلدهای مستقل گیرنده، تلفن، کدپستی و مقصد؛ نام شهر یا استان داخل نام مکان، اداره، خیابان و سایر عبارت‌های نشانی باید کامل حفظ شود" },
                                 mobile = new { type = "string", description = "همه شماره‌های تماس متمایز شامل موبایل و تلفن ثابت، با ویرگول فارسی از هم جداشده" },
                                 postalCode = new { type = "string", description = "فقط کدپستی دقیقاً ده‌رقمی یا رشته خالی در صورت نبودن" },
                                 city = new { type = "string", description = "فقط تقسیمات اداری مقصد به ترتیب استان، شهرستان، شهر و بخش یا روستا؛ بدون محله، کوی، منطقه، ناحیه، شهرک، خیابان و کوچه" },
@@ -181,8 +186,59 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
         {
             PropertyNameCaseInsensitive = true
         }) ?? throw new InvalidOperationException("OpenAI returned an empty address result.");
-        return MoveNeighborhoodsOutOfCity(parsed, rawAddress);
+        parsed = MoveNeighborhoodsOutOfCity(parsed, rawAddress);
+        return parsed with { FullAddress = RestoreInlineDestinations(parsed.FullAddress, parsed.City, rawAddress) };
     }
+
+    internal static string RestoreInlineDestinations(string address, string city, string original)
+    {
+        var places = city.Split(['،', ',', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .OrderByDescending(part => part.Length);
+        var clauses = original.Split(['،', ',', '\n', '\r', '؛', ';'], StringSplitOptions.TrimEntries);
+        foreach (var place in places)
+        {
+            // Match complete place names, including multipart names such as آذربایجان شرقی.
+            var name = string.Join(@"\s+", NormalizeAddressLetters(place)
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(Regex.Escape));
+            foreach (var clause in clauses)
+            {
+                var normalizedClause = NormalizeAddressLetters(clause);
+                if (Regex.IsMatch(normalizedClause, @"^(?:نام(?: گیرنده)?|گیرنده|تلفن|تماس|موبایل|کدپستی)\s*[:：]"))
+                    continue;
+                foreach (Match mention in Regex.Matches(normalizedClause, $@"(?<![\p{{L}}\p{{M}}\p{{N}}]){name}(?![\p{{L}}\p{{M}}\p{{N}}])"))
+                {
+                    var before = normalizedClause[..mention.Index];
+                    var after = normalizedClause[(mention.Index + mention.Length)..];
+                    var words = Regex.Matches(before, @"[\p{L}\p{M}\p{N}\u200C]+").Select(word => word.Value).TakeLast(2).ToArray();
+                    if (words.Length == 0 || !char.IsWhiteSpace(before[^1]) ||
+                        words[^1] is "استان" or "شهر" or "شهرستان" or "بخش" or "روستا" or "مقصد")
+                        continue;
+
+                    var followingWord = Regex.Match(after, @"^\s+([\p{L}\p{M}\p{N}\u200C]+)");
+                    var suffix = followingWord.Success ? @"(?=\s+" + Regex.Escape(followingWord.Groups[1].Value) + @"(?![\p{L}\p{M}\p{N}]))" : "";
+                    var minimumAnchor = followingWord.Success ||
+                        words[^1] is "اداره" or "پست" or "برق" or "خیابان" or "بلوار" or "میدان" or "کوچه" or "جاده" ? 1 : 2;
+                    for (var count = words.Length; count >= minimumAnchor; count--)
+                    {
+                        var anchor = @"(?<![\p{L}\p{M}\p{N}])" +
+                            string.Join(@"\s+", words.TakeLast(count).Select(Regex.Escape)) +
+                            @"(?![\p{L}\p{M}\p{N}])";
+                        var normalizedAddress = NormalizeAddressLetters(address);
+                        if (Regex.IsMatch(normalizedAddress, anchor + @"\s+" + name + @"(?![\p{L}\p{M}\p{N}])" + suffix))
+                            break;
+                        var matches = Regex.Matches(normalizedAddress, anchor + suffix);
+                        if (matches.Count != 1) continue;
+                        var match = matches[0];
+                        address = address.Insert(match.Index + match.Length, " " + clause.Substring(mention.Index, mention.Length));
+                        break;
+                    }
+                }
+            }
+        }
+        return address;
+    }
+
+    private static string NormalizeAddressLetters(string value) => value.Replace('ي', 'ی').Replace('ك', 'ک');
 
     private static ParsedPostalAddress MoveNeighborhoodsOutOfCity(
         ParsedPostalAddress value,
@@ -260,6 +316,27 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
         if (string.IsNullOrWhiteSpace(value.City)) fields.Add("شهر مقصد");
         return fields.ToArray();
     }
+
+    internal static string NormalizePrintPhones(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        // A separator BETWEEN phones is different from the separators in one phone number.
+        var latin = new string(value.Select(ToLatinDigit)
+            .Where(c => char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format).ToArray());
+        return string.Join("، ", latin.Split(['،', ',', '؛', ';', '/', '|', '\n', '\r'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .SelectMany(segment =>
+            {
+                var nationalNumbers = Regex.Matches(segment, CompletePhonePattern);
+                if (nationalNumbers.Count > 1 &&
+                    Regex.Replace(segment, CompletePhonePattern, "").All(c => char.IsWhiteSpace(c) || c is '(' or ')'))
+                    return nationalNumbers.Select(match => CompactPhone(match.Value));
+                return new[] { CompactPhone(segment) };
+            }).Where(number => number.Any(char.IsAsciiDigit)).Distinct(StringComparer.Ordinal));
+    }
+
+    private static string CompactPhone(string value) =>
+        Regex.Replace(value, @"[\s\p{Pd}()]+", "");
 
     private static string NormalizePostalCode(string value)
     {
