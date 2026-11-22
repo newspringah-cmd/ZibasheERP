@@ -314,8 +314,11 @@ public static class ShippingReferenceTests
             check(sent.Calls.Count(c=>c.Success&&c.Chat==Ship.ToString()&&c.Text.StartsWith("✏️ درخواست اصلاح")&&c.Text.Contains(correctedNote))==1&&
                 sent.Calls.Count(c=>c.Success&&c.Chat==Client.ToString()&&c.Text=="برای بررسی مجدد ارسال شد"&&c.ReplyTo==singleMessage)==1,
                 "operator receives the exact correction once and customer gets one visible review-sent reply under their photo, without resending the operator note on retry");
-            check(sent.Calls.Single(c=>c.Success&&c.Chat==Ship.ToString()&&c.Text.StartsWith("✏️ درخواست اصلاح")&&c.Text.Contains(correctedNote)).ReplyTo==12000,
+            var operatorNote=sent.Calls.Single(c=>c.Success&&c.Chat==Ship.ToString()&&c.Text.StartsWith("✏️ درخواست اصلاح")&&c.Text.Contains(correctedNote));
+            check(operatorNote.ReplyTo==12000,
                 "correction note is threaded to the exact recorded package address rather than another customer's photo or address");
+            check(operatorNote.Text.StartsWith("✏️ درخواست اصلاح عکس بسته\n❌️❌️❌️❌️❌️❌️\n",StringComparison.Ordinal),
+                "preparation-group correction shows six red crosses on the line below its heading");
             await Handle("approve",singleId,actor:88119944,chat:Client,message:singleMessage);
             check((await Receipt(singleId)).State==ShippingPackApprovalState.RevisionRequested&&!await Throws(()=>ShippingPackageService.ValidateDispatchAsync(db,newParcel,customer.Id)),
                 "old-photo approval cannot erase submitted correction feedback and operator tracking stays available");

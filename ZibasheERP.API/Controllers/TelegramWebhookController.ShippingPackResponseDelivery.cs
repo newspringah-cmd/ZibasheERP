@@ -70,7 +70,7 @@ public sealed partial class TelegramWebhookController
                 var itemSummary=current.Value.Approval.LegacyAddressOnly?"اقلام ثبت‌شدهٔ قبلی":$"تعداد آیتم‌ها: {current.Value.Approval.ItemIds.Length}";
                 var text=data.Kind=="confirmed"?$"{(data.StaffApproval?"✅ تأیید مدیر/ادمین برای ارسال":"✅ تأیید مشتری برای ارسال")}\n{OrderCustomerLabel(current.Value.Customer)}\n{itemSummary}"+
                     (data.StaffApproval?"\nثبت تأیید توسط "+ShippingPackStaffLabel(data.ActorId,data.ActorUsername):""):
-                    $"✏️ درخواست اصلاح عکس بسته\n{OrderCustomerLabel(current.Value.Customer)}\n{itemSummary}\n\nتوضیحات اصلاح:\n{data.RevisionText}";
+                    $"✏️ درخواست اصلاح عکس بسته\n❌️❌️❌️❌️❌️❌️\n{OrderCustomerLabel(current.Value.Customer)}\n{itemSummary}\n\nتوضیحات اصلاح:\n{data.RevisionText}";
                 var request=current.Value.Approval.RequestId;
                 var addresses=request.HasValue?await _db.OrderItems.AsNoTracking().Where(i=>!i.IsDeleted&&i.ShippingRequestId==request&&i.ShippingTelegramMessageId.HasValue)
                     .Select(i=>i.ShippingTelegramMessageId!.Value).Distinct().Take(2).ToArrayAsync(ct):[];
