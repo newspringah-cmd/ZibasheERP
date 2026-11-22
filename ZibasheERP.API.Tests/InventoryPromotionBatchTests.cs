@@ -25,7 +25,7 @@ public static class InventoryPromotionBatchTests
         const string channel = "-1003456087123";
         var used = (await db.SalesLists.Where(l => l.InventoryCode != null).Select(l => l.InventoryCode!.Value).ToArrayAsync()).ToHashSet();
         var codes = Enumerable.Range(1000, 9000).Where(code => !used.Contains(code)).Take(51).ToArray();
-        var highest = await db.SalesLists.MaxAsync(l => l.PublicCode);
+        var highest = await db.SalesLists.MaxAsync(l => (int?)l.PublicCode) ?? 0;
         var perfume = await db.Perfumes.Select(p => p.Id).FirstAsync();
         var now = DateTime.UtcNow;
         var lists = codes.Select((code, index) => new SalesList
