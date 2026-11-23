@@ -15,6 +15,7 @@ public static class AddressLabelPrintTests
         const BindingFlags helpers = BindingFlags.Static | BindingFlags.NonPublic;
         var phoneMethod = typeof(AddressLabelService).GetMethod("NormalizePrintPhones", helpers)!;
         var restoreMethod = typeof(AddressLabelService).GetMethod("RestoreInlineDestinations", helpers)!;
+        var preserveMethod = typeof(AddressLabelService).GetMethod("PreserveRawAddressDetails", helpers)!;
         string Phone(string value) => (string)phoneMethod.Invoke(null, [value])!;
         string Restore(string address, string city, string original) =>
             (string)restoreMethod.Invoke(null, [address, city, original])!;
@@ -39,6 +40,34 @@ public static class AddressLabelPrintTests
         check(Restore("اداره پست حجتیه", "زنجان", "زنجان، اداره پست زنجانسر") == "اداره پست حجتیه",
             "a city does not match the beginning of a different place name");
 
+        const string reportedAddress = """
+            زنجان، خیابان نمونه، لاستیک فروشی نادری (اگه نبودیم زنگ ۲۰۰ نگهبانی)
+            لطفا قبل از تحویل نامه رسان تماس بگیرد
+            نادری
+            ۰۹۱۲ ۱۲۳-۴۵۶۷
+            کد پستي:
+            ۰۱۲۳۴ - ٥٦٧٨٩
+            """;
+        const string expectedAddress = """
+            خیابان نمونه، لاستیک فروشی نادری
+            (اگه نبودیم زنگ ۲۰۰ نگهبانی)
+            لطفا قبل از تحویل نامه رسان تماس بگیرد
+            """;
+        var partial = new ParsedPostalAddress("نادری", "خیابان نمونه، لاستیک فروشی",
+            "۰۹۱۲ ۱۲۳-۴۵۶۷", "5678901234", "زنجان", "");
+        ParsedPostalAddress Preserve(ParsedPostalAddress parsed, string sourceText) =>
+            (ParsedPostalAddress)preserveMethod.Invoke(null, [parsed, sourceText])!;
+        var preserved = Preserve(partial, reportedAddress);
+        check(preserved.PostalCode == "0123456789", "raw label keeps the labeled postal code digits in the original order");
+        check(preserved.FullAddress == expectedAddress,
+            "raw label preserves a business surname, a parenthesized intercom instruction and a separate delivery note");
+        check(Preserve(preserved, reportedAddress) == preserved,
+            "raw label does not duplicate notes or a surname already present");
+        check(Preserve(partial, reportedAddress.Replace("کد پستي:\n", "")).PostalCode == "0123456789",
+            "legacy standalone postal codes retain their written order when the extracted halves were swapped");
+        check(Preserve(partial with { PostalCode = "" }, "زنجان، خیابان نمونه\n۰۲۴۳۳۳۳۴۴۴۴").PostalCode == "",
+            "an unlabeled phone number does not become a postal code");
+
         if (renderDirectory is null) return;
         var environment = new LabelEnvironment();
         using var service = new AddressLabelService(Options.Create(new AddressLabelOptions
@@ -48,16 +77,16 @@ public static class AddressLabelPrintTests
         var clientField = typeof(AddressLabelService).GetField("_httpClient", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var original = (HttpClient)clientField.GetValue(service)!;
         original.Dispose();
-        using var client = new HttpClient(new LabelResponseHandler()) { BaseAddress = new Uri("https://example.invalid/") };
+        using var client = new HttpClient(new LabelResponseHandler(partial)) { BaseAddress = new Uri("https://example.invalid/") };
         clientField.SetValue(service, client);
         var structured = new Address
         {
-            ReceiverName = "علی نمونه", FullAddress = addressText, Mobile = "۰۹۱۲ ۱۲۳-۴۵۶۷",
-            PostalCode = "۰۱۲۳-۴۵۶۷۸۹", City = "زنجان"
+            ReceiverName = "نادری", FullAddress = expectedAddress, Mobile = "۰۹۱۲ ۱۲۳-۴۵۶۷",
+            PostalCode = "۰۱۲۳۴-۴۵۶۷۸", City = "زنجان"
         };
         var raw = new Address
         {
-            FullAddress = source + "\nتماس: ۰۹۱۲ ۱۲۳-۴۵۶۷، ۰۲۴ ۳۳۳۳-۴۴۴۴",
+            FullAddress = reportedAddress,
             Description = "آدرس خام ثبت‌شده توسط حسابدار"
         };
         Directory.CreateDirectory(renderDirectory);
@@ -81,12 +110,10 @@ public static class AddressLabelPrintTests
         public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
     }
 
-    private sealed class LabelResponseHandler : HttpMessageHandler
+    private sealed class LabelResponseHandler(ParsedPostalAddress parsed) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            var parsed = new ParsedPostalAddress("علی نمونه", "خیابان نمونه، اداره پست پلاک ۷",
-                "۰۹۱۲ ۱۲۳-۴۵۶۷، ۰۲۴ ۳۳۳۳-۴۴۴۴", "۰۱۲۳-۴۵۶۷۸۹", "زنجان", "");
             var body = JsonSerializer.Serialize(new
             {
                 output = new[] { new { content = new[] { new { type = "output_text", text = JsonSerializer.Serialize(parsed) } } } }
