@@ -23,7 +23,9 @@ public sealed record AddressLabelResult(
     bool IsSuccessful,
     byte[]? Pdf = null,
     byte[]? Preview = null,
-    string? Error = null);
+    string? Error = null,
+    string? ReceiverName = null,
+    string? Phones = null);
 
 public interface IAddressLabelService
 {
@@ -102,7 +104,7 @@ public sealed class AddressLabelService : IAddressLabelService, IDisposable
                 ImageCompressionQuality = ImageCompressionQuality.VeryHigh,
                 RasterDpi = 200
             }).Single();
-            return new AddressLabelResult(true, pdf, preview);
+            return new AddressLabelResult(true, pdf, preview, ReceiverName: parsed.ReceiverName, Phones: parsed.Mobile);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

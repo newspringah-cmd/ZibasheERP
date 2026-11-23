@@ -1673,6 +1673,18 @@ public sealed partial class TelegramWebhookController
             if (!pdfResult.IsSuccessful)
                 await ReportAddressLabelFailureAsync(requestId, customer, warningChatId,
                     $"PDF لیبل ارسال نشد: {pdfResult.Error}", ct);
+            if (label.ReceiverName is { } printedName)
+            {
+                try
+                {
+                    await ZibasheERP.API.Tracking.TrackingLabelNames.RecordAsync(_db, address, printedName, ct,
+                        label.Phones, pdfResult.IsSuccessful || previewResult.IsSuccessful);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _logger.LogError(exception, "Could not save label recipient details for shipping address {AddressId}.", address.Id);
+                }
+            }
             return;
         }
         var identity = OrderCustomerLabel(customer);

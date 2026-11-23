@@ -42,7 +42,7 @@ public static class ShippingAddressDisplay
     }
     public static string NormalizeName(string value)=>Regex.Replace(Characters(value),@"\s+"," ").Trim();
     private static bool IsCourtesy(string value)=>Regex.IsMatch(value,@"^(?:مرسی|ممنونم?|سپاسگزارم|سپاس|متشکرم|با تشکر|لطفا)(?:\s|$)");
-    private static bool IsDisplayName(string value)=>value.Length is >=2 and <=100&&Regex.IsMatch(value,@"^[\p{L}\p{M} ]+$")&&
+    internal static bool IsDisplayName(string value)=>value.Length is >=2 and <=100&&Regex.IsMatch(value,@"^[\p{L}\p{M} ]+$")&&
         !IsCourtesy(value)&&!Regex.IsMatch(value,@"مشتری|نامشخص|ناشناس|ثبت دستی|توسط|خیابان|کوچه|پلاک|بلوار|کد\s*پستی|تلفن|شماره|طبقه|واحد|آدرس|نشانی|استان|شهرستان");
     public static string? RecipientName(Address address)
     {

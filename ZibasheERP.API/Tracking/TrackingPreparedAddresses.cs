@@ -15,8 +15,10 @@ public static class TrackingPreparedAddresses
         long? MessageId,bool Installed,Guid? AddressId);
 
     public static Task<PreparedTrackingAddress[]> LoadAsync(AppDbContext db,string shippingChat,CancellationToken ct,DateTime? sourceAsOf=null)=>LoadCoreAsync(db,shippingChat,ct,sourceAsOf,false);
+    internal static Task<PreparedTrackingAddress[]> LoadForLabelMatchAsync(AppDbContext db, string shippingChat, DateTime asOf, Guid[] printedCustomers, CancellationToken ct) =>
+        LoadCoreAsync(db, shippingChat, ct, asOf, false, printedCustomers);
     public static Task<PreparedTrackingAddress[]> LoadForNameWarningsAsync(AppDbContext db,string shippingChat,CancellationToken ct)=>LoadCoreAsync(db,shippingChat,ct,null,true);
-    private static async Task<PreparedTrackingAddress[]> LoadCoreAsync(AppDbContext db,string shippingChat,CancellationToken ct,DateTime? sourceAsOf,bool forNameWarnings)
+    private static async Task<PreparedTrackingAddress[]> LoadCoreAsync(AppDbContext db,string shippingChat,CancellationToken ct,DateTime? sourceAsOf,bool forNameWarnings,Guid[]? printedCustomers=null)
     {
         if(string.IsNullOrWhiteSpace(shippingChat)||!shippingChat.StartsWith('-'))return [];
         var asOf=sourceAsOf??DateTime.UtcNow;var since=forNameWarnings?DateTime.MinValue:asOf.AddDays(-45);
@@ -30,8 +32,10 @@ public static class TrackingPreparedAddresses
                 roots.Add((row,r));
         }
         var addressIds=roots.Select(r=>r.Data.AddressId!.Value).Distinct().ToArray();
+        var manualLabelCustomers = printedCustomers ?? [];
         var addresses=await db.Addresses.AsNoTracking().Include(a=>a.Customer).Where(a=>!a.IsDeleted&&(a.UpdatedAt??a.CreatedAt)<=asOf&&addressIds.Contains(a.Id)&&a.Customer!=null&&!a.Customer.IsDeleted&&
-            (forNameWarnings||db.CustomerTelegramGroups.Any(g=>g.CustomerId==a.CustomerId&&!g.IsDeleted&&g.IsActive))).ToDictionaryAsync(a=>a.Id,ct);
+            (forNameWarnings||db.CustomerTelegramGroups.Any(g=>g.CustomerId==a.CustomerId&&!g.IsDeleted&&g.IsActive)||
+                manualLabelCustomers.Contains(a.CustomerId)&&a.Customer.Notes!=null&&a.Customer.Notes.StartsWith("manual-address-registration:"))).ToDictionaryAsync(a=>a.Id,ct);
         var ids=roots.SelectMany(r=>r.Data.ItemIds).Distinct().ToArray();
         var ready=(await db.OrderItems.AsNoTracking().Where(i=>ids.Contains(i.Id)&&!i.IsDeleted&&i.Order!=null&&!i.Order.IsDeleted&&i.Order.Status!=OrderStatus.Cancelled&&i.FulfillmentStatus==OrderItemFulfillmentStatus.DecantedReadyToShip&&i.ShippedAt==null)
             .Select(i=>i.Id).ToArrayAsync(ct)).ToHashSet();

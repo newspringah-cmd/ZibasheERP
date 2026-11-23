@@ -93,8 +93,9 @@ public static class AddressLabelPrintTests
         foreach (var (name, input) in new[] { ("structured", structured), ("raw", raw) })
         {
             var label = await service.CreateAsync(input, CancellationToken.None);
-            check(label.IsSuccessful && label.Pdf is { Length: > 0 } && label.Preview is { Length: > 0 },
-                $"{name} address produces the real label PDF and JPEG");
+            check(label.IsSuccessful && label.Pdf is { Length: > 0 } && label.Preview is { Length: > 0 } &&
+                label.ReceiverName == "نادری" && label.Phones == "09121234567",
+                $"{name} address produces the label PDF and JPEG and returns the printed receiver name and phones");
             await File.WriteAllBytesAsync(Path.Combine(renderDirectory, name + ".pdf"), label.Pdf!);
             await File.WriteAllBytesAsync(Path.Combine(renderDirectory, name + ".jpg"), label.Preview!);
         }

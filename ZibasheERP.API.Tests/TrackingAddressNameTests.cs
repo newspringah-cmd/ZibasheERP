@@ -129,12 +129,52 @@ public static class TrackingAddressNameTests
             var original=address.FullAddress;await db.Addresses.Where(a=>a.Id==address.Id).ExecuteUpdateAsync(s=>s.SetProperty(a=>a.FullAddress,original));
             var frames=await db.NotificationOutbox.CountAsync(n=>n.Channel=="TrackingRecipientSelection");await Call("trackingimport:select-open:"+attempted.Id.ToString("N"));
             check(await db.NotificationOutbox.CountAsync(n=>n.Channel=="TrackingRecipientSelection")==frames,"a dispatch with any prior send-start intent cannot be retargeted");
+
+            const string labelName = "کیانی";
+            const string rawLabelAddress = "تهران خیابان نمونه پلاک ۲، پاکت تحویل خانم كياني در نگهبانی";
+            var beforePrint = DateTime.UtcNow;
+            await db.Addresses.Where(x => x.Id == address.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.FullAddress, rawLabelAddress));
+            var printedAddress = await db.Addresses.AsNoTracking().SingleAsync(x => x.Id == address.Id);
+            check((await service.MatchAsync(labelName, "", default)).Status == TrackingDispatchStatus.NeedsReview,
+                "an unlabelled surname embedded in a raw address is not automatic shipping evidence");
+            const string printedPhones = "۰۹۱۲ ۱۲۳-۴۵۶۷، +۹۸ ۹۳۵-۱۱۱ ۲۲۲۲، 02433334444";
+            await TrackingLabelNames.RecordAsync(db, printedAddress, "كياني", default, printedPhones);
+            await TrackingLabelNames.RecordAsync(db, printedAddress, labelName, default, printedPhones);
+            check((await service.MatchAsync(labelName, "", default)) is { Status: TrackingDispatchStatus.Ready, CustomerId: var printedOwner } && printedOwner == a.Id,
+                "exact normalized printed receiver matches an open preparation address through the real import service");
+            var receipt = await db.NotificationOutbox.AsNoTracking().SingleAsync(n => n.CustomerId == a.Id && n.Channel == "ShippingLabelRecipientName");
+            using (var payload = JsonDocument.Parse(receipt.Payload))
+                check(payload.RootElement.GetProperty("MobileNumbers").EnumerateArray().Select(n => n.GetString())
+                    .SequenceEqual(["09121234567", "+989351112222"]), "reprinting is idempotent and retains each extracted mobile in the private label receipt");
+            check((await service.MatchAsync(labelName, "", default, beforePrint)).Status == TrackingDispatchStatus.NeedsReview &&
+                  (await service.MatchAsync("بیانی", "", default)).Status == TrackingDispatchStatus.NeedsReview,
+                "printed aliases are exact and cannot introduce later evidence into an earlier import");
+
+            var otherRoot = Guid.NewGuid();
+            await db.Customers.Where(c => c.Id == b.Id).ExecuteUpdateAsync(s =>
+                s.SetProperty(c => c.Notes, "manual-address-registration:1907823600:" + b.Id.ToString("N")));
+            await db.Addresses.Where(x => x.Id == old.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.FullAddress, rawLabelAddress));
+            db.NotificationOutbox.Add(new()
+            {
+                Id = otherRoot, CustomerId = b.Id, Channel = "ShippingReferenceContext", EventType = "AddressReferences",
+                Recipient = ship.ToString(), Payload = RootPayload(b.Id, old.Id), Status = NotificationOutboxStatus.Processed, CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+            await TrackingLabelNames.RecordAsync(db, await db.Addresses.AsNoTracking().SingleAsync(x => x.Id == old.Id), labelName, default);
+            check((await service.MatchAsync(labelName, "", default)) is { Status: TrackingDispatchStatus.NeedsReview, CustomerId: null },
+                "duplicate printed names across connected and manual addresses require review");
+            await db.Addresses.Where(x => x.Id == address.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.FullAddress, rawLabelAddress + " واحد سه"));
+            check((await service.MatchAsync(labelName, "", default)) is { Status: TrackingDispatchStatus.Ready, CustomerId: var manualOwner } && manualOwner == b.Id,
+                "a changed address cannot reuse an old printed name, and a valid manual registration matches via the manager");
+            await db.NotificationOutbox.Where(n => n.CustomerId == b.Id && (n.Id == otherRoot || n.Channel == "ShippingLabelRecipientName")).ExecuteDeleteAsync();
+            await db.Addresses.Where(x => x.Id == address.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.FullAddress, original));
+
             var sentRow=Dispatch("نرگس بهرامی");sentRow.CustomerId=a.Id;sentRow.Status=TrackingDispatchStatus.Sent;sentRow.SentAt=DateTime.UtcNow;db.TrackingDispatches.Add(sentRow);await db.SaveChangesAsync();
             check((await TrackingPreparedAddresses.LoadAsync(db,ship.ToString(),default)).Length==0,"a legacy prepared address already followed by delivered tracking is excluded from fresh candidate suggestions");
         }
         finally
         {
-            db.ChangeTracker.Clear();await db.NotificationOutbox.Where(n=>n.Id==root||n.CustomerId==a.Id||n.Channel=="TrackingRecipientSelection"&&n.Payload.Contains(batch.Id.ToString())).ExecuteDeleteAsync();
+            db.ChangeTracker.Clear();await db.NotificationOutbox.Where(n=>n.Id==root||n.CustomerId==a.Id||n.CustomerId==b.Id||n.Channel=="TrackingRecipientSelection"&&n.Payload.Contains(batch.Id.ToString())).ExecuteDeleteAsync();
             var dispatchIds=await db.TrackingDispatches.Where(d=>d.ImportBatchId==batch.Id).Select(d=>d.Id.ToString()).ToArrayAsync();
             foreach(var key in dispatchIds)await db.NotificationOutbox.Where(n=>n.Channel=="TrackingRecipientSelection"&&n.Payload.Contains(key)).ExecuteDeleteAsync();
             await db.TrackingImportBatches.Where(b=>b.Id==batch.Id).ExecuteDeleteAsync();await db.CustomerTelegramGroups.Where(g=>g.Id==group.Id).ExecuteDeleteAsync();

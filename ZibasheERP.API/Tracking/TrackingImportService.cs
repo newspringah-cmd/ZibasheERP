@@ -404,6 +404,27 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             .Distinct()
             .ToArrayAsync(ct);
 
+        var printedAddresses = await TrackingLabelNames.FindAddressesAsync(_db, target, asOf, ct);
+        if (printedAddresses.Count > 0)
+        {
+            var labelSources = await TrackingPreparedAddresses.LoadForLabelMatchAsync(_db, _shippingChatId, asOf,
+                printedAddresses.Values.Distinct().ToArray(), ct);
+            var printed = labelSources.Where(p => printedAddresses.TryGetValue(p.AddressId, out var owner) &&
+                owner == p.CustomerId).ToArray();
+            if (printed.Length > 0)
+            {
+                var owner = printed[0].CustomerId;
+                if (printed.Any(p => p.CustomerId != owner) ||
+                    active.Concat(labelSources.Select(PreparedCandidate))
+                        .Any(c => c.CustomerId != owner && CandidateNameScore(recipientName, c) == 1d))
+                    return new(null, null, TrackingDispatchStatus.NeedsReview, "نام روی لیبل با بیش از یک گیرندهٔ آماده‌سازی تطابق دارد؛ بررسی لازم است");
+
+                var match = new TrackingMatch(owner, printed[0].RequestId, TrackingDispatchStatus.Ready,
+                    "تطبیق دقیق با نام گیرندهٔ چاپ‌شده روی لیبل");
+                return await ResolvePreparedMatchAsync(match, active, ct);
+            }
+        }
+
         var activeResult = SelectUnique(recipientName, destination, active, requireExact: false);
         if (activeResult is not null)
         {
@@ -422,24 +443,10 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
             return activeResult;
         }
 
-        var prepared=await TrackingPreparedAddresses.LoadAsync(_db,_shippingChatId,ct,asOf);
-        var preparedResult=SelectUnique(recipientName,destination,prepared.Select(p=>new Candidate(p.CustomerId,p.RequestId,p.ReceiverName,p.City,p.FullAddress,p.CustomerName,p.PostedAt,true)),requireExact:true);
-        if(preparedResult is not null&&preparedResult.CustomerId is Guid preparedCustomer)
-        {
-            if(preparedResult.Status!=TrackingDispatchStatus.Ready)return preparedResult;
-            var packages=active.Where(c=>c.CustomerId==preparedCustomer).Select(c=>c.ShippingRequestId).Distinct().ToArray();
-            var request=preparedResult.ShippingRequestId??packages.Order().FirstOrDefault();
-            if(request is Guid package)
-            {
-                try
-                {
-                    var owner=await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidatePackageAsync(_db,package,preparedCustomer,ct);
-                    if(owner.Id!=preparedCustomer)throw new InvalidOperationException();
-                }
-                catch(InvalidOperationException){return new(null,null,TrackingDispatchStatus.NeedsReview,"گیرندهٔ بستهٔ آماده‌سازی قابل تأیید نیست؛ بررسی لازم است");}
-            }
-            return new(preparedCustomer,request,preparedResult.Status,"تطبیق دقیق نام کامل با آدرس گروه آماده‌سازی بسته");
-        }
+        var prepared = await TrackingPreparedAddresses.LoadAsync(_db, _shippingChatId, ct, asOf);
+        var preparedResult = SelectUnique(recipientName, destination, prepared.Select(PreparedCandidate), requireExact: true);
+        if (preparedResult is not null)
+            return await ResolvePreparedMatchAsync(preparedResult with { Notes = "تطبیق دقیق نام با آدرس گروه آماده‌سازی بسته" }, active, ct);
 
         var recentCutoff = asOf.AddDays(-180);
         var recent = await _db.Addresses.AsNoTracking()
@@ -487,6 +494,28 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         var oldResult = SelectUnique(recipientName, destination, old, requireExact: true);
         return oldResult is null?new TrackingMatch(null,null,TrackingDispatchStatus.NeedsReview,"تطبیق یکتا پیدا نشد؛ نیازمند بررسی ادمین"):
             await CheckManualAddressDestinationAsync(oldResult,ct);
+    }
+
+    private static Candidate PreparedCandidate(PreparedTrackingAddress p) =>
+        new(p.CustomerId, p.RequestId, p.ReceiverName, p.City, p.FullAddress, p.CustomerName, p.PostedAt, true);
+
+    private async Task<TrackingMatch> ResolvePreparedMatchAsync(TrackingMatch match, Candidate[] active, CancellationToken ct)
+    {
+        if (match.Status != TrackingDispatchStatus.Ready || match.CustomerId is not Guid customerId)
+            return match;
+        var request = match.ShippingRequestId ?? active.Where(c => c.CustomerId == customerId)
+            .Select(c => c.ShippingRequestId).Min();
+        if (request is not Guid package)
+            return await CheckManualAddressDestinationAsync(match, ct);
+        try
+        {
+            await ZibasheERP.Infrastructure.Services.ShippingPackageService.ValidatePackageAsync(_db, package, customerId, ct);
+            return match with { ShippingRequestId = package };
+        }
+        catch (InvalidOperationException)
+        {
+            return new(null, null, TrackingDispatchStatus.NeedsReview, "گیرندهٔ بستهٔ آماده‌سازی قابل تأیید نیست؛ بررسی لازم است");
+        }
     }
 
     private async Task<TrackingMatch> CheckManualAddressDestinationAsync(TrackingMatch match,CancellationToken ct)
@@ -1099,7 +1128,7 @@ public sealed partial class TrackingImportService : ITrackingImportService, IDis
         _ => character
     }).Where(char.IsAsciiDigit).ToArray());
 
-    private static string NormalizeName(string value)
+    internal static string NormalizeName(string value)
     {
         var normalized = value.Normalize(NormalizationForm.FormKC)
             .Replace('ي', 'ی').Replace('ى', 'ی').Replace('ك', 'ک')
