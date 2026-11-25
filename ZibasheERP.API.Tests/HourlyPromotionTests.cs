@@ -29,6 +29,20 @@ public static class HourlyPromotionTests
             "an extended promotion displays its exact Tehran deadline and Persian date instead of the obsolete original duration");
         check(timed.RequestedDurationMinutes==300&&timed.DiscountedPricePerMl==564000&&!HourlyPromotionCopy.Caption(timed,named,timed.EndsAtUtc).Contains("زمان باقی‌مانده"),
             "deadline display preserves original campaign settings and ends at the same exclusive pricing boundary");
+        var stock = new SalesList { IsInventoryOffer = true, InventoryCode = 1291, EnglishName = "Inventory fixture",
+            TotalVolume = 15, FixedBottlePrice = 150000 };
+        var stockOffer = new FlashSalePromotion { OriginalPricePerMl = 476000, DiscountPercent = 30,
+            RequestedDurationMinutes = 180, StartsAtUtc = clock, EndsAtUtc = clock.AddHours(3) };
+        var stockCaption = HourlyPromotionCopy.Caption(stockOffer, stock, clock);
+        check(stockCaption.Contains("حجم بسته: ۱۵ میل") && stockCaption.Contains("قیمت عادی بسته: ۷٬۲۹۰٬۰۰۰") &&
+              stockCaption.Contains("قیمت بسته با تخفیف: ۵٬۱۴۸٬۰۰۰") && stockCaption.Contains("زمان باقی‌مانده: ۰۳:۰۰") &&
+              !stockCaption.Contains("هر میل"), "inventory promotion shows whole-package totals including unchanged bottle price");
+        stockOffer.DiscountAmountPerMl = 10000;
+        stockCaption = HourlyPromotionCopy.Caption(stockOffer, stock, clock);
+        check(stockCaption.Contains("۱۵۰٬۰۰۰ تومان تخفیف روی مبلغ بسته") && stockCaption.Contains("قیمت بسته با تخفیف: ۷٬۱۴۰٬۰۰۰") &&
+              !stockCaption.Contains("هر میل"), "fixed inventory discounts are also expressed as a whole-package amount");
+        check(HourlyPromotionCopy.Caption(stockOffer, named, clock).Contains("قیمت هر میل با تخفیف"),
+            "the ordinary sale-list promotion still advertises the price per ml");
         var connection=Environment.GetEnvironmentVariable("TRACKING_TEST_DB_CONNECTION");
         if(string.IsNullOrWhiteSpace(connection))return;
         var target=new SqlConnectionStringBuilder(connection);

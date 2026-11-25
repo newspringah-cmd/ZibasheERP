@@ -26,14 +26,27 @@ public static class HourlyPromotionCopy
             var localEnd=TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.SpecifyKind(promotion.EndsAtUtc,DateTimeKind.Utc),"Asia/Tehran");
             headline=$"فرصت خرید عطر با تخفیف ویژه تا ساعت {Number(localEnd.Hour,"00")}:{Number(localEnd.Minute,"00")} روز {ZibasheERP.API.AddressLabels.ShippingAddressDisplay.RegisteredDate(promotion.EndsAtUtc)}";
         }
+        var discount = Discount(promotion);
+        var prices = $"💰 قیمت عادی هر میل: {Number(promotion.OriginalPricePerMl, "#,0.##")} تومان\n" +
+            $"💰 <b>قیمت هر میل با تخفیف: {Number(promotion.DiscountedPricePerMl, "#,0.##")} تومان</b>\n\n";
+        if (list.IsInventoryOffer)
+        {
+            var bottlePrice = list.FixedBottlePrice ?? 0;
+            var originalTotal = promotion.OriginalPricePerMl * list.TotalVolume + bottlePrice;
+            var discountedTotal = promotion.DiscountedPricePerMl * list.TotalVolume + bottlePrice;
+            var quantity = list.IsMiscellaneousInventory ? "۱ عدد" : $"{Number(list.TotalVolume)} میل";
+            if (promotion.DiscountAmountPerMl.HasValue)
+                discount = $"{Number(originalTotal - discountedTotal, "#,0.##")} تومان تخفیف روی مبلغ بسته";
+            prices = $"📦 {(list.IsMiscellaneousInventory ? "تعداد" : "حجم بسته")}: {quantity}\n" +
+                $"💰 قیمت عادی بسته: {Number(originalTotal, "#,0.##")} تومان\n" +
+                $"💰 <b>قیمت بسته با تخفیف: {Number(discountedTotal, "#,0.##")} تومان</b>\n\n";
+        }
         return $"⚡️ <b>{headline}</b>\n\nزیباشی‌های عزیزم 🌸\n" +
-            $"این بار نوبت <b>{Name(list)}</b> شده 🤍\n\n🎁 <b>{Discount(promotion)}</b>\n" +
-            $"💰 قیمت عادی هر میل: {Number(promotion.OriginalPricePerMl, "#,0.##")} تومان\n" +
-            $"💰 <b>قیمت هر میل با تخفیف: {Number(promotion.DiscountedPricePerMl, "#,0.##")} تومان</b>\n\n" +
+            $"این بار نوبت <b>{Name(list)}</b> شده 🤍\n\n🎁 <b>{discount}</b>\n" +
+            prices +
             $"⏳ <b>زمان باقی‌مانده: {timer}</b>\n" +
             "برای استفاده از تخفیف، ثبت نهایی آیتم باید قبل از پایان مهلت انجام بشه.\n\n" +
             $"📋 {(list.IsInventoryOffer?"کد موجودی":"کد لیست")}: <b>{Number(list.DisplayCode)}</b>\n" +
-            (list.IsInventoryOffer ? $"📦 {list.TotalVolume} میل با شیشه: {Number(promotion.DiscountedPricePerMl*list.TotalVolume+(list.FixedBottlePrice??0),"#,0.##")} تومان\n" : "") +
             (list.RemainingVolume > 0 ? "👇 از دکمهٔ زیر لیست رو ببین و خریدت رو ثبت کن ✨" : list.IsInventoryOffer?"این بسته فعلاً رزرو شده یا فروخته شده است؛ امکان خرید هم‌زمان ندارد.":"این باتل تکمیل شده؛ فرصت تخفیف تا پایان زمان اعلام‌شده روی چرخهٔ بعدی همین لیست ادامه دارد.");
     }
     public static string EndMessage(FlashSalePromotion promotion, SalesList list) =>

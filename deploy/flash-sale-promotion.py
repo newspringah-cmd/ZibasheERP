@@ -38,10 +38,12 @@ def timestamp(value):
 def caption(offer, now):
     if offer.get('caption'):
         text = offer['caption']
-        if offer['isActive'] and now < timestamp(offer['endsAtUtc']):
+        if not offer.get('isInventoryOffer') and offer['isActive'] and now < timestamp(offer['endsAtUtc']):
             line = remaining_caption(offer) + '\n'
             return text.replace('⏳', line + '⏳', 1) if '⏳' in text else text + '\n' + line.rstrip()
         return text
+    if offer.get('isInventoryOffer'):
+        raise ValueError('Inventory promotion requires the package caption from the API')
     if not offer['isActive'] or now >= timestamp(offer['endsAtUtc']):
         reason = 'ظرفیت لیست تکمیل شد' if offer['remainingVolume'] <= 0 else 'مهلت دو ساعته به پایان رسید'
         return (f'⏰ <b>{reason}</b>\n\n'

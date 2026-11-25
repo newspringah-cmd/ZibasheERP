@@ -66,7 +66,8 @@ class Tests(unittest.TestCase):
     def test_inventory_copy_keeps_its_own_receipt_and_countdown(self):
         destination = '@zibasheperfume_mojodi'
         self.t.offer.update(isInventoryOffer=True, listChatId=destination,
-                            listUrl='https://t.me/zibasheperfume_mojodi/123', caption='تخفیف ⋅ ⏳')
+                            listUrl='https://t.me/zibasheperfume_mojodi/123',
+                            caption='حجم بسته: ۱۵ میل\nقیمت عادی بسته: ۷٬۲۹۰٬۰۰۰ تومان\nقیمت بسته با تخفیف: ۵٬۱۴۸٬۰۰۰ تومان\n⏳ زمان باقی‌مانده: ۰۲:۰۰')
         self.publish()
         m.publish(self.t, self.root/'channel', OFFER['id'], lambda: START, destination=m.CHANNEL)
         for _ in range(2):
@@ -74,12 +75,20 @@ class Tests(unittest.TestCase):
         m.tick(self.t, self.root/'inventory', OFFER['id'], lambda: START+60, destination=destination)
         self.assertEqual([p['chat_id'] for method,p in self.t.calls if method=='sendPhoto'], [m.GROUP,m.CHANNEL,destination])
         self.assertEqual([p['chat_id'] for method,p in self.t.calls if method=='editMessageCaption'], [destination])
+        for method, payload in self.t.calls:
+            if method in ('sendPhoto', 'editMessageCaption'):
+                self.assertEqual(payload['caption'], self.t.offer['caption'])
+                self.assertNotIn('📦 <b>باقی‌مانده:', payload['caption'])
         self.assertEqual(self.t.bind_calls, 1)
         self.assertTrue(m.end_thanks(self.t, self.root, OFFER['id'], lambda: START+7201))
         self.assertEqual([p['chat_id'] for method,p in self.t.calls if method=='sendMessage'], [m.GROUP,m.CHANNEL,destination])
         self.t.offer['listChatId']='@other'
         with self.assertRaises(ValueError):
             m.publish_inventory(self.t, self.root/'other', OFFER['id'], self.t.offer, lambda: START)
+
+    def test_inventory_never_uses_the_ordinary_list_fallback_caption(self):
+        with self.assertRaisesRegex(ValueError, 'package caption'):
+            m.caption(dict(OFFER, isInventoryOffer=True), START)
 
     def test_approved_caption(self):
         text = m.caption(OFFER, START)
