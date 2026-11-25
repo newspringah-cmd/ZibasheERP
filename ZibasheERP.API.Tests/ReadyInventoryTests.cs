@@ -34,6 +34,14 @@ public static class ReadyInventoryTests
         var stock=new SalesList{IsInventoryOffer=true,InventoryCode=1234,PublicCode=998877,Status=SalesListStatus.Open,TotalVolume=3,MinimumRequestVolumeMl=3,StoragePosition="PRIVATE-POSITION"};
         check(stock.DisplayCode==1234&&!stock.CanReserveVolume(1,true)&&stock.CanReserveVolume(3),"ready package uses independent code and cannot be split even by admin");
         check(!ReadyInventoryPresentation.Caption(stock).Contains("PRIVATE-POSITION"),"public ready inventory caption never exposes physical position");
+        var stockPromotion = new FlashSalePricing.Quote(9000, Guid.NewGuid());
+        var editor = typeof(TelegramWebhookController).GetMethod("FormatPromotionChannelSalesListPages", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var editedStockPost = ((string Main, string? Continuation))editor.Invoke(null, [stock, Array.Empty<SalesListRequest>(), stockPromotion])!;
+        check(editedStockPost.Main == ReadyInventoryPresentation.Caption(stock, stockPromotion) &&
+              editedStockPost.Main.Contains("حجم: 3 میل") && editedStockPost.Main.Contains("مبلغ پروموشن: 27,000") &&
+              !editedStockPost.Main.Contains("حداقل") && !editedStockPost.Main.Contains("باقی‌مانده") &&
+              !editedStockPost.Main.Contains("Next Bottle") && editedStockPost.Continuation is null,
+            "editing inventory channel media uses the packaged-stock caption with volume and promotion, without sale-list sections");
         var shippingLine=(string)typeof(TelegramWebhookController).GetMethod("FormatShippingItemLine",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[new OrderItem{SalesList=stock,RequestedVolumeMl=3},0])!;
         check(shippingLine.Contains("PRIVATE-POSITION")&&shippingLine.Contains("1234"),"internal shipping report carries physical position and inventory package code");
 

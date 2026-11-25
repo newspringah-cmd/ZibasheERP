@@ -879,6 +879,9 @@ public sealed partial class TelegramWebhookController
         bool aggregateProductionGifts, int safeCaptionLength,
         ZibasheERP.Infrastructure.Services.FlashSalePricing.Quote? quote)
     {
+        if (list.IsInventoryOffer)
+            return (ZibasheERP.API.Inventory.ReadyInventoryPresentation.Caption(list, quote), null);
+
         var currentRequests = requests
             .Where(value => value.Kind == SalesListRequestKind.CurrentBottle)
             .ToArray();
