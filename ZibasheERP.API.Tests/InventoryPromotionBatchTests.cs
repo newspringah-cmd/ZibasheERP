@@ -101,8 +101,13 @@ public static class InventoryPromotionBatchTests
             check(ad.Destination == MarketingPromotionJob.GroupMessage && ad.PublishBeforeUtc == offers[0].EndsAtUtc &&
                 ad.MessageText!.Contains("۹۵٬۰۰۰") && ad.MessageText.Contains("۱۱۵٬۰۰۰") &&
                 ad.MessageText.Contains("https://t.me/c/3456087123/1000") &&
-                ad.MessageText.Contains("https://t.me/c/3456087123/1050"),
-                "one durable group announcement contains both packages, their exact totals, order links and the original deadline");
+                ad.MessageText.Contains("https://t.me/c/3456087123/1050") &&
+                ad.InventoryPhotos?.Select(photo => photo.FileId).ToHashSet().SetEquals(
+                    [lists[0].TelegramPhotoFileId!, lists[^1].TelegramPhotoFileId!]) == true,
+                "one durable group announcement contains exact package totals, links, deadline and the original photos");
+            var sheet = InventoryPromotionPhotoPage.RenderAdvertisement(
+                [new(1000, "عطر آزمایشی", "fixture")], [InventoryPromotionCapture.SampleImage]);
+            check(sheet is [0xff, 0xd8, ..], "the public photo card renders its Persian heading and original image");
             var sampleOffers = lists.Select(list => (List: list, Offer: new FlashSalePromotion
             {
                 Id = Guid.NewGuid(), SalesListId = list.Id, EndsAtUtc = offers[0].EndsAtUtc,
@@ -144,6 +149,7 @@ public class InventoryPromotionCapture : DispatchProxy
 {
     private static readonly byte[] Thumbnail = Convert.FromBase64String(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nm8sAAAAASUVORK5CYII=");
+    public static byte[] SampleImage => Thumbnail;
     public List<string> Texts { get; } = [];
     public TelegramInlineButton[] Buttons { get; private set; } = [];
     public byte[]? LastPhoto { get; private set; }

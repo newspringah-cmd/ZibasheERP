@@ -335,6 +335,35 @@ class PromotionTests(unittest.TestCase):
         self.assertEqual(self.run_job()['State'], 'failed')
         self.assertEqual(self.marketing.messages, [])
 
+    def test_inventory_photos_are_a_reply_and_recovery_does_not_republish_text(self):
+        self.choose_message('عطر آزمایشی\nhttps://t.me/zibasheperfume_mojodi/123')
+        self.payload.update(PublishBeforeUtc='2099-01-01T00:00:00Z',
+                            InventoryPhotos=[{'Code': 123, 'Name': 'عطر آزمایشی', 'FileId': 'inventory-file'}])
+        self.job['payload'] = json.dumps(self.payload)
+        reply = {'ok': True, 'result': {'chat': {'id': -1001283018740}, 'message_id': 999}}
+        with patch.object(worker, 'inventory_announcement_photo', return_value=b'jpeg') as render, \
+             patch.object(worker, 'send_inventory_announcement_photo', return_value=reply) as photo:
+            result = self.run_job()
+            self.assertEqual(result['State'], 'sent')
+            self.assertEqual(photo.call_args.args[1], int(result['Url'].split('/')[-1]))
+            (self.job_root()/'outcome.json').unlink()
+            self.assertEqual(self.run_job(), result)
+            self.assertEqual(photo.call_count, 1)
+            self.assertEqual(render.call_count, 1)
+        self.assertEqual(len(self.marketing.messages), 1)
+
+    def test_inventory_photos_can_attach_to_an_existing_batch_announcement(self):
+        self.choose_message('عکس بسته‌ها')
+        self.payload.update(PublishBeforeUtc='2099-01-01T00:00:00Z', ReplyToMessageId=123,
+                            InventoryPhotos=[{'Code': 123, 'Name': 'عطر آزمایشی', 'FileId': 'inventory-file'}])
+        self.job['payload'] = json.dumps(self.payload)
+        reply = {'ok': True, 'result': {'chat': {'id': -1001283018740}, 'message_id': 999}}
+        with patch.object(worker, 'inventory_announcement_photo', return_value=b'jpeg'), \
+             patch.object(worker, 'send_inventory_announcement_photo', return_value=reply) as photo:
+            self.assertEqual(self.run_job()['Url'], 'https://t.me/c/1283018740/123')
+            self.assertEqual(photo.call_args.args[1], 123)
+        self.assertEqual(self.marketing.messages, [])
+
     def test_group_message_rejects_long_utf16_and_blank_text(self):
         for text in ['🌸'*2049,'   ']:
             self.choose_message(text)

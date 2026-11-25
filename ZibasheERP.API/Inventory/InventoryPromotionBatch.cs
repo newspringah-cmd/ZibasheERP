@@ -16,6 +16,7 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
     // A batch shares one announcement instead of publishing a separate promotion for every item.
     public const long ChannelPriceOnly = 0;
     public const string AnnouncementEvent = "InventoryBatchPromotionAnnouncement";
+    public const int MaxAnnouncementPhotos = 9;
     public sealed record Selection(Guid Id, int Code, decimal Price, decimal Volume, decimal BottlePrice)
     {
         public decimal Total => Price * Volume + BottlePrice;
@@ -92,8 +93,9 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
         var header = $"⚡️ پروموشن دسته‌ای موجودی زیباشی\n🎁 {HourlyPromotionCopy.Number(first.DiscountPercent)}٪ تخفیف روی مبلغ عطر\n" +
             $"⏰ تا ساعت {at} روز {ShippingAddressDisplay.RegisteredDate(expires)} به وقت ایران\n\n";
         const string footer = "\n\n📦 بسته‌ها آمادهٔ ارسالن. برای سفارش، لینک بستهٔ دلخواهتون رو باز کنین و «درخواست خرید» رو بزنین. 🤍";
-        var pages = new List<string>();
+        var pages = new List<(string Text, InventoryPromotionImage[] Photos)>();
         var page = new StringBuilder(header);
+        var photos = new List<InventoryPromotionImage>();
         foreach (var (list, offer) in entries)
         {
             var url = InventoryOffersController.PostUrl(list.TelegramChannelId, list.TelegramMessageId);
@@ -107,24 +109,28 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
             var sale = HourlyPromotionCopy.Number(offer.DiscountedPricePerMl * list.TotalVolume + bottle, "#,0.##");
             var row = $"🧴 {name} · {quantity} · کد {HourlyPromotionCopy.Number(list.DisplayCode)}\n" +
                 $"💰 عادی {regular} ← با تخفیف {sale} تومان\n{url}";
-            if (page.Length + row.Length + footer.Length + 2 > 4096)
+            if (photos.Count == MaxAnnouncementPhotos || page.Length + row.Length + footer.Length + 2 > 4096)
             {
-                pages.Add(page.ToString().TrimEnd() + footer);
+                pages.Add((page.ToString().TrimEnd() + footer, photos.ToArray()));
                 page.Clear().Append(header);
+                photos.Clear();
             }
             page.Append(row).Append("\n\n");
+            if (string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
+                throw new InvalidOperationException($"عکس موجودی {list.DisplayCode} پیدا نشد.");
+            photos.Add(new(list.DisplayCode, name, list.TelegramPhotoFileId));
         }
-        pages.Add(page.ToString().TrimEnd() + footer);
+        pages.Add((page.ToString().TrimEnd() + footer, photos.ToArray()));
 
         var identity = string.Join(",", (batchOfferIds ?? entries.Select(entry => entry.Offer.Id)).Order());
         var createdAt = DateTime.UtcNow;
-        return pages.Select((text, index) => new NotificationOutbox
+        return pages.Select((entry, index) => new NotificationOutbox
         {
             Id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"inventory-batch-ad:{identity}:{index}"))[..16]),
             CustomerId = Guid.Empty, Channel = MarketingPromotionJob.Channel, EventType = AnnouncementEvent,
             Recipient = administratorId.ToString(), CreatedAt = createdAt.AddTicks(index),
             Payload = JsonSerializer.Serialize(new MarketingPromotionJob(Guid.Empty, 0, MarketingPromotionJob.GroupMessage,
-                administratorId, administratorId, MessageText: text, PublishBeforeUtc: expires))
+                administratorId, administratorId, MessageText: entry.Text, PublishBeforeUtc: expires, InventoryPhotos: entry.Photos))
         }).ToArray();
     }
 }

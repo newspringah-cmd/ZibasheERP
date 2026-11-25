@@ -6,7 +6,7 @@ namespace ZibasheERP.API.Marketing;
 public sealed record MarketingPromotionJob(Guid SalesListId, int Code, string Destination,
     long AdminChatId, long AdminUserId, int HoldHours = 24, string? ResultUrl = null, string ChannelMode = "replace", string? MessageText = null,
     HourlyPromotionSettings? FlashSale = null, Guid? InvoiceBatchId = null, string? CustomText = null,
-    DateTime? PublishBeforeUtc = null)
+    DateTime? PublishBeforeUtc = null, InventoryPromotionImage[]? InventoryPhotos = null, long? ReplyToMessageId = null)
 {
     public const string Channel = "MarketingPromotion";
     public const string RemoveChannel = "channel-delete";
@@ -21,6 +21,8 @@ public sealed record MarketingPromotionJob(Guid SalesListId, int Code, string De
     public static Guid RequestId(long chatId, long userId, long messageId) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes($"marketing:{chatId}:{userId}:{messageId}"))[..16]);
 }
+
+public sealed record InventoryPromotionImage(int Code, string Name, string FileId);
 
 public sealed record HourlyPromotionSettings(Guid CampaignId, int DurationMinutes = 120, int DiscountPercent = 0,
     decimal? DiscountAmountPerMl = null, decimal OriginalPricePerMl = 0);

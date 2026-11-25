@@ -107,6 +107,12 @@ def validate_payload(value):
                     raise ValueError()
             except (AttributeError, ValueError, TypeError):
                 raise Unavailable() from None
+        photos = value.get('InventoryPhotos')
+        if photos is not None and (expiry is None or not isinstance(photos, list) or not 1 <= len(photos) <= 9):
+            raise Unavailable()
+        reply_to = value.get('ReplyToMessageId')
+        if reply_to is not None and (photos is None or type(reply_to) is not int or reply_to <= 0):
+            raise Unavailable()
     if value.get('ChannelMode', 'replace') not in ('replace', 'append'):
         raise Unavailable()
     if value['Destination'] == 'inventory-report':
@@ -296,14 +302,59 @@ def group_message(root, payload, marketing, cfg):
     chat = destination.get('result', {})
     if not destination.get('ok') or chat.get('id') != -1001283018740 or chat.get('type') not in ('group', 'supergroup'):
         raise Unavailable()
-    message_payload = {'chat_id': marketing.CHAT, 'text': payload['MessageText']}
-    if expiry:
-        message_payload['link_preview_options'] = {'is_disabled': True}
-    sent = stage(root, 'group-message', lambda: marketing.post(url + 'sendMessage', message_payload))
-    message = sent.get('result', {})
-    if not sent.get('ok') or message.get('chat', {}).get('id') != -1001283018740 or type(message.get('message_id')) is not int:
+    photo = None
+    if payload.get('InventoryPhotos') and not any((root / ('inventory-photo' + suffix + '.json')).exists()
+                                                   for suffix in ('-receipt', '-intent')):
+        if time.time() >= dt.datetime.fromisoformat(expiry.replace('Z', '+00:00')).timestamp():
+            return {'State': 'failed', 'Error': 'مهلت پروموشن پیش از ارسال عکس‌ها به پایان رسید.'}
+        photo = inventory_announcement_photo(cfg, root.name)
+        if time.time() >= dt.datetime.fromisoformat(expiry.replace('Z', '+00:00')).timestamp():
+            return {'State': 'failed', 'Error': 'مهلت پروموشن پیش از ارسال عکس‌ها به پایان رسید.'}
+    message_id = payload.get('ReplyToMessageId')
+    if message_id is None:
+        message_payload = {'chat_id': marketing.CHAT, 'text': payload['MessageText']}
+        if expiry:
+            message_payload['link_preview_options'] = {'is_disabled': True}
+        sent = stage(root, 'group-message', lambda: marketing.post(url + 'sendMessage', message_payload))
+        message_id = confirmed_group_message(sent)
+    if payload.get('InventoryPhotos'):
+        receipt = stage(root, 'inventory-photo', lambda: send_inventory_announcement_photo(url, message_id, photo))
+        confirmed_group_message(receipt)
+    return {'State': 'sent', 'Url': 'https://t.me/c/1283018740/' + str(message_id)}
+
+
+def confirmed_group_message(result):
+    message = result.get('result', {})
+    if not result.get('ok') or message.get('chat', {}).get('id') != -1001283018740 or type(message.get('message_id')) is not int:
         raise UnknownDelivery()
-    return {'State': 'sent', 'Url': 'https://t.me/c/1283018740/' + str(message['message_id'])}
+    return message['message_id']
+
+
+def inventory_announcement_photo(cfg, job_id):
+    request = urllib.request.Request(
+        'http://127.0.0.1:8080/api/marketing-promotions/' + str(uuid.UUID(job_id)) + '/inventory-photo',
+        headers={'X-Api-Key': cfg['ApiKeys__Admin']})
+    with urllib.request.urlopen(request, timeout=50) as response:
+        image = response.read(10_000_001)
+    if not image.startswith(b'\xff\xd8\xff') or len(image) > 10_000_000:
+        raise RetryLater()
+    return image
+
+
+def send_inventory_announcement_photo(url, reply_to, image):
+    boundary = uuid.uuid4().hex
+    fields = {'chat_id': '-1001283018740', 'caption': '📸 عکس بسته‌های این پروموشن',
+              'reply_parameters': json.dumps({'message_id': reply_to})}
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
+             for key, value in fields.items()]
+    parts.extend([f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="inventory.jpg"\r\n'
+                  'Content-Type: image/jpeg\r\n\r\n'.encode(), image, f'\r\n--{boundary}--\r\n'.encode()])
+    request = urllib.request.Request(url + 'sendPhoto', data=b''.join(parts),
+        headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
+    with urllib.request.urlopen(request, timeout=50) as response:
+        result = json.load(response)
+    confirmed_group_message(result)
+    return result
 
 
 def inventory_api(cfg, route, value=None):

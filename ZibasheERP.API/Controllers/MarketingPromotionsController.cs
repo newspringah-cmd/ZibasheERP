@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZibasheERP.API.Marketing;
+using ZibasheERP.API.Inventory;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Interfaces;
 using ZibasheERP.Domain.Entities;
@@ -41,6 +42,28 @@ public sealed class MarketingPromotionsController(INotificationOutboxRepository 
     }
 
     public sealed record ResultRequest(string State, string? Url = null, string? Error = null);
+
+    [HttpGet("{id:guid}/inventory-photo")]
+    public async Task<IActionResult> InventoryPhoto(Guid id, CancellationToken ct)
+    {
+        var job = await repository.GetByIdAsync(id, ct);
+        if (job is null || job.IsDeleted || job.Channel != MarketingPromotionJob.Channel ||
+            job.EventType != InventoryPromotionBatch.AnnouncementEvent)
+            return NotFound();
+        var photos = JsonSerializer.Deserialize<MarketingPromotionJob>(job.Payload)?.InventoryPhotos;
+        if (photos is not { Length: >= 1 and <= InventoryPromotionBatch.MaxAnnouncementPhotos })
+            return NotFound();
+
+        var images = new byte[]?[photos.Length];
+        await Parallel.ForEachAsync(Enumerable.Range(0, photos.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = 5, CancellationToken = ct }, async (index, stop) =>
+            {
+                var result = await sender.DownloadFileAsync(photos[index].FileId, stop);
+                if (result.IsSuccessful) images[index] = result.Content;
+            });
+        return images.Any(image => image is null) ? StatusCode(StatusCodes.Status503ServiceUnavailable) :
+            File(InventoryPromotionPhotoPage.RenderAdvertisement(photos, images), "image/jpeg");
+    }
 
     [HttpPost("{id:guid}/result")]
     public async Task<IActionResult> Result(Guid id, ResultRequest request, CancellationToken ct)
