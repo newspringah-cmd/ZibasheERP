@@ -96,6 +96,7 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
         var pages = new List<(string Text, InventoryPromotionImage[] Photos)>();
         var page = new StringBuilder(header);
         var photos = new List<InventoryPromotionImage>();
+        var captionLength = header.Length;
         foreach (var (list, offer) in entries)
         {
             var url = InventoryOffersController.PostUrl(list.TelegramChannelId, list.TelegramMessageId);
@@ -108,14 +109,16 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
             var regular = HourlyPromotionCopy.Number(offer.OriginalPricePerMl * list.TotalVolume + bottle, "#,0.##");
             var sale = HourlyPromotionCopy.Number(offer.DiscountedPricePerMl * list.TotalVolume + bottle, "#,0.##");
             var row = $"🧴 {name} · {quantity} · کد {HourlyPromotionCopy.Number(list.DisplayCode)}\n" +
-                $"💰 عادی {regular} ← با تخفیف {sale} تومان\n{url}";
-            if (photos.Count == MaxAnnouncementPhotos || page.Length + row.Length + footer.Length + 2 > 4096)
+                $"💰 عادی {regular} ← با تخفیف {sale} تومان";
+            if (photos.Count == MaxAnnouncementPhotos || captionLength + row.Length + 52 > 1024)
             {
                 pages.Add((page.ToString().TrimEnd() + footer, photos.ToArray()));
                 page.Clear().Append(header);
                 photos.Clear();
+                captionLength = header.Length;
             }
-            page.Append(row).Append("\n\n");
+            page.Append(row).Append('\n').Append(url).Append("\n\n");
+            captionLength += row.Length + 2;
             if (string.IsNullOrWhiteSpace(list.TelegramPhotoFileId))
                 throw new InvalidOperationException($"عکس موجودی {list.DisplayCode} پیدا نشد.");
             photos.Add(new(list.DisplayCode, name, list.TelegramPhotoFileId));

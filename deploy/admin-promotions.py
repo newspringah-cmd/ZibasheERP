@@ -15,10 +15,12 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 import time
 import threading
+import urllib.error
 import urllib.request
 import uuid
 
@@ -303,8 +305,8 @@ def group_message(root, payload, marketing, cfg):
     if not destination.get('ok') or chat.get('id') != -1001283018740 or chat.get('type') not in ('group', 'supergroup'):
         raise Unavailable()
     photo = None
-    if payload.get('InventoryPhotos') and not any((root / ('inventory-photo' + suffix + '.json')).exists()
-                                                   for suffix in ('-receipt', '-intent')):
+    published_photo = root / 'inventory-photo-edit.json'
+    if payload.get('InventoryPhotos') and not published_photo.exists():
         if time.time() >= dt.datetime.fromisoformat(expiry.replace('Z', '+00:00')).timestamp():
             return {'State': 'failed', 'Error': 'مهلت پروموشن پیش از ارسال عکس‌ها به پایان رسید.'}
         photo = inventory_announcement_photo(cfg, root.name)
@@ -317,9 +319,9 @@ def group_message(root, payload, marketing, cfg):
             message_payload['link_preview_options'] = {'is_disabled': True}
         sent = stage(root, 'group-message', lambda: marketing.post(url + 'sendMessage', message_payload))
         message_id = confirmed_group_message(sent)
-    if payload.get('InventoryPhotos'):
-        receipt = stage(root, 'inventory-photo', lambda: send_inventory_announcement_photo(url, message_id, photo))
-        confirmed_group_message(receipt)
+    if payload.get('InventoryPhotos') and not published_photo.exists():
+        edit_inventory_announcement_photo(url, message_id, photo, payload)
+        save(published_photo, {'message_id': message_id, 'reply_markup': True})
     return {'State': 'sent', 'Url': 'https://t.me/c/1283018740/' + str(message_id)}
 
 
@@ -341,20 +343,42 @@ def inventory_announcement_photo(cfg, job_id):
     return image
 
 
-def send_inventory_announcement_photo(url, reply_to, image):
+def inventory_media_fields(message_id, payload):
+    lines = payload['MessageText'].splitlines()
+    link_pattern = r'https://t\.me/(?:c/[0-9]+|[A-Za-z0-9_]+)/[1-9][0-9]*'
+    links = [line for line in lines if re.fullmatch(link_pattern, line)]
+    caption = '\n'.join(line for line in lines if line and not re.fullmatch(link_pattern, line) and
+                        not line.startswith('📦 بسته‌ها آمادهٔ ارسالن.'))
+    caption += '\n\n📦 برای سفارش، دکمهٔ بستهٔ دلخواهتون رو بزنین 🤍'
+    photos = payload['InventoryPhotos']
+    if len(links) != len(photos) or len(caption.encode('utf-16-le')) // 2 > 1024:
+        raise Unavailable()
+    buttons = [{'text': 'خرید ' + str(item['Code']), 'url': link} for item, link in zip(photos, links)]
+    return {'chat_id': '-1001283018740', 'message_id': str(message_id),
+            'media': json.dumps({'type': 'photo', 'media': 'attach://photo', 'caption': caption,
+                                 'show_caption_above_media': True}),
+            'reply_markup': json.dumps({'inline_keyboard': [buttons[i:i + 3] for i in range(0, len(buttons), 3)]})}
+
+
+def edit_inventory_announcement_photo(url, message_id, image, payload):
     boundary = uuid.uuid4().hex
-    fields = {'chat_id': '-1001283018740', 'caption': '📸 عکس بسته‌های این پروموشن',
-              'reply_parameters': json.dumps({'message_id': reply_to})}
+    fields = inventory_media_fields(message_id, payload)
     parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
              for key, value in fields.items()]
     parts.extend([f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="inventory.jpg"\r\n'
                   'Content-Type: image/jpeg\r\n\r\n'.encode(), image, f'\r\n--{boundary}--\r\n'.encode()])
-    request = urllib.request.Request(url + 'sendPhoto', data=b''.join(parts),
+    request = urllib.request.Request(url + 'editMessageMedia', data=b''.join(parts),
         headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
-    with urllib.request.urlopen(request, timeout=50) as response:
-        result = json.load(response)
-    confirmed_group_message(result)
-    return result
+    try:
+        with urllib.request.urlopen(request, timeout=50) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as error:
+        reason = json.load(error).get('description', '')
+        if error.code == 400 and 'message is not modified' in reason.lower():
+            return
+        raise RetryLater() from None
+    if confirmed_group_message(result) != message_id or not result.get('result', {}).get('photo'):
+        raise RetryLater()
 
 
 def inventory_api(cfg, route, value=None):
