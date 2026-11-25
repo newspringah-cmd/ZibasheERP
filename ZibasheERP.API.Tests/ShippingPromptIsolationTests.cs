@@ -7,6 +7,7 @@ using ZibasheERP.API.Controllers;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Application.Services;
 using ZibasheERP.Domain.Entities;
+using ZibasheERP.Domain.Enums;
 using ZibasheERP.Infrastructure.Persistence;
 
 public static class ShippingPromptIsolationTests
@@ -52,11 +53,77 @@ public static class ShippingPromptIsolationTests
             drafts.ClearShippingPreparation(chat,owner);
             check(await Handle(Message(postalAddress,correct)),"after draft loss an authorized direct bot-prompt reply recovers exact binding and completes address registration");
             check(drafts.TryGetShippingPreparation(chat,owner,out var recovered)&&recovered.Stage==TelegramShippingPreparationStage.Ready&&recovered.InputPromptMessageId==correct,"recovered address draft retains exact prompt ID and advances to confirmation");
+            await VerifyUnpaidAddressAsync(db, controller, sent, drafts, customer, Message("/ad"), check);
             await VerifyInPersonPickupAsync(db, controller, sent, drafts, customer, Message("/ad"), check);
         }
         finally
         {
             await db.Addresses.Where(a=>a.CustomerId==customer.Id).ExecuteDeleteAsync();await db.CustomerTelegramGroups.Where(g=>g.Id==group.Id).ExecuteDeleteAsync();await db.Customers.Where(c=>c.Id==customer.Id).ExecuteDeleteAsync();
+        }
+    }
+
+    private static async Task VerifyUnpaidAddressAsync(AppDbContext db, TelegramWebhookController controller,
+        ShippingPromptSender sender, TelegramOrderFlowDraftStore drafts, Customer customer, TelegramMessage source, Action<bool, string> check)
+    {
+        const BindingFlags privateMethods = BindingFlags.Instance | BindingFlags.NonPublic;
+        var chatId = source.Chat.Id;
+        var operatorId = source.From!.Id;
+        var order = new Order { Id = Guid.NewGuid(), CustomerId = customer.Id, OrderNumber = Guid.NewGuid().ToString("N"), Status = OrderStatus.Invoiced };
+        var laterOrder = new Order { Id = Guid.NewGuid(), CustomerId = customer.Id, OrderNumber = Guid.NewGuid().ToString("N"), Status = OrderStatus.Invoiced };
+        Invoice Outstanding(Order invoiceOrder) => new() { Id = Guid.NewGuid(), OrderId = invoiceOrder.Id, InvoiceNumber = Guid.NewGuid().ToString("N"),
+            Status = InvoiceStatus.Issued, TotalAmount = 100000 };
+        var first = Outstanding(order);
+        var second = Outstanding(laterOrder);
+        db.AddRange(order, first);
+        await db.SaveChangesAsync();
+        try
+        {
+            const string text = "تهران خیابان نمونه پلاک ۲ برای آزمون بدهی";
+            var draft = new TelegramShippingPreparationDraft
+            {
+                ChatId = chatId, UserId = operatorId, CustomerId = customer.Id,
+                Stage = TelegramShippingPreparationStage.AwaitingNewAddress, InputPromptMessageId = 400
+            };
+            drafts.SetShippingPreparation(draft);
+            var input = source with { Text = text, ReplyToMessage = source with
+            {
+                Text = "آدرس کامل را وارد کنید", From = new TelegramUser(123, null, IsBot: true), MessageId = 400
+            }};
+            Task<bool> Handle(TelegramMessage message) => (Task<bool>)typeof(TelegramWebhookController)
+                .GetMethod("TryHandleShippingPreparationMessageAsync", privateMethods)!.Invoke(controller, [message, CancellationToken.None])!;
+            Task Confirm(Guid token, TelegramUser actor, long chat) => (Task)typeof(TelegramWebhookController)
+                .GetMethod("ConfirmShippingPaymentOverrideAsync", privateMethods)!.Invoke(controller,
+                    [new TelegramCallbackQuery("approval", actor, source with { Chat = source.Chat with { Id = chat } }, "approval"), token, CancellationToken.None])!;
+            Task<bool> Saved() => db.Addresses.AnyAsync(a => a.CustomerId == customer.Id && a.FullAddress == text);
+            check(await Handle(input) && draft.PaymentApproval is not null && !await Saved(),
+                "an issued invoice blocks the real raw-address path before anything is saved");
+            var token = draft.PaymentApproval!.Token;
+            await Confirm(token, source.From with { IsBot = true }, chatId);
+            await Confirm(token, source.From with { Id = operatorId + 1 }, chatId);
+            await Confirm(token, source.From, chatId + 1);
+            check(!await Saved() && draft.PaymentApproval?.Token == token, "automated actors and a different chat cannot redeem an admin approval");
+            db.AddRange(laterOrder, second);
+            await db.SaveChangesAsync();
+            await Confirm(token, source.From, chatId);
+            check(!await Saved() && draft.PaymentApproval is { } replacement && replacement.Token != token,
+                "a newly issued unpaid invoice requires a fresh confirmation before saving the address");
+            var fresh = draft.PaymentApproval!.Token;
+            await Confirm(fresh, source.From, chatId);
+            await Confirm(fresh, source.From, chatId);
+            check(await db.Addresses.CountAsync(a => a.CustomerId == customer.Id && a.FullAddress == text) == 1 &&
+                sender.LastCallback?.Contains("معتبر نیست") == true, "the human confirmation saves the exact original address once and replay is rejected");
+
+            draft.ApprovedUnpaidInvoices = [];
+            await (Task)typeof(TelegramWebhookController).GetMethod("DispatchPreparedShippingRequestAsync", privateMethods)!.Invoke(controller,
+                [new TelegramCallbackQuery("dispatch", source.From, source, "shipping:preparedispatch"), CancellationToken.None])!;
+            check(draft.PaymentApproval?.AddressId == draft.AddressId && sender.LastCallback?.Contains("متوقف شد") == true,
+                "dispatch of an already saved address is blocked before posting in the preparation group");
+        }
+        finally
+        {
+            db.ChangeTracker.Clear();
+            await db.Invoices.Where(i => i.OrderId == order.Id || i.OrderId == laterOrder.Id).ExecuteDeleteAsync();
+            await db.Orders.Where(o => o.Id == order.Id || o.Id == laterOrder.Id).ExecuteDeleteAsync();
         }
     }
 
@@ -133,7 +200,7 @@ public class ShippingPromptSender:DispatchProxy
 {
     public long LastId=1000;public bool FailPrompt;public List<string> Replies=[];
     public bool FailText;
-    public string? LastText, LastKeyboard;
+    public string? LastText, LastKeyboard, LastCallback;
     public long LastReplyTo;
     protected override object? Invoke(MethodInfo? method,object?[]? args)
     {
@@ -141,6 +208,7 @@ public class ShippingPromptSender:DispatchProxy
         if(method.Name=="SendReplyAsync"){Replies.Add((string)args![1]!);LastReplyTo=(long)args[2]!;return Task.FromResult(new TelegramSendResult(true,MessageId:++LastId));}
         if(method.Name=="SendAsync"){LastText=(string)args![1]!;return Task.FromResult(FailText?new TelegramSendResult(false):new TelegramSendResult(true,MessageId:++LastId));}
         if(method.Name=="SendInlineKeyboardAsync")LastKeyboard=(string)args![1]!;
+        if(method.Name=="AnswerCallbackAsync"){LastCallback=(string?)args![1];return Task.FromResult(new TelegramSendResult(true));}
         if(method.Name is "SendInlineKeyboardAsync" or "DeleteMessageAsync")return Task.FromResult(new TelegramSendResult(true,MessageId:++LastId));
         if(method.Name=="IsChatAdministratorAsync")return Task.FromResult(true);
         throw new NotSupportedException(method.Name);

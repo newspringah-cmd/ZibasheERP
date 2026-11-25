@@ -178,5 +178,11 @@ public sealed class TelegramShippingPreparationDraft
     public bool RegistrationOnly { get; set; }
     public bool AllowUnlinkedChat { get; set; }
     public bool LinkGroupOnIdentity { get; set; }
+    public Guid[] ApprovedUnpaidInvoices { get; set; } = [];
+    public ShippingPaymentApproval? PaymentApproval;
+    public SemaphoreSlim DispatchLock { get; } = new(1, 1);
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
+
+public sealed record ShippingPaymentApproval(Guid Token, Guid CustomerId, Guid? AddressId,
+    TelegramShippingPreparationStage Stage, Guid[] InvoiceIds, DateTime ExpiresAt, TelegramMessage? AddressInput);

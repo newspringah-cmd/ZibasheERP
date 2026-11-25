@@ -1405,8 +1405,9 @@ public sealed partial class TelegramWebhookController : ControllerBase
         TelegramAddressCommand command,
         CancellationToken cancellationToken)
     {
+        var telegramId = user.Id.ToString();
         var link = await _mediator.Send(
-            new LinkTelegramByUsernameCommand(user.Id.ToString(), user.Username),
+            new LinkTelegramByUsernameCommand(telegramId, user.Username),
             cancellationToken);
         if (!IsLinked(link))
         {
@@ -1417,11 +1418,19 @@ public sealed partial class TelegramWebhookController : ControllerBase
             return;
         }
 
+        var customerId = await _db.Customers.AsNoTracking().Where(c => !c.IsDeleted && c.TelegramId == telegramId)
+            .Select(c => (Guid?)c.Id).SingleOrDefaultAsync(cancellationToken);
+        if (customerId is { } customer && await UnpaidShippingInvoices(customer).AnyAsync(cancellationToken))
+        {
+            await ReplyAsync(chatId, ShippingPaymentBlocked, cancellationToken);
+            return;
+        }
+
         try
         {
             var address = await _mediator.Send(
                 new AddTelegramAddressCommand(
-                    user.Id.ToString(),
+                    telegramId,
                     command.Description,
                     command.ReceiverName,
                     command.Province,
