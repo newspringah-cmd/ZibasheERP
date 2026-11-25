@@ -1,4 +1,10 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using ZibasheERP.API.AddressLabels;
+using ZibasheERP.API.Controllers;
+using ZibasheERP.API.Marketing;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
 using ZibasheERP.Infrastructure.Services;
@@ -7,8 +13,9 @@ namespace ZibasheERP.API.Inventory;
 
 public sealed class InventoryPromotionBatch(AppDbContext db)
 {
-    // No separate promotional announcement is created for each item in a batch.
+    // A batch shares one announcement instead of publishing a separate promotion for every item.
     public const long ChannelPriceOnly = 0;
+    public const string AnnouncementEvent = "InventoryBatchPromotionAnnouncement";
     public sealed record Selection(Guid Id, int Code, decimal Price, decimal Volume, decimal BottlePrice)
     {
         public decimal Total => Price * Volume + BottlePrice;
@@ -32,10 +39,10 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
         new(list.Id, list.DisplayCode, list.PricePerMl, list.TotalVolume, list.FixedBottlePrice ?? 0);
 
     public async Task<DateTime> ActivateAsync(IReadOnlyCollection<Selection> selection, string channel,
-        int percent, int minutes, CancellationToken ct)
+        int percent, int minutes, long administratorId, CancellationToken ct)
     {
         if (selection.Count == 0 || selection.Select(value => value.Id).Distinct().Count() != selection.Count ||
-            string.IsNullOrWhiteSpace(channel) || percent is <1 or >99 || minutes is <1 or >10080)
+            string.IsNullOrWhiteSpace(channel) || percent is <1 or >99 || minutes is <1 or >10080 || administratorId <= 0)
             throw new InvalidOperationException("انتخاب، درصد یا مدت پروموشن معتبر نیست.");
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         foreach (var entry in selection.OrderBy(value => value.Id))
@@ -56,6 +63,7 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
             throw new InvalidOperationException("قیمت یا وضعیت این کدها تغییر کرده یا تخفیف برایشان معتبر نیست: " +
                 string.Join("، ", invalid) + "\nانتخاب‌ها را دوباره بررسی کنید.");
         var ends = starts.AddMinutes(minutes);
+        var announcements = new List<(SalesList List, FlashSalePromotion Offer)>();
         foreach (var entry in selection)
         {
             var offer = entry.Offer(percent);
@@ -64,9 +72,59 @@ public sealed class InventoryPromotionBatch(AppDbContext db)
             offer.EndsAtUtc = ends;
             offer.RequestedDurationMinutes = minutes;
             db.FlashSalePromotions.Add(offer);
+            announcements.Add((live[entry.Id], offer));
         }
+        db.NotificationOutbox.AddRange(AnnouncementJobs(announcements, administratorId));
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return ends;
+    }
+
+    public static NotificationOutbox[] AnnouncementJobs(
+        IReadOnlyCollection<(SalesList List, FlashSalePromotion Offer)> entries, long administratorId,
+        IEnumerable<Guid>? batchOfferIds = null)
+    {
+        if (entries.Count == 0) return [];
+        var first = entries.First().Offer;
+        var expires = DateTime.SpecifyKind(first.EndsAtUtc, DateTimeKind.Utc);
+        var localEnd = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(expires, "Asia/Tehran");
+        var at = HourlyPromotionCopy.Number(localEnd.Hour, "00") + ":" + HourlyPromotionCopy.Number(localEnd.Minute, "00");
+        var header = $"⚡️ پروموشن دسته‌ای موجودی زیباشی\n🎁 {HourlyPromotionCopy.Number(first.DiscountPercent)}٪ تخفیف روی مبلغ عطر\n" +
+            $"⏰ تا ساعت {at} روز {ShippingAddressDisplay.RegisteredDate(expires)} به وقت ایران\n\n";
+        const string footer = "\n\n📦 بسته‌ها آمادهٔ ارسالن. برای سفارش، لینک بستهٔ دلخواهتون رو باز کنین و «درخواست خرید» رو بزنین. 🤍";
+        var pages = new List<string>();
+        var page = new StringBuilder(header);
+        foreach (var (list, offer) in entries)
+        {
+            var url = InventoryOffersController.PostUrl(list.TelegramChannelId, list.TelegramMessageId);
+            if (url.Length == 0)
+                throw new InvalidOperationException($"لینک سفارش موجودی {list.DisplayCode} معتبر نیست.");
+            var name = string.Join(' ', (string.IsNullOrWhiteSpace(list.PersianName) ? list.EnglishName : list.PersianName)
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            var quantity = list.IsMiscellaneousInventory ? "۱ عدد" : $"{HourlyPromotionCopy.Number(list.TotalVolume)} میل";
+            var bottle = list.FixedBottlePrice ?? 0;
+            var regular = HourlyPromotionCopy.Number(offer.OriginalPricePerMl * list.TotalVolume + bottle, "#,0.##");
+            var sale = HourlyPromotionCopy.Number(offer.DiscountedPricePerMl * list.TotalVolume + bottle, "#,0.##");
+            var row = $"🧴 {name} · {quantity} · کد {HourlyPromotionCopy.Number(list.DisplayCode)}\n" +
+                $"💰 عادی {regular} ← با تخفیف {sale} تومان\n{url}";
+            if (page.Length + row.Length + footer.Length + 2 > 4096)
+            {
+                pages.Add(page.ToString().TrimEnd() + footer);
+                page.Clear().Append(header);
+            }
+            page.Append(row).Append("\n\n");
+        }
+        pages.Add(page.ToString().TrimEnd() + footer);
+
+        var identity = string.Join(",", (batchOfferIds ?? entries.Select(entry => entry.Offer.Id)).Order());
+        var createdAt = DateTime.UtcNow;
+        return pages.Select((text, index) => new NotificationOutbox
+        {
+            Id = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"inventory-batch-ad:{identity}:{index}"))[..16]),
+            CustomerId = Guid.Empty, Channel = MarketingPromotionJob.Channel, EventType = AnnouncementEvent,
+            Recipient = administratorId.ToString(), CreatedAt = createdAt.AddTicks(index),
+            Payload = JsonSerializer.Serialize(new MarketingPromotionJob(Guid.Empty, 0, MarketingPromotionJob.GroupMessage,
+                administratorId, administratorId, MessageText: text, PublishBeforeUtc: expires))
+        }).ToArray();
     }
 }

@@ -100,6 +100,13 @@ def validate_payload(value):
         text = value.get('MessageText')
         if not isinstance(text, str) or not text.strip() or len(text.encode('utf-16-le')) // 2 > 4096:
             raise Unavailable()
+        expiry = value.get('PublishBeforeUtc')
+        if expiry is not None:
+            try:
+                if dt.datetime.fromisoformat(expiry.replace('Z', '+00:00')).utcoffset() != dt.timedelta(0):
+                    raise ValueError()
+            except (AttributeError, ValueError, TypeError):
+                raise Unavailable() from None
     if value.get('ChannelMode', 'replace') not in ('replace', 'append'):
         raise Unavailable()
     if value['Destination'] == 'inventory-report':
@@ -278,6 +285,10 @@ def channel(root, job_id, payload, marketing, cfg):
 
 
 def group_message(root, payload, marketing, cfg):
+    expiry = payload.get('PublishBeforeUtc')
+    if expiry and not any((root / ('group-message' + suffix + '.json')).exists() for suffix in ('-receipt', '-intent')):
+        if time.time() >= dt.datetime.fromisoformat(expiry.replace('Z', '+00:00')).timestamp():
+            return {'State': 'failed', 'Error': 'مهلت پروموشن پیش از انتشار تبلیغ به پایان رسید.'}
     if str(marketing.CHAT) != '-1001283018740':
         raise Unavailable()
     url = 'https://api.telegram.org/bot' + cfg['Telegram__BotToken'] + '/'
@@ -285,8 +296,10 @@ def group_message(root, payload, marketing, cfg):
     chat = destination.get('result', {})
     if not destination.get('ok') or chat.get('id') != -1001283018740 or chat.get('type') not in ('group', 'supergroup'):
         raise Unavailable()
-    sent = stage(root, 'group-message', lambda: marketing.post(url + 'sendMessage',
-        {'chat_id': marketing.CHAT, 'text': payload['MessageText']}))
+    message_payload = {'chat_id': marketing.CHAT, 'text': payload['MessageText']}
+    if expiry:
+        message_payload['link_preview_options'] = {'is_disabled': True}
+    sent = stage(root, 'group-message', lambda: marketing.post(url + 'sendMessage', message_payload))
     message = sent.get('result', {})
     if not sent.get('ok') or message.get('chat', {}).get('id') != -1001283018740 or type(message.get('message_id')) is not int:
         raise UnknownDelivery()

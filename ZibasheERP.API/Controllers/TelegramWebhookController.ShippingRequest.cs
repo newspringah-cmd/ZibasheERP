@@ -1307,11 +1307,11 @@ public sealed partial class TelegramWebhookController
             foreach (var item in items) item.ShippingTelegramMessageId = sent.MessageId.Value;
             await _db.SaveChangesAsync(ct);
         }
-        _orderFlowDrafts.ClearShippingPreparation(callback.Message.Chat.Id, draft.UserId);
+        _orderFlowDrafts.ClearShippingPreparation(draft.ChatId, draft.UserId);
         await _sender.AnswerCallbackAsync(callback.Id, "برای گروه پست ارسال شد ✅ لیبل در حال آماده‌سازی است.", ct, true);
-        await ReplyAsync(callback.Message!.Chat.Id,
+        await ReplyAsync(draft.ChatId,
             "آدرس جهت آماده سازی و ارسال با موفقیت ثبت شد", ct);
-        await SendAddressLabelCopyAsync(requestId, customer, address, callback.Message.Chat.Id, ct);
+        await SendAddressLabelCopyAsync(requestId, customer, address, draft.ChatId, ct);
     }
 
     private async Task SendSingleCustomerShippingReportAsync(

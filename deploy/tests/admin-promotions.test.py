@@ -314,6 +314,27 @@ class PromotionTests(unittest.TestCase):
         self.assertEqual(self.run_job(),first)
         self.assertEqual(len(self.marketing.messages),1)
 
+    def test_batch_offer_message_keeps_order_links_and_receipt_without_a_preview(self):
+        self.choose_message('پروموشن دسته‌ای\nhttps://t.me/zibasheperfume_mojodi/123')
+        self.payload['PublishBeforeUtc'] = '2099-01-01T00:00:00Z'
+        self.job['payload'] = json.dumps(self.payload)
+        original = self.run_job()
+        self.assertEqual(original['State'], 'sent')
+        self.assertEqual(self.marketing.messages[0]['text'], self.payload['MessageText'])
+        self.assertEqual(self.marketing.messages[0]['link_preview_options'], {'is_disabled': True})
+        (self.job_root()/'outcome.json').unlink()
+        self.payload['PublishBeforeUtc'] = '2000-01-01T00:00:00Z'
+        self.job['payload'] = json.dumps(self.payload)
+        self.assertEqual(self.run_job(), original)
+        self.assertEqual(len(self.marketing.messages), 1)
+
+    def test_batch_offer_expired_before_send_is_not_advertised(self):
+        self.choose_message()
+        self.payload['PublishBeforeUtc'] = '2000-01-01T00:00:00Z'
+        self.job['payload'] = json.dumps(self.payload)
+        self.assertEqual(self.run_job()['State'], 'failed')
+        self.assertEqual(self.marketing.messages, [])
+
     def test_group_message_rejects_long_utf16_and_blank_text(self):
         for text in ['🌸'*2049,'   ']:
             self.choose_message(text)

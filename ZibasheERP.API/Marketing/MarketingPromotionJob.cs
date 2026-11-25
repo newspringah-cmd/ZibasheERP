@@ -5,7 +5,8 @@ namespace ZibasheERP.API.Marketing;
 
 public sealed record MarketingPromotionJob(Guid SalesListId, int Code, string Destination,
     long AdminChatId, long AdminUserId, int HoldHours = 24, string? ResultUrl = null, string ChannelMode = "replace", string? MessageText = null,
-    HourlyPromotionSettings? FlashSale = null, Guid? InvoiceBatchId = null, string? CustomText = null)
+    HourlyPromotionSettings? FlashSale = null, Guid? InvoiceBatchId = null, string? CustomText = null,
+    DateTime? PublishBeforeUtc = null)
 {
     public const string Channel = "MarketingPromotion";
     public const string RemoveChannel = "channel-delete";

@@ -73,11 +73,12 @@ public sealed partial class TelegramWebhookController
             draft.ExpiresAt = DateTime.UtcNow.AddMinutes(30);
             if (parts[2] == "apply" && draft.Step == "review" && draft.ReviewMessage == callback.Message.MessageId)
             {
-                var ends = await new InventoryPromotionBatch(_db).ActivateAsync(draft.Review, channel, draft.Percent, draft.Minutes, ct);
+                var ends = await new InventoryPromotionBatch(_db).ActivateAsync(draft.Review, channel, draft.Percent, draft.Minutes, callback.From.Id, ct);
                 InventoryPromotionDrafts.TryRemove(key, out _);
                 var tehran = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(ends, "Asia/Tehran");
                 await FlashPromptAsync(chat.Id, $"✅ پروموشن {draft.Percent}٪ برای {draft.Review.Length} موجودی فعال شد.\n" +
-                    $"پایان: {FormatShippingPersianDate(ends)} ساعت {tehran:HH:mm} به وقت ایران.\nقیمت روی پست‌های کانال به‌روز می‌شود.", ct);
+                    $"پایان: {FormatShippingPersianDate(ends)} ساعت {tehran:HH:mm} به وقت ایران.\n" +
+                    "قیمت روی پست‌های کانال به‌روز می‌شود و پیام تبلیغاتی با لینک سفارش در صف ارسال به گروه است.", ct);
                 return true;
             }
             if (parts[2] == "browse")

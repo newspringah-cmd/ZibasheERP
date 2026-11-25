@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using ZibasheERP.API.Controllers;
 using ZibasheERP.API.Inventory;
+using ZibasheERP.API.Marketing;
 using ZibasheERP.API.Telegram;
 using ZibasheERP.Domain.Entities;
 using ZibasheERP.Infrastructure.Persistence;
@@ -38,6 +39,7 @@ public static class InventoryPromotionBatchTests
         }).ToArray();
         var ids = lists.Select(l => l.Id).ToArray();
         var lastListId = lists[^1].Id;
+        var announcements = new List<Guid>();
         db.AddRange(lists);
         await db.SaveChangesAsync();
         try
@@ -91,6 +93,26 @@ public static class InventoryPromotionBatchTests
             check(offers.Length == 2 && offers.All(p => p.DiscountPercent == 20 && p.EndsAtUtc - p.StartsAtUtc == TimeSpan.FromHours(24)) &&
                 offers.Select(p => p.StartsAtUtc).Distinct().Count() == 1,
                 "confirmed selections across two pages share a single 24-hour window and replay does not duplicate them");
+            var queued = await db.NotificationOutbox.AsNoTracking().Where(row =>
+                row.EventType == InventoryPromotionBatch.AnnouncementEvent &&
+                row.CreatedAt >= offers[0].StartsAtUtc && row.Recipient == owner.ToString()).ToArrayAsync();
+            announcements.AddRange(queued.Select(row => row.Id));
+            var ad = JsonSerializer.Deserialize<MarketingPromotionJob>(queued.Single().Payload)!;
+            check(ad.Destination == MarketingPromotionJob.GroupMessage && ad.PublishBeforeUtc == offers[0].EndsAtUtc &&
+                ad.MessageText!.Contains("۹۵٬۰۰۰") && ad.MessageText.Contains("۱۱۵٬۰۰۰") &&
+                ad.MessageText.Contains("https://t.me/c/3456087123/1000") &&
+                ad.MessageText.Contains("https://t.me/c/3456087123/1050"),
+                "one durable group announcement contains both packages, their exact totals, order links and the original deadline");
+            var sampleOffers = lists.Select(list => (List: list, Offer: new FlashSalePromotion
+            {
+                Id = Guid.NewGuid(), SalesListId = list.Id, EndsAtUtc = offers[0].EndsAtUtc,
+                OriginalPricePerMl = list.PricePerMl, DiscountPercent = 20
+            })).ToArray();
+            var pages = InventoryPromotionBatch.AnnouncementJobs(sampleOffers, owner)
+                .Select(job => JsonSerializer.Deserialize<MarketingPromotionJob>(job.Payload)!.MessageText!).ToArray();
+            check(pages.Length > 1 && pages.All(page => page.Length <= 4096) &&
+                lists.All(list => pages.Count(page => page.Contains($"https://t.me/c/3456087123/{list.TelegramMessageId}\n", StringComparison.Ordinal)) == 1),
+                "oversized announcements preserve every order link across Telegram-sized messages");
             var offer = offers.Single(p => p.SalesListId == lists[0].Id);
             var atStart = await FlashSalePricing.QuoteAsync(db, lists[0], offer.StartsAtUtc);
             var expired = await FlashSalePricing.QuoteAsync(db, lists[0], offer.EndsAtUtc);
@@ -111,7 +133,7 @@ public static class InventoryPromotionBatchTests
         {
             db.ChangeTracker.Clear();
             var marker = FlashSaleMainPriceDisplay.Key(lists[0].Id);
-            await db.NotificationOutbox.Where(n => n.Id == marker).ExecuteDeleteAsync();
+            await db.NotificationOutbox.Where(n => n.Id == marker || announcements.Contains(n.Id)).ExecuteDeleteAsync();
             await db.FlashSalePromotions.Where(p => ids.Contains(p.SalesListId)).ExecuteDeleteAsync();
             await db.SalesLists.Where(l => ids.Contains(l.Id)).ExecuteDeleteAsync();
         }
